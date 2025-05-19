@@ -110,30 +110,30 @@ OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA = {
 # --- Main Model Configuration Dictionary ---
 GERMAN_TTS_MODELS = {
     "edge": {
-        "handler_function_key": "edge",
+        # "handler_function_key": "edge", # Redundant if model_id is the same and used as key in ALL_HANDLERS
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
         "available_voices": EDGE_TTS_ALL_GERMAN_VOICES,
         "notes": "MS Edge TTS (cloud). Output: MP3. Internet required."
     },
     "piper_local": {
-        "handler_function_key": "piper_local",
-        "piper_voice_repo_id": "rhasspy/piper-voices", # This is the main repo for all piper voices
-        "default_model_path_in_repo": PIPER_DEFAULT_GERMAN_VOICE_PATH, # Path within the repo
-        "available_voices": PIPER_GERMAN_VOICE_PATHS, # List of relative paths within the repo
+        # "handler_function_key": "piper_local", # Redundant
+        "piper_voice_repo_id": "rhasspy/piper-voices",
+        "default_model_path_in_repo": PIPER_DEFAULT_GERMAN_VOICE_PATH,
+        "available_voices": PIPER_GERMAN_VOICE_PATHS,
         "requires_hf_token": False,
         "notes": "Local Piper TTS (ONNX). Downloads model/voice from Hugging Face. Output: WAV."
     },
     "orpheus_lex_au": {
-        "handler_function_key": "orpheus_gguf",
-        "model_repo_id": "lex-au/Orpheus-3b-German-FT-Q8_0.gguf",
-        "model_filename": "Orpheus-3b-German-FT-Q8_0.gguf",
+        # "handler_function_key": "orpheus_gguf", # REMOVED: ALL_HANDLERS key is "orpheus_lex_au"
+        "model_repo_id": "lex-au/Orpheus-3b-FT-Q4_K_M.gguf", # lex-au/Orpheus-3b-FT-Q4_K_M.gguf
+        "model_filename": "Orpheus-3b-FT-Q4_K_M.gguf", # Orpheus-3b-German-FT-Q8_0.gguf 
         "requires_hf_token": False,
         "default_voice_id": "jana",
         "available_voices": ORPHEUS_GERMAN_VOICES,
         "notes": "Local Orpheus GGUF (lex-au). Uses llama-cpp-python & decoder.py. Output: WAV."
     },
     "orpheus_sauerkraut": {
-        "handler_function_key": "orpheus_gguf",
+        # "handler_function_key": "orpheus_gguf", # REMOVED: ALL_HANDLERS key is "orpheus_sauerkraut"
         "model_repo_id": "VAGOsolutions/SauerkrautTTS-Preview-0.1-Q4_K_M-GGUF",
         "model_filename": "sauerkrauttts_preview_0_1.Q4_K_M.gguf",
         "requires_hf_token": False,
@@ -142,7 +142,7 @@ GERMAN_TTS_MODELS = {
         "notes": "Local SauerkrautTTS (Orpheus GGUF). Uses llama-cpp-python & decoder.py. Output: WAV."
     },
     "orpheus_lm_studio": {
-        "handler_function_key": "orpheus_lm_studio",
+        # "handler_function_key": "orpheus_lm_studio", # Redundant
         "api_url": LM_STUDIO_API_URL_DEFAULT,
         "gguf_model_name_in_api": "SauerkrautTTS-Preview-0.1",
         "default_voice_id": "Tom",
@@ -150,7 +150,7 @@ GERMAN_TTS_MODELS = {
         "notes": "Orpheus via LM Studio API. Requires decoder.py. Output: WAV."
     },
     "orpheus_ollama": {
-        "handler_function_key": "orpheus_ollama",
+        # "handler_function_key": "orpheus_ollama", # Redundant
         "api_url": OLLAMA_API_URL_DEFAULT,
         "ollama_model_name": "orpheus-german-tts:latest",
         "default_voice_id": "jana",
@@ -158,7 +158,7 @@ GERMAN_TTS_MODELS = {
         "notes": "Orpheus via Ollama API. Requires decoder.py. Output: WAV."
     },
     "oute_llamacpp": {
-        "handler_function_key": "outetts",
+        # "handler_function_key": "outetts", # REMOVED: ALL_HANDLERS key is "oute_llamacpp"
         "outetts_model_enum": OuteTTSModels_Enum.VERSION_1_0_SIZE_1B if OUTETTS_AVAILABLE_FOR_CONFIG else "VERSION_1_0_SIZE_1B_STR_FALLBACK",
         "backend_to_use": OuteTTSBackend_Enum.LLAMACPP if OUTETTS_AVAILABLE_FOR_CONFIG else "LLAMACPP_STR_FALLBACK",
         "quantization_to_use": OuteTTSLlamaCppQuantization_Enum.FP16 if OUTETTS_AVAILABLE_FOR_CONFIG else "FP16_STR_FALLBACK",
@@ -168,7 +168,7 @@ GERMAN_TTS_MODELS = {
         "notes": "Local OuteTTS (LlamaCPP backend). Custom WAV or OuteTTS default ID."
     },
     "oute_hf": {
-        "handler_function_key": "outetts",
+        # "handler_function_key": "outetts", # REMOVED: ALL_HANDLERS key is "oute_hf"
         "outetts_model_version_str": "1.0",
         "onnx_repo_id": "OuteAI/Llama-OuteTTS-1.0-1B-ONNX",
         "onnx_filename_options": ["onnx/model_q4f16.onnx", "onnx/model_q4.onnx", "onnx/model_int8.onnx"],
@@ -184,41 +184,40 @@ GERMAN_TTS_MODELS = {
         "notes": "OuteTTS library (HF backend) using downloaded ONNX variants of Llama-OuteTTS-1.0-1B for German."
     },
     "mlx_audio_kokoro_de": {
-        "handler_function_key": "mlx_audio",
+        # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_kokoro_de"
         "mlx_model_path": MLX_AUDIO_KOKORO_MODEL_ID,
         "default_voice_id": MLX_AUDIO_KOKORO_DEFAULT_VOICE,
         "available_voices": MLX_AUDIO_KOKORO_VOICES,
-        "lang_code": MLX_AUDIO_KOKORO_LANG_CODE_GERMAN, # User to verify this code
+        "lang_code": MLX_AUDIO_KOKORO_LANG_CODE_GERMAN,
         "sample_rate": 24000,
         "notes": "mlx-audio (Kokoro model) for Apple Silicon. German lang_code needed. Voice may be non-German."
     },
     "mlx_audio_csm_clone": {
-        "handler_function_key": "mlx_audio",
+        # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_csm_clone"
         "mlx_model_path": MLX_AUDIO_CSM_MODEL_ID,
-        "default_voice_id": "./german_csm_reference.wav", # USER MUST PROVIDE
+        "default_voice_id": "./german_csm_reference.wav",
         "available_voices": ["./german_csm_reference.wav"],
-        "lang_code": "de", # Assuming CSM can take language hint or infers well
-        "sample_rate": 24000, # Verify CSM's native rate
+        "lang_code": "de",
+        "sample_rate": 24000,
         "notes": "mlx-audio (CSM model) for voice cloning on Apple Silicon. Requires German reference WAV."
     },
     "mlx_audio_outetts_q4": {
-        "handler_function_key": "mlx_audio",
-        "mlx_model_path": MLX_AUDIO_OUTETTS_ONNX_REPO_ID, # Base ONNX repo for LlamaOuteTTS
-        # mlx_audio_handler will try options from onnx_filename_options_for_mlx
+        # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_outetts_q4"
+        "mlx_model_path": MLX_AUDIO_OUTETTS_ONNX_REPO_ID,
         "onnx_filename_options_for_mlx": [
-             "onnx/model_q4f16.onnx", # Preferred by size
-             "onnx/model_q4.onnx",
-             "onnx/model_int8.onnx",
+            "onnx/model_q4f16.onnx",
+            "onnx/model_q4.onnx",
+            "onnx/model_int8.onnx",
         ],
-        "onnx_subfolder_for_mlx": "onnx", # Subfolder in the mlx_model_path repo
-        "tokenizer_path_for_mlx_outetts": "OuteAI/Llama-OuteTTS-1.0-1B", # Tokenizer
+        "onnx_subfolder_for_mlx": "onnx",
+        "tokenizer_path_for_mlx_outetts": "OuteAI/Llama-OuteTTS-1.0-1B",
         "lang_code": "de",
-        "default_voice_id": "./german_outetts_reference.wav", # Llama-OuteTTS uses reference audio
+        "default_voice_id": "./german_outetts_reference.wav",
         "sample_rate": 24000,
         "notes": "OuteTTS Llama 1B ONNX (Q4 attempt) run via mlx-audio framework. Requires reference audio."
     },
     "speecht5_german_transformers": {
-        "handler_function_key": "speecht5",
+        # "handler_function_key": "speecht5", # REMOVED: ALL_HANDLERS key is "speecht5_german_transformers"
         "model_id": "sjdata/speecht5_finetuned_common_voice_11_de",
         "vocoder_id": "microsoft/speecht5_hifigan",
         "speaker_embeddings_repo": "Matthijs/cmu-arctic-xvectors",
@@ -226,7 +225,7 @@ GERMAN_TTS_MODELS = {
         "notes": "Local SpeechT5 (German fine-tune) via Transformers. Output: WAV."
     },
     "fastpitch_german_nemo": {
-        "handler_function_key": "nemo",
+        # "handler_function_key": "nemo", # REMOVED: ALL_HANDLERS key is "fastpitch_german_nemo"
         "spectrogram_model_repo_id": "inOXcrm/German_multispeaker_FastPitch_nemo",
         "spectrogram_model_filename": "German_multispeaker_FastPitch_nemo.nemo",
         "vocoder_model_name": "tts_de_hui_hifigan_ft_fastpitch_multispeaker_5",
@@ -235,27 +234,30 @@ GERMAN_TTS_MODELS = {
         "notes": "Local FastPitch (German) via NeMo. Output: WAV."
     },
     "coqui_tts_thorsten_ddc": {
-        "handler_function_key": "coqui_tts",
+        # "handler_function_key": "coqui_tts", # Already correct or redundant if model_id is key in ALL_HANDLERS
         "coqui_model_name": "tts_models/de/thorsten/tacotron2-DDC",
         "default_coqui_speaker": None,
         "language": "de",
-        "sample_rate": 22050, # Verify actual model output rate
+        "sample_rate": 22050,
+        "available_voices": ["default_speaker"], # ADDED to allow test loop to pick it up
         "notes": "Coqui TTS (Tacotron2 DDC) for German (Thorsten dataset). Uses 'TTS' library."
     },
     "coqui_tts_thorsten_vits": {
-        "handler_function_key": "coqui_tts",
+        # "handler_function_key": "coqui_tts",
         "coqui_model_name": "tts_models/de/thorsten/vits",
         "default_coqui_speaker": None,
         "language": "de",
-        "sample_rate": 22050, # VITS models often output at 22050Hz for voice, but can vary.
+        "sample_rate": 22050,
+        "available_voices": ["default_speaker"], # ADDED
         "notes": "Coqui TTS (VITS model) for German (Thorsten dataset). Uses 'TTS' library."
     },
-    "coqui_tts_thorsten_dca": { # <<< NEW ENTRY
-        "handler_function_key": "coqui_tts",
-        "coqui_model_name": COQUI_THORSTEN_TACOTRON2_DCA, # Using the constant
-        "default_coqui_speaker": None, # Thorsten models are typically single-speaker
-        "language": "de", # Model is German-specific
-        "sample_rate": 22050, # Verify this, Tacotron2 often outputs at this rate before vocoder
+    "coqui_tts_thorsten_dca": {
+        # "handler_function_key": "coqui_tts",
+        "coqui_model_name": COQUI_THORSTEN_TACOTRON2_DCA,
+        "default_coqui_speaker": None,
+        "language": "de",
+        "sample_rate": 22050,
+        "available_voices": ["default_speaker"], # ADDED
         "notes": "Coqui TTS (Tacotron2-DCA) for German (Thorsten dataset). Uses 'TTS' library. May require espeak/gruut."
     },
 }

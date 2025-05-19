@@ -83,8 +83,7 @@ def synthesize_with_orpheus_lm_studio(model_config, text, voice_id_override, mod
     effective_output_file_wav_str = str(Path(output_file_str).with_suffix(".wav")) if output_file_str else None
     audio_bytes = _orpheus_master_token_processor_and_decoder(
         _lm_studio_generate_raw_token_text_stream(),
-        output_file_wav_str=effective_output_file_wav_str,
-        orpheus_sample_rate=ORPHEUS_SAMPLE_RATE
+        output_file_wav_str=effective_output_file_wav_str
     )
 
     if audio_bytes:
@@ -156,8 +155,7 @@ def synthesize_with_orpheus_ollama(model_config, text, voice_id_override, model_
     effective_output_file_wav_str = str(Path(output_file_str).with_suffix(".wav")) if output_file_str else None
     audio_bytes = _orpheus_master_token_processor_and_decoder(
         _ollama_text_stream_generator(),
-        output_file_wav_str=effective_output_file_wav_str,
-        orpheus_sample_rate=ORPHEUS_SAMPLE_RATE
+        output_file_wav_str=effective_output_file_wav_str
     )
 
     if audio_bytes:

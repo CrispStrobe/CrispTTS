@@ -174,6 +174,9 @@ if not SNAC_AVAILABLE or not snac_loaded_model:
 
 
 if __name__ == "__main__":
+    from pathlib import Path
+    import wave 
+
     # Configure a basic logger for standalone testing of this decoder.py
     logging.basicConfig(
         level=logging.DEBUG,

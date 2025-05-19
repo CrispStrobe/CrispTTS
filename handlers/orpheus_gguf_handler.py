@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 import gc
+import sys # ADDED for sys.modules check
 
 # Use relative imports for project modules
 from config import ORPHEUS_SAMPLE_RATE, ORPHEUS_DEFAULT_VOICE, ORPHEUS_GERMAN_VOICES # Import constants
@@ -16,15 +17,15 @@ from utils import (
 logger = logging.getLogger("CrispTTS.handlers.orpheus_gguf")
 
 # Conditional imports for LlamaCPP and HuggingFace Hub
-LLAMA_CPP_AVAILABLE_IN_HANDLER = False
+LLAMA_CPP_AVAILABLE_IN_HANDLER = False # Corrected variable name (singular)
 LlamaForHandler = None
-HF_HUB_AVAILABLE_IN_HANDLER = False
+HF_HUB_AVAILABLE_IN_HANDLER = False # Corrected variable name (singular)
 hf_hub_download_h = None
-IS_MPS_FOR_HANDLER_GGUF = False # Determine based on torch if needed by LlamaCPP for MPS
+IS_MPS_FOR_HANDLER_GGUF = False
 
 try:
     from huggingface_hub import hf_hub_download
-    HF_HUB_AVAILABLE_IN_HANDLER = True
+    HF_HUB_AVAILABLE_IN_HANDLER = True # Corrected
     hf_hub_download_h = hf_hub_download
 except ImportError:
     logger.warning("huggingface_hub not installed. Orpheus GGUF model downloading will fail.")
@@ -32,24 +33,23 @@ except ImportError:
 if HF_HUB_AVAILABLE_IN_HANDLER: # LlamaCPP is useful only if models can be fetched
     try:
         from llama_cpp import Llama as Llama_imp
-        import llama_cpp as llama_cpp_module # For potential global log set if needed here
+        import llama_cpp as llama_cpp_module
         LlamaForHandler = Llama_imp
-        LLAMA_CPP_AVAILABLE_IN_HANDLER = True
-        # Check for MPS (assuming torch might be available for this check)
+        LLAMA_CPP_AVAILABLE_IN_HANDLER = True # Corrected
         try:
             import torch
             IS_MPS_FOR_HANDLER_GGUF = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
         except ImportError:
-            pass # torch not available, IS_MPS_FOR_HANDLER_GGUF remains False
+            pass
     except ImportError:
         logger.info("llama-cpp-python not installed. Orpheus GGUF handler will not be functional.")
 
 
 def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
-    if not LLAMA_CPP_AVAILABLE_IN_HANDLER or not LlamaForHandler:
+    if not LLAMA_CPP_AVAILABLE_IN_HANDLER or not LlamaForHandler: # Corrected
         logger.error("llama-cpp-python not available. Skipping Orpheus GGUF local synthesis.")
         return
-    if not HF_HUB_AVAILABLE_IN_HANDLER or not hf_hub_download_h:
+    if not HF_HUB_AVAILABLE_IN_HANDLER or not hf_hub_download_h: # Corrected
         logger.error("huggingface_hub not available. Cannot download Orpheus GGUF models. Skipping.")
         return
 
@@ -78,26 +78,23 @@ def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, mo
         logger.info(f"Orpheus GGUF - Model found/downloaded: {local_model_path}")
 
         available_voices = model_config.get('available_voices', ORPHEUS_GERMAN_VOICES)
-        # Use ORPHEUS_DEFAULT_VOICE from config for the fallback in orpheus_format_prompt
-        formatted_prompt = orpheus_format_prompt(text, voice, available_voices) # Util from utils.py
+        formatted_prompt = orpheus_format_prompt(text, voice, available_voices)
 
         cli_params = json.loads(model_params_override) if model_params_override else {}
         temperature = cli_params.get("temperature", 0.5)
         top_p = cli_params.get("top_p", 0.9)
-        max_tokens_gen = cli_params.get("max_tokens", 3072) # Orpheus specific, not general LLM
+        max_tokens_gen = cli_params.get("max_tokens", 3072)
         repetition_penalty = cli_params.get("repetition_penalty", 1.1)
         n_gpu_layers = cli_params.get("n_gpu_layers", -1 if IS_MPS_FOR_HANDLER_GGUF else 0)
 
         logger.info("Orpheus GGUF - Loading GGUF model (C-level output suppressed by global handler and verbose=False)...")
-        # Global llama_log_set in main.py should handle C logs.
-        # SuppressOutput here is an additional layer for Python prints during Llama init.
         with SuppressOutput(suppress_stdout=True, suppress_stderr=True):
             llm = LlamaForHandler(
                 model_path=str(local_model_path),
-                verbose=False, # llama-cpp-python's own verbose flag
+                verbose=False,
                 n_gpu_layers=n_gpu_layers,
-                n_ctx=2048, # Context size
-                logits_all=True # Required by Orpheus
+                n_ctx=2048,
+                logits_all=True
             )
         logger.info(f"Orpheus GGUF - Model loaded: {local_model_path}")
 
@@ -120,21 +117,19 @@ def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, mo
         
         audio_bytes = _orpheus_master_token_processor_and_decoder(
             _llama_cpp_text_stream_generator_local(),
-            output_file_wav_str=effective_output_file_wav_str, # Pass as string
-            orpheus_sample_rate=ORPHEUS_SAMPLE_RATE # from config.py
+            output_file_wav_str=effective_output_file_wav_str
+            # REMOVED: orpheus_sample_rate=ORPHEUS_SAMPLE_RATE
         )
 
         if audio_bytes:
             if play_direct:
-                # _orpheus_master_token_processor_and_decoder handles saving if output_file_wav_str is provided
                 if effective_output_file_wav_str and Path(effective_output_file_wav_str).exists():
                     play_audio(effective_output_file_wav_str, is_path=True)
-                else: # Play from bytes if not saved or save failed
+                else:
                     play_audio(audio_bytes, is_path=False, input_format="pcm_s16le", sample_rate=ORPHEUS_SAMPLE_RATE)
-        else: # No audio bytes returned, _orpheus_master_token_processor_and_decoder already logged a warning
-             if effective_output_file_wav_str and Path(effective_output_file_wav_str).exists(): # If file was created but empty by _orpheus...
+        else:
+            if effective_output_file_wav_str and Path(effective_output_file_wav_str).exists():
                 Path(effective_output_file_wav_str).unlink(missing_ok=True)
-
 
     except Exception as e:
         logger.error(f"Orpheus GGUF - Synthesis failed: {e}", exc_info=True)
@@ -143,7 +138,7 @@ def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, mo
             del llm
             logger.debug("Orpheus GGUF - Llama model object deleted.")
         gc.collect()
-        # Conditional CUDA cache clearing if torch was available and CUDA used
-        if LLAMA_CPP_AVAILABLE_IN_HANDLERS and 'torch' in sys.modules and sys.modules['torch'].cuda.is_available():
+        # Corrected variable name LLAMA_CPP_AVAILABLE_IN_HANDLER
+        if LLAMA_CPP_AVAILABLE_IN_HANDLER and 'torch' in sys.modules and sys.modules['torch'].cuda.is_available():
             sys.modules['torch'].cuda.empty_cache()
             logger.debug("Orpheus GGUF - Cleared CUDA cache (if torch was used by LlamaCPP).")

@@ -11,7 +11,7 @@ import gc
 
 # Relative imports
 from config import (
-    OUTETTS_INTERNAL_MODEL_INFO_DATA, # Fallback data
+    OUTETTS_INTERNAL_MODEL_INFO_DATA,
     OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA
 )
 from utils import SuppressOutput, save_audio, play_audio, _prepare_oute_speaker_ref
@@ -23,21 +23,21 @@ OUTETTS_AVAILABLE_IN_HANDLER = False
 OuteTTSInterface_h, OuteTTSModelConfig_h, OuteTTSModels_h, OuteTTSBackend_h = (None,) * 4
 OuteTTSLlamaCppQuantization_h, OuteTTSGenerationConfig_h, OuteTTSGenerationType_h, OuteTTSSamplerConfig_h = (None,) * 4
 OuteTTSInterfaceVersion_h = None
-HFModelConfig_v1_h, HFModelConfig_v2_h, HFModelConfig_v3_h = None, None, None # For specific versioned configs
+HFModelConfig_v1_h, HFModelConfig_v2_h, HFModelConfig_v3_h = None, None, None
 
-TORCH_AVAILABLE_IN_HANDLER = False
+TORCH_AVAILABLE_IN_HANDLER = False # Corrected (singular)
 torch_h = None # type: ignore
 IS_MPS_IN_HANDLER = False
 
 try:
     import torch as torch_imp
     torch_h = torch_imp
-    TORCH_AVAILABLE_IN_HANDLER = True
+    TORCH_AVAILABLE_IN_HANDLER = True # Corrected
     IS_MPS_IN_HANDLER = hasattr(torch_h.backends, "mps") and torch_h.backends.mps.is_available()
 except ImportError:
-    pass # Will be checked before use
+    pass
 
-if TORCH_AVAILABLE_IN_HANDLER:
+if TORCH_AVAILABLE_IN_HANDLER: # Corrected
     try:
         import outetts
         from outetts import (Interface, ModelConfig, Models, Backend, LlamaCppQuantization,
@@ -47,7 +47,6 @@ if TORCH_AVAILABLE_IN_HANDLER:
         OuteTTSGenerationConfig_h, OuteTTSGenerationType_h, OuteTTSSamplerConfig_h = GenerationConfig, GenerationType, SamplerConfig
         OuteTTSInterfaceVersion_h = InterfaceVersion
         OUTETTS_AVAILABLE_IN_HANDLER = True
-        # Try to import versioned configs if OuteTTS exposes them this way
         try: from outetts.version.v1.interface import HFModelConfig as HFModelConfig_v1_imp; HFModelConfig_v1_h = HFModelConfig_v1_imp
         except ImportError: pass
         try: from outetts.version.v2.interface import HFModelConfig as HFModelConfig_v2_imp; HFModelConfig_v2_h = HFModelConfig_v2_imp
@@ -61,15 +60,20 @@ if TORCH_AVAILABLE_IN_HANDLER:
     except Exception as e:
         logger.warning(f"OuteTTS general import error: {e}. OuteTTS handler unavailable.")
 
+HF_HUB_AVAILABLE_FOR_OUTETTS = False # Renamed from HF_HUB_AVAILABLE_IN_HANDLERS
+hf_hub_download_outetts = None # spezifischer Name
+hf_fs_outetts = None # spezifischer Name
+
 try:
     from huggingface_hub import hf_hub_download, HfFileSystem
-    HF_HUB_AVAILABLE_FOR_OUTETTS = True
+    HF_HUB_AVAILABLE_FOR_OUTETTS = True # Corrected
+    hf_hub_download_outetts = hf_hub_download # Use a more specific name
     hf_fs_outetts = HfFileSystem()
 except ImportError:
-    HF_HUB_AVAILABLE_FOR_OUTETTS = False
-    hf_hub_download = None # type: ignore
-    hf_fs_outetts = None # type: ignore
-    if OUTETTS_AVAILABLE_IN_HANDLER: # Only warn if OuteTTS itself is available but hub isn't
+    # HF_HUB_AVAILABLE_FOR_OUTETTS remains False
+    # hf_hub_download_outetts remains None
+    # hf_fs_outetts remains None
+    if OUTETTS_AVAILABLE_IN_HANDLER:
         logger.warning("huggingface_hub not installed. OuteTTS model downloading (especially for ONNX) might fail.")
 
 
@@ -79,15 +83,13 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
         return
 
     backend_choice_from_config = model_config.get("backend_to_use")
-    # Map string fallbacks from config (if OuteTTS wasn't available during config.py load) to actual enums
     backend_choice = None
     if isinstance(backend_choice_from_config, str):
         if backend_choice_from_config == "LLAMACPP_STR_FALLBACK" and OuteTTSBackend_h: backend_choice = OuteTTSBackend_h.LLAMACPP
         elif backend_choice_from_config == "HF_STR_FALLBACK" and OuteTTSBackend_h: backend_choice = OuteTTSBackend_h.HF
         else: logger.error(f"OuteTTS: Unknown backend string '{backend_choice_from_config}'."); return
-    else: # Assumed to be enum if not string
+    else:
         backend_choice = backend_choice_from_config
-
 
     outetts_model_enum_cfg = model_config.get("outetts_model_enum")
     outetts_model_enum_for_cpp = None
@@ -112,15 +114,15 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
 
     try:
         logger.info("OuteTTS - Preparing ModelConfig...")
-        device_to_use = "cuda" if TORCH_AVAILABLE_IN_HANDLERS and torch_h.cuda.is_available() else \
+        # Corrected variable name TORCH_AVAILABLE_IN_HANDLER
+        device_to_use = "cuda" if TORCH_AVAILABLE_IN_HANDLER and torch_h.cuda.is_available() else \
                         ("mps" if IS_MPS_IN_HANDLER else "cpu")
 
-        _model_max_seq_length = 8192 # Default
-        # Try to get from version string mapping first, then enum mapping
+        _model_max_seq_length = 8192
         if outetts_model_version_str and outetts_model_version_str in OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA:
             _model_max_seq_length = OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA[outetts_model_version_str].get("max_seq_length", _model_max_seq_length)
         elif outetts_model_enum_for_cpp and outetts_model_enum_for_cpp in OUTETTS_INTERNAL_MODEL_INFO_DATA:
-             _model_max_seq_length = OUTETTS_INTERNAL_MODEL_INFO_DATA[outetts_model_enum_for_cpp].get("max_seq_length", _model_max_seq_length)
+            _model_max_seq_length = OUTETTS_INTERNAL_MODEL_INFO_DATA[outetts_model_enum_for_cpp].get("max_seq_length", _model_max_seq_length)
         logger.debug(f"OuteTTS - Model family max_seq_length for GenerationConfig: {_model_max_seq_length}")
 
         if backend_choice == OuteTTSBackend_h.LLAMACPP:
@@ -142,7 +144,8 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
                 interface = OuteTTSInterface_h(config=cfg_obj)
 
         elif backend_choice == OuteTTSBackend_h.HF:
-            if not HF_HUB_AVAILABLE_IN_HANDLERS or not hf_hub_download:
+            # Corrected variable HF_HUB_AVAILABLE_FOR_OUTETTS and hf_hub_download_outetts
+            if not HF_HUB_AVAILABLE_FOR_OUTETTS or not hf_hub_download_outetts:
                 logger.error("OuteTTS HF: huggingface_hub not available for model download. Skipping.")
                 return
 
@@ -152,7 +155,8 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
             tokenizer_path = model_config.get("tokenizer_path")
             language_code = model_config.get("language")
             torch_dtype_cfg = model_config.get("torch_dtype_for_hf_wrapper")
-            torch_dtype_for_wrapper = torch_dtype_cfg if torch_dtype_cfg is not None else (torch_h.float32 if TORCH_AVAILABLE_IN_HANDLERS else None)
+            # Corrected variable TORCH_AVAILABLE_IN_HANDLER
+            torch_dtype_for_wrapper = torch_dtype_cfg if torch_dtype_cfg is not None else (torch_h.float32 if TORCH_AVAILABLE_IN_HANDLER else None)
             
             interface_version_enum_cfg = model_config.get("interface_version_enum")
             interface_version_enum = None
@@ -174,22 +178,25 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
                 
                 logger.info(f"OuteTTS HF - Attempting ONNX: {onnx_repo_id}/{onnx_filename_in_repo_subpath}")
                 try:
-                    hf_hub_download(repo_id=onnx_repo_id, filename=onnx_filename_in_repo_subpath,
-                                    local_dir=str(current_model_attempt_dir), local_dir_use_symlinks=False, token=os.getenv("HF_TOKEN"))
+                    # Use hf_hub_download_outetts
+                    hf_hub_download_outetts(repo_id=onnx_repo_id, filename=onnx_filename_in_repo_subpath,
+                                      local_dir=str(current_model_attempt_dir), local_dir_use_symlinks=False, token=os.getenv("HF_TOKEN"))
                     onnx_data_file_in_repo = onnx_filename_in_repo_subpath + "_data"
-                    if hf_fs_handler and hf_fs_handler.exists(f"{onnx_repo_id}/{onnx_data_file_in_repo}"): # Check with hf_fs from this module
-                        hf_hub_download(repo_id=onnx_repo_id, filename=onnx_data_file_in_repo,
-                                        local_dir=str(current_model_attempt_dir), local_dir_use_symlinks=False, token=os.getenv("HF_TOKEN"))
+                    # Use hf_fs_outetts
+                    if hf_fs_outetts and hf_fs_outetts.exists(f"{onnx_repo_id}/{onnx_data_file_in_repo}"):
+                        # Use hf_hub_download_outetts
+                        hf_hub_download_outetts(repo_id=onnx_repo_id, filename=onnx_data_file_in_repo,
+                                          local_dir=str(current_model_attempt_dir), local_dir_use_symlinks=False, token=os.getenv("HF_TOKEN"))
                         logger.info(f"OuteTTS HF - Downloaded {Path(onnx_data_file_in_repo).name}.")
                     
-                    ConfigClass = OuteTTSModelConfig_h # Fallback
+                    ConfigClass = OuteTTSModelConfig_h 
                     if outetts_model_version_str == "1.0": ConfigClass = HFModelConfig_v3_h or OuteTTSModelConfig_h
                     elif outetts_model_version_str == "0.3": ConfigClass = HFModelConfig_v2_h or OuteTTSModelConfig_h
                     elif outetts_model_version_str in ["0.1", "0.2"]: ConfigClass = HFModelConfig_v1_h or OuteTTSModelConfig_h
                     
                     cfg_obj = ConfigClass(
                         model_path=str(current_model_attempt_dir), tokenizer_path=tokenizer_path, language=language_code,
-                        dtype=torch_dtype_for_wrapper, # For PyTorch wrapper elements
+                        dtype=torch_dtype_for_wrapper, 
                         interface_version=interface_version_enum, backend=OuteTTSBackend_h.HF,
                         device=device_to_use, max_seq_length=_model_max_seq_length
                     )
@@ -214,7 +221,6 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
 
         if not interface: logger.error("OuteTTS Interface init failed."); return
 
-        # Speaker Loading (using logger)
         is_default_speaker_id = isinstance(voice_id_or_path, str) and not (Path(voice_id_or_path).is_file() and voice_id_or_path.lower().endswith((".wav", ".json")))
         if is_default_speaker_id:
             logger.info(f"OuteTTS - Loading default speaker: {voice_id_or_path}")
@@ -234,11 +240,10 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
         if not speaker: logger.error("OuteTTS - Speaker profile not loaded/created."); return
         logger.info(f"OuteTTS - Speaker ready: {voice_id_or_path}")
 
-        # Generation
         sampler_config_dict = {"temperature": 0.4, "repetition_penalty": 1.1, "top_k": 40, "top_p": 0.9, "min_p": 0.05}
         gen_max_len = _model_max_seq_length
         if hasattr(interface, 'config') and hasattr(interface.config, 'max_seq_length') and interface.config.max_seq_length:
-             gen_max_len = interface.config.max_seq_length
+            gen_max_len = interface.config.max_seq_length
         if model_params_override:
             try:
                 cli_params = json.loads(model_params_override)
@@ -277,6 +282,7 @@ def synthesize_with_outetts_local(model_config, text, voice_id_or_path, model_pa
         if speaker: del speaker
         if cfg_obj: del cfg_obj
         gc.collect()
-        if TORCH_AVAILABLE_IN_HANDLERS and torch_h and backend_choice == OuteTTSBackend_h.HF and torch_h.cuda.is_available():
+        # Corrected variable TORCH_AVAILABLE_IN_HANDLER
+        if TORCH_AVAILABLE_IN_HANDLER and torch_h and backend_choice == OuteTTSBackend_h.HF and torch_h.cuda.is_available():
             torch_h.cuda.empty_cache(); logger.debug("OuteTTS HF - Cleared CUDA cache.")
         logger.debug("OuteTTS - Resources cleanup attempted.")

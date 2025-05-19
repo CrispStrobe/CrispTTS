@@ -1,4 +1,5 @@
 # Ignore Python cache files
 __pycache__/
 *.pyc
-
+german.wav
+tts_test_outputs/

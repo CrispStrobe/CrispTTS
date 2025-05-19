@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 import gc
+import numpy as np # ADDED THIS IMPORT
 
 # Conditional imports
 TORCH_AVAILABLE_IN_HANDLER = False
@@ -32,12 +33,10 @@ if TORCH_AVAILABLE_IN_HANDLER and SOUNDFILE_AVAILABLE_IN_HANDLER:
         SpeechT5HifiGan_s5 = SpeechT5HifiGan
         load_dataset_s5 = load_dataset
     except ImportError:
-        logger_s5_init = logging.getLogger("CrispTTS.handlers.speecht5_init") # Temp logger for init phase
+        logger_s5_init = logging.getLogger("CrispTTS.handlers.speecht5_init")
         logger_s5_init.info("SpeechT5: 'transformers' or 'datasets' not installed. Handler will be non-functional.")
 
-
-# Use relative imports for project modules
-from utils import save_audio, play_audio # Assuming these are in utils.py
+from utils import save_audio, play_audio
 
 logger = logging.getLogger("CrispTTS.handlers.speecht5")
 
@@ -68,22 +67,27 @@ def synthesize_with_speecht5_transformers(model_config, text, voice_id_override,
         
         if voice_id_override:
             if Path(voice_id_override).is_file() and voice_id_override.lower().endswith((".pt", ".pth")):
-                try: speaker_embedding_to_use = torch_s5.load(voice_id_override, map_location="cpu").unsqueeze(0); logger.info(f"SpeechT5 - Loaded custom speaker embedding: {voice_id_override}")
-                except Exception as e: logger.warning(f"SpeechT5 - Failed to load custom speaker embedding '{voice_id_override}': {e}. Trying default/index.")
+                try: 
+                    speaker_embedding_to_use = torch_s5.load(voice_id_override, map_location="cpu").unsqueeze(0)
+                    logger.info(f"SpeechT5 - Loaded custom speaker embedding: {voice_id_override}")
+                except Exception as e: 
+                    logger.warning(f"SpeechT5 - Failed to load custom speaker embedding '{voice_id_override}': {e}. Trying default/index.")
             if not speaker_embedding_to_use and voice_id_override.isdigit():
                 try:
                     speaker_idx = int(voice_id_override)
                     embeddings_dataset = load_dataset_s5(speaker_embeddings_repo, split="validation", trust_remote_code=True)
                     speaker_embedding_to_use = torch_s5.tensor(embeddings_dataset[speaker_idx]["xvector"]).unsqueeze(0)
                     logger.info(f"SpeechT5 - Using speaker embedding index {speaker_idx} from {speaker_embeddings_repo}.")
-                except Exception as e: logger.warning(f"SpeechT5 - Failed to load embedding index {voice_id_override}: {e}. Using default.")
+                except Exception as e: 
+                    logger.warning(f"SpeechT5 - Failed to load embedding index {voice_id_override}: {e}. Using default.")
         
         if speaker_embedding_to_use is None:
             try:
                 embeddings_dataset = load_dataset_s5(speaker_embeddings_repo, split="validation", trust_remote_code=True)
                 speaker_embedding_to_use = torch_s5.tensor(embeddings_dataset[default_speaker_idx]["xvector"]).unsqueeze(0)
                 logger.info(f"SpeechT5 - Using default speaker index {default_speaker_idx}.")
-            except Exception as e: logger.error(f"SpeechT5 - Failed to load default speaker embedding: {e}"); return
+            except Exception as e: 
+                logger.error(f"SpeechT5 - Failed to load default speaker embedding: {e}"); return
 
         device = "cuda" if torch_s5.cuda.is_available() else ("mps" if (hasattr(torch_s5.backends, "mps") and torch_s5.backends.mps.is_available()) else "cpu")
         logger.info(f"SpeechT5 - Using device: {device}")
@@ -95,21 +99,18 @@ def synthesize_with_speecht5_transformers(model_config, text, voice_id_override,
         with torch_s5.no_grad():
             speech_tensor = model.generate_speech(input_ids, speaker_embedding_to_use, vocoder=vocoder)
         
-        # Ensure audio is 1D float32 for soundfile/pydub processing
-        audio_array_np = speech_tensor.cpu().numpy().astype(np.float32)
-        if audio_array_np.ndim > 1: # Flatten if necessary, assuming mono
+        audio_array_np = speech_tensor.cpu().numpy().astype(np.float32) # np is now defined
+        if audio_array_np.ndim > 1:
             audio_array_np = audio_array_np.squeeze()
             
-        sampling_rate = 16000 # SpeechT5 default
+        sampling_rate = 16000
 
         effective_output_file_wav_str = str(Path(output_file_str).with_suffix(".wav")) if output_file_str else None
         if effective_output_file_wav_str:
-            # sf.write expects data to be float or int, matching subtype. Default is float.
             sf_s5.write(effective_output_file_wav_str, audio_array_np, samplerate=sampling_rate)
             logger.info(f"SpeechT5 - Audio saved to {effective_output_file_wav_str}")
         if play_direct:
-            # play_audio utility expects bytes for PCM, so convert float numpy array to int16 bytes
-            audio_int16 = (audio_array_np * 32767).astype(np.int16)
+            audio_int16 = (audio_array_np * 32767).astype(np.int16) # np is now defined
             play_audio(audio_int16.tobytes(), is_path=False, input_format="pcm_s16le", sample_rate=sampling_rate)
             
     except Exception as e: logger.error(f"SpeechT5 - Synthesis failed: {e}", exc_info=True)
