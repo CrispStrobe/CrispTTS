@@ -1,0 +1,90 @@
+# handlers/__init__.py
+
+import logging
+
+logger = logging.getLogger("CrispTTS.handlers")
+
+# These imports should be okay as they are relative within the 'handlers' package
+try:
+    from .edge_handler import synthesize_with_edge_tts
+    logger.debug("EdgeTTS handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import EdgeTTS handler (edge_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_edge_tts = None
+try:
+    from .piper_handler import synthesize_with_piper_local
+    logger.debug("Piper handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import Piper handler (piper_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_piper_local = None
+try:
+    from .orpheus_gguf_handler import synthesize_with_orpheus_gguf_local
+    logger.debug("Orpheus GGUF handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import Orpheus GGUF handler (orpheus_gguf_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_orpheus_gguf_local = None
+try:
+    from .orpheus_api_handler import synthesize_with_orpheus_lm_studio, synthesize_with_orpheus_ollama
+    logger.debug("Orpheus API handlers (LM Studio, Ollama) imported.")
+except ImportError as e:
+    logger.warning(f"Could not import Orpheus API handlers (orpheus_api_handler.py): {e}. These handlers will be unavailable.")
+    synthesize_with_orpheus_lm_studio = None
+    synthesize_with_orpheus_ollama = None
+try:
+    from .outetts_handler import synthesize_with_outetts_local
+    logger.debug("OuteTTS handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import OuteTTS handler (outetts_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_outetts_local = None
+try:
+    from .speecht5_handler import synthesize_with_speecht5_transformers
+    logger.debug("SpeechT5 handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import SpeechT5 handler (speecht5_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_speecht5_transformers = None
+try:
+    from .nemo_handler import synthesize_with_fastpitch_nemo
+    logger.debug("NeMo FastPitch handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import NeMo FastPitch handler (nemo_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_fastpitch_nemo = None
+try:
+    from .mlx_audio_handler import synthesize_with_mlx_audio
+    logger.debug("MLX Audio handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import MLX Audio handler (mlx_audio_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_mlx_audio = None
+try:
+    from .coqui_tts_handler import synthesize_with_coqui_tts
+    logger.debug("Coqui TTS handler imported.")
+except ImportError as e:
+    logger.warning(f"Could not import Coqui TTS handler (coqui_tts_handler.py): {e}. This handler will be unavailable.")
+    synthesize_with_coqui_tts = None
+
+
+ALL_HANDLERS = {
+    "edge": synthesize_with_edge_tts,
+    "piper_local": synthesize_with_piper_local,
+    "orpheus_lex_au": synthesize_with_orpheus_gguf_local,
+    "orpheus_sauerkraut": synthesize_with_orpheus_gguf_local,
+    "orpheus_lm_studio": synthesize_with_orpheus_lm_studio,
+    "orpheus_ollama": synthesize_with_orpheus_ollama,
+    "oute_llamacpp": synthesize_with_outetts_local,
+    "oute_hf": synthesize_with_outetts_local,
+    "speecht5_german_transformers": synthesize_with_speecht5_transformers,
+    "fastpitch_german_nemo": synthesize_with_fastpitch_nemo,
+    "mlx_audio_kokoro_de": synthesize_with_mlx_audio,
+    "mlx_audio_csm_clone": synthesize_with_mlx_audio,
+    "mlx_audio_outetts_q4": synthesize_with_mlx_audio,
+    "coqui_tts_thorsten_ddc": synthesize_with_coqui_tts,
+    "coqui_tts_thorsten_vits": synthesize_with_coqui_tts,
+    "coqui_tts_thorsten_dca": synthesize_with_coqui_tts,
+}
+
+ALL_HANDLERS = {k: v for k, v in ALL_HANDLERS.items() if v is not None}
+
+__all__ = [name for name, func in ALL_HANDLERS.items() if func is not None] # Export only function names
+__all__.append("ALL_HANDLERS")
+
+
+logger.info(f"TTS Handlers package initialized. Mapped and available handlers: {list(ALL_HANDLERS.keys())}")
