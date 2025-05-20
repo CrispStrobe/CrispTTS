@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 import logging
 import numpy as np
+import tempfile
 
 # --- Project-Specific Imports (from other planned modules) ---
 # These will be available once config.py is created and populated.
@@ -414,23 +415,67 @@ def _orpheus_master_token_processor_and_decoder(raw_token_text_generator, output
 
 
 # --- OuteTTS Specific Utilities ---
-def _prepare_oute_speaker_ref(voice_id_or_path, model_name_for_log):
-    logger.debug(f"OuteTTS ({model_name_for_log}) - Preparing speaker reference: {voice_id_or_path}")
-    try:
-        p = Path(voice_id_or_path)
-        if p.is_file() and p.suffix.lower() == ".wav":
-            logger.info(f"OuteTTS ({model_name_for_log}) - Using valid local speaker reference WAV: {p}")
-            return p, None
-        elif p.is_file():
-            logger.warning(f"OuteTTS ({model_name_for_log}) - Speaker reference '{voice_id_or_path}' is a file but not .wav. Treating as ID or will fail.")
-            return voice_id_or_path, None
-        else: # Not a file path, assume it's an ID string
-            logger.info(f"OuteTTS ({model_name_for_log}) - Speaker reference '{voice_id_or_path}' not a local file. Assuming OuteTTS default ID.")
-            return voice_id_or_path, None
-    except TypeError: # Not path-like, e.g., if it's already an OuteTTS internal ID object passed unintentionally
-         logger.info(f"OuteTTS ({model_name_for_log}) - Speaker reference '{voice_id_or_path}' not path-like. Assuming OuteTTS default ID.")
-         return voice_id_or_path, None
+def _prepare_oute_speaker_ref(speaker_ref_path_str: str, model_id_for_log: str ="oute"):
+    """
+    Validates and optionally trims the OuteTTS speaker reference WAV file.
+    Returns a tuple: (Path object to use for speaker creation, string path of temp file to delete or None).
+    """
+    speaker_ref_path_to_use = None
+    temp_trimmed_audio_path_to_delete = None # Path of temp file if trimming occurs
 
+    if not isinstance(speaker_ref_path_str, str) or not speaker_ref_path_str.strip():
+        logger.warning(f"{model_id_for_log} - Speaker reference path is empty or not a string: '{speaker_ref_path_str}'. Attempting fallback to ./german.wav.")
+        speaker_ref_path_str = "./german.wav" # Force fallback check
+
+    # Handle placeholder for default and try ./german.wav explicitly if path seems like a placeholder or became ./german.wav
+    if "path/to/your" in speaker_ref_path_str or speaker_ref_path_str == "./german.wav":
+        german_wav_fallback = Path("./german.wav").resolve() # Resolve to make existence check robust
+        if german_wav_fallback.exists() and german_wav_fallback.is_file():
+            logger.info(f"{model_id_for_log} - Found '{german_wav_fallback}', using it as reference.")
+            speaker_ref_path_input = german_wav_fallback
+        else:
+            logger.error(f"{model_id_for_log} - Default speaker placeholder used or './german.wav' fallback specified, but '{german_wav_fallback}' not found. Please provide a valid --german-voice-id (WAV path).")
+            return None, None
+    else:
+        speaker_ref_path_input = Path(speaker_ref_path_str).resolve()
+
+    if not speaker_ref_path_input.exists() or not speaker_ref_path_input.is_file() or speaker_ref_path_input.suffix.lower() != '.wav':
+        logger.error(f"{model_id_for_log} - Speaker reference path '{speaker_ref_path_input}' is not a valid existing .wav file.")
+        return None, None
+
+    # At this point, speaker_ref_path_input should be a valid Path object to an existing .wav file
+    if not PYDUB_AVAILABLE:
+        logger.warning(f"{model_id_for_log} - Pydub not available. Cannot check/trim reference audio length. Using as is: '{speaker_ref_path_input}'. Max length for OuteTTS is ~14.5s.")
+        return speaker_ref_path_input, None # Return original path, no temp file created
+
+    try:
+        logger.debug(f"{model_id_for_log} - Loading reference audio '{speaker_ref_path_input}' for duration check.")
+        audio_segment = AudioSegment.from_file(str(speaker_ref_path_input))
+        MAX_OUTE_REF_DURATION_MS = 14500
+
+        if len(audio_segment) > MAX_OUTE_REF_DURATION_MS:
+            logger.info(f"{model_id_for_log} - Reference audio '{speaker_ref_path_input}' ({len(audio_segment)/1000.0:.1f}s) is > {MAX_OUTE_REF_DURATION_MS/1000.0:.1f}s. Trimming to {MAX_OUTE_REF_DURATION_MS/1000.0:.1f}s.")
+            trimmed_segment = audio_segment[:MAX_OUTE_REF_DURATION_MS]
+            
+            # Create a temporary file for the trimmed audio
+            fd, temp_trimmed_audio_path_str = tempfile.mkstemp(suffix=".wav", prefix="trimmed_ref_")
+            os.close(fd) # Close the file descriptor, pydub will reopen
+            
+            trimmed_segment.export(temp_trimmed_audio_path_str, format="wav")
+            logger.info(f"{model_id_for_log} - Using trimmed temporary audio: {temp_trimmed_audio_path_str}")
+            speaker_ref_path_to_use = Path(temp_trimmed_audio_path_str)
+            temp_trimmed_audio_path_to_delete = temp_trimmed_audio_path_str # Store string path for deletion
+        else:
+            logger.info(f"{model_id_for_log} - Reference audio '{speaker_ref_path_input}' ({len(audio_segment)/1000.0:.1f}s) is within length limits. Using original.")
+            speaker_ref_path_to_use = speaker_ref_path_input
+            # temp_trimmed_audio_path_to_delete remains None
+            
+    except Exception as e_audio_proc:
+        logger.warning(f"{model_id_for_log} - Error processing reference audio '{speaker_ref_path_input}' for length check/trim: {e_audio_proc}. Using original path without trimming attempt.")
+        speaker_ref_path_to_use = speaker_ref_path_input # Fallback to original path
+        # temp_trimmed_audio_path_to_delete remains None
+            
+    return speaker_ref_path_to_use, temp_trimmed_audio_path_to_delete
 
 # --- Informational Functions (to be called from main.py) ---
 def list_available_models(models_config_dict):

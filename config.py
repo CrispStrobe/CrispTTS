@@ -152,9 +152,10 @@ GERMAN_TTS_MODELS = {
     "orpheus_ollama": {
         # "handler_function_key": "orpheus_ollama", # Redundant
         "api_url": OLLAMA_API_URL_DEFAULT,
-        "ollama_model_name": "orpheus-german-tts:latest",
-        "default_voice_id": "jana",
-        "available_voices": ORPHEUS_GERMAN_VOICES + SAUERKRAUT_VOICES + ORPHEUS_AVAILABLE_VOICES_BASE,
+        "ollama_model_name": "legraphista/Orpheus",
+        "default_voice_id": "tara",
+        "available_voices": ORPHEUS_AVAILABLE_VOICES_BASE,
+        # ORPHEUS_GERMAN_VOICES + SAUERKRAUT_VOICES + 
         "notes": "Orpheus via Ollama API. Requires decoder.py. Output: WAV."
     },
     "oute_llamacpp": {
@@ -168,20 +169,21 @@ GERMAN_TTS_MODELS = {
         "notes": "Local OuteTTS (LlamaCPP backend). Custom WAV or OuteTTS default ID."
     },
     "oute_hf": {
-        # "handler_function_key": "outetts", # REMOVED: ALL_HANDLERS key is "oute_hf"
         "outetts_model_version_str": "1.0",
-        "onnx_repo_id": "OuteAI/Llama-OuteTTS-1.0-1B-ONNX",
-        "onnx_filename_options": ["onnx/model_q4f16.onnx", "onnx/model_q4.onnx", "onnx/model_int8.onnx"],
-        "onnx_subfolder": "onnx",
-        "tokenizer_path": "OuteAI/Llama-OuteTTS-1.0-1B",
+        "onnx_repo_id": "OuteAI/Llama-OuteTTS-1.0-1B-ONNX", # Source of ONNX files
+        "tokenizer_path": "OuteAI/Llama-OuteTTS-1.0-1B",   # Source of base model config/tokenizer
+        "onnx_filename_options": ["onnx/model_int8.onnx"],
+        # "onnx/model_q4f16.onnx", "onnx/model_q4.onnx", 
+        # "onnx_subfolder" is implicit in onnx_filename_options
+        "wavtokenizer_model_path": "onnx-community/WavTokenizer-large-speech-75token_decode",
         "interface_version_enum": OuteTTSInterfaceVersion_Enum.V3 if OUTETTS_AVAILABLE_FOR_CONFIG else "V3_STR_FALLBACK",
         "backend_to_use": OuteTTSBackend_Enum.HF if OUTETTS_AVAILABLE_FOR_CONFIG else "HF_STR_FALLBACK",
         "language": "de",
-        "torch_dtype_for_hf_wrapper": torch.float32 if TORCH_AVAILABLE_FOR_CONFIG else "torch.float32_STR_FALLBACK",
-        "default_voice_id": "./german.wav",
+        "torch_dtype_for_hf_wrapper": torch.float16 if TORCH_AVAILABLE_FOR_CONFIG else "torch.float32_STR_FALLBACK",
+        "default_voice_id": "./german.wav", # IMPORTANT: Must be < 15-20s
         "available_voices": ["./german.wav"],
         "test_default_speakers": ["EN-FEMALE-1-NEUTRAL"],
-        "notes": "OuteTTS library (HF backend) using downloaded ONNX variants of Llama-OuteTTS-1.0-1B for German."
+        "notes": "OuteTTS (HF ONNX). Ref WAV will be shortened <15s. Output: WAV. Clears /var/folders/ on Mac on failure."
     },
     "mlx_audio_kokoro_de": {
         # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_kokoro_de"
