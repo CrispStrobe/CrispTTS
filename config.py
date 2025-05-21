@@ -79,12 +79,14 @@ LM_STUDIO_HEADERS = {"Content-Type": "application/json"}
 
 
 # --- MLX Audio Specific Configs ---
-MLX_AUDIO_KOKORO_MODEL_ID = "prince-canuma/Kokoro-82M"
-MLX_AUDIO_CSM_MODEL_ID = "mlx-community/csm-1b"
-MLX_AUDIO_KOKORO_LANG_CODE_GERMAN = "de" # must verify this
+MLX_AUDIO_KOKORO_MODEL_ID = "mlx-community/Kokoro-82M-bf16"
+MLX_AUDIO_CSM_MODEL_ID = "mlx-community/csm-1b-8bit"
+MLX_AUDIO_KOKORO_LANG_CODE_GERMAN = "a" # must verify this
+MLX_AUDIO_KOKORO_LANG_CODE_FALLBACK = "a" # For Kokoro if "de" fails
 MLX_AUDIO_KOKORO_DEFAULT_VOICE = "af_heart"
 MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "af_bella", "bf_emma"]
 MLX_AUDIO_OUTETTS_ONNX_REPO_ID = "OuteAI/Llama-OuteTTS-1.0-1B-ONNX"
+MLX_AUDIO_OUTETTS_MAIN_REPO_ID = "mlx-community/Llama-OuteTTS-1.0-1B-4bit"
 
 # --- OuteTTS Internal Data Structures (Fallback if not directly queryable from library) ---
 OUTETTS_INTERNAL_MODEL_INFO_DATA = {}
@@ -197,26 +199,19 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_csm_clone": {
         # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_csm_clone"
         "mlx_model_path": MLX_AUDIO_CSM_MODEL_ID,
-        "default_voice_id": "./german_csm_reference.wav",
-        "available_voices": ["./german_csm_reference.wav"],
+        "default_voice_id": "./german.wav",
+        "available_voices": ["./german.wav"],
         "lang_code": "de",
         "sample_rate": 24000,
         "notes": "mlx-audio (CSM model) for voice cloning on Apple Silicon. Requires German reference WAV."
     },
     "mlx_audio_outetts_q4": {
-        # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_outetts_q4"
-        "mlx_model_path": MLX_AUDIO_OUTETTS_ONNX_REPO_ID,
-        "onnx_filename_options_for_mlx": [
-            "onnx/model_q4f16.onnx",
-            "onnx/model_q4.onnx",
-            "onnx/model_int8.onnx",
-        ],
-        "onnx_subfolder_for_mlx": "onnx",
-        "tokenizer_path_for_mlx_outetts": "OuteAI/Llama-OuteTTS-1.0-1B",
+        "mlx_model_path": MLX_AUDIO_OUTETTS_MAIN_REPO_ID, # Using mlx-community 4-bit version
+        "tokenizer_path_for_mlx_outetts": MLX_AUDIO_OUTETTS_MAIN_REPO_ID, # mlx-audio usually infers from model_path for these
         "lang_code": "de",
-        "default_voice_id": "./german_outetts_reference.wav",
-        "sample_rate": 24000,
-        "notes": "OuteTTS Llama 1B ONNX (Q4 attempt) run via mlx-audio framework. Requires reference audio."
+        "default_voice_id": "./german.wav",
+        "sample_rate": 24000, # OuteTTS is 24kHz
+        "notes": "OuteTTS Llama 1B run via mlx-audio. Requires reference audio. Quantization (if any) handled by mlx-audio."
     },
     "speecht5_german_transformers": {
         # "handler_function_key": "speecht5", # REMOVED: ALL_HANDLERS key is "speecht5_german_transformers"

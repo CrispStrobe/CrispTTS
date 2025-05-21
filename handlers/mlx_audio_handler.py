@@ -1,5 +1,4 @@
 # handlers/mlx_audio_handler.py
-
 import logging
 import platform
 import os
@@ -9,24 +8,24 @@ import shutil
 import tempfile
 import gc
 
-# Relative imports
 from utils import save_audio, play_audio, SuppressOutput
+
+# Attempt to import pydub for trimming, use a flag
+PYDUB_AVAILABLE_FOR_TRIM = False
+AudioSegment_pydub = None
+try:
+    from pydub import AudioSegment
+    AudioSegment_pydub = AudioSegment
+    PYDUB_AVAILABLE_FOR_TRIM = True
+except ImportError:
+    # Initialize logger here if module-level logging is desired before main config
+    logger_mlx_init = logging.getLogger("CrispTTS.handlers.mlx_audio.init")
+    logger_mlx_init.warning("pydub not found. Reference audio trimming for MLX-Audio will not be available.")
 
 logger = logging.getLogger("CrispTTS.handlers.mlx_audio")
 
 MLX_AUDIO_AVAILABLE = False
 generate_audio_mlx_func = None
-HF_HUB_AVAILABLE_FOR_MLX_HANDLER = False
-hf_hub_download_mlx = None
-hf_fs_mlx = None
-
-try:
-    from huggingface_hub import hf_hub_download, HfFileSystem
-    HF_HUB_AVAILABLE_FOR_MLX_HANDLER = True
-    hf_hub_download_mlx = hf_hub_download
-    hf_fs_mlx = HfFileSystem()
-except ImportError:
-    logger.warning("huggingface_hub not installed. MLX Audio handler might fail to download models.")
 
 try:
     from mlx_audio.tts.generate import generate_audio as generate_audio_mlx_imp
@@ -35,145 +34,194 @@ try:
     if platform.machine() == "arm64" and platform.system() == "Darwin":
         logger.info("mlx-audio library loaded (Apple Silicon detected).")
     else:
-        logger.info("mlx-audio library loaded (Non-Apple Silicon or generic import). Performance/compatibility may vary.")
+        logger.info("mlx-audio library loaded (Non-Apple Silicon or generic import).")
 except ImportError:
     logger.info("mlx-audio library not found. MLX Audio handler will be non-functional.")
+    generate_audio_mlx_func = None
+    MLX_AUDIO_AVAILABLE = False
 except Exception as e:
-    logger.warning(f"An error occurred during mlx-audio import: {e}. Handler non-functional.")
+    logger.warning(f"An error occurred during mlx-audio import: {e}. Handler non-functional.", exc_info=True)
+    generate_audio_mlx_func = None
+    MLX_AUDIO_AVAILABLE = False
 
+def _trim_ref_audio_if_needed(ref_audio_path: Path, max_duration_ms: int, temp_dir_for_trimmed_audio: Path) -> tuple[Path, Path | None]:
+    """Trims audio if longer than max_duration_ms. Saves to temp_dir_for_trimmed_audio.
+    Returns path to (potentially trimmed) audio and path of new temp file if created."""
+    if not PYDUB_AVAILABLE_FOR_TRIM or not AudioSegment_pydub:
+        logger.warning(f"pydub not available, cannot trim reference audio: {ref_audio_path}. Using as is.")
+        return ref_audio_path, None
+
+    try:
+        audio_segment = AudioSegment_pydub.from_file(str(ref_audio_path)) # pydub needs string path
+        if len(audio_segment) > max_duration_ms:
+            logger.info(f"Reference audio '{ref_audio_path}' ({len(audio_segment)/1000.0:.1f}s) is > {max_duration_ms/1000.0:.1f}s. Trimming.")
+            trimmed_segment = audio_segment[:max_duration_ms]
+            
+            temp_trimmed_filename = f"trimmed_ref_{ref_audio_path.stem}{ref_audio_path.suffix}"
+            # Ensure the temp_dir_for_trimmed_audio (which is likely the main temp_dir_manager.name) exists
+            temp_dir_for_trimmed_audio.mkdir(parents=True, exist_ok=True)
+            path_to_newly_trimmed_file = temp_dir_for_trimmed_audio / temp_trimmed_filename
+            
+            file_format = ref_audio_path.suffix.lstrip('.')
+            if not file_format: file_format = 'wav' # Default if no suffix
+
+            trimmed_segment.export(str(path_to_newly_trimmed_file), format=file_format)
+            logger.info(f"Using trimmed temporary reference audio: {path_to_newly_trimmed_file}")
+            return path_to_newly_trimmed_file, path_to_newly_trimmed_file
+        else:
+            logger.debug(f"Reference audio '{ref_audio_path}' is within length limits.")
+            return ref_audio_path, None
+    except Exception as e:
+        logger.warning(f"Error processing/trimming reference audio '{ref_audio_path}': {e}. Using original path.", exc_info=True)
+        return ref_audio_path, None
 
 def synthesize_with_mlx_audio(model_config, text, voice_id_or_path_override, model_params_override, output_file_str, play_direct):
     if not MLX_AUDIO_AVAILABLE or not generate_audio_mlx_func:
         logger.error("mlx-audio handler: library or generate_audio function not available. Skipping.")
         return
 
-    mlx_model_path_config = model_config.get("mlx_model_path") # For Kokoro, CSM (HF ID)
-    onnx_repo_id_for_mlx_outetts = model_config.get("onnx_repo_id") # For OuteTTS-via-MLX from specific ONNX repo
-
-    if not mlx_model_path_config and not onnx_repo_id_for_mlx_outetts:
-        logger.error("mlx-audio: 'mlx_model_path' (for Kokoro/CSM) or 'onnx_repo_id' (for OuteTTS-via-MLX) not in config.")
+    mlx_model_path_config = model_config.get("mlx_model_path")
+    if not mlx_model_path_config:
+        logger.error("mlx-audio: 'mlx_model_path' not specified in configuration.")
         return
 
-    voice_input = voice_id_override or model_config.get("default_voice_id")
+    voice_input = voice_id_or_path_override or model_config.get("default_voice_id")
     if not voice_input:
         logger.error("mlx-audio: Voice ID or reference audio path not specified.")
         return
 
-    lang_code = model_config.get("lang_code") # Can be None
+    lang_code = model_config.get("lang_code")
     default_speed = model_config.get("default_speed", 1.0)
-    default_temperature = model_config.get("default_temperature", 0.5) # mlx_audio uses temperature
-    target_sample_rate = model_config.get("sample_rate", 24000)
-    output_format = "wav" # Standardize
+    default_temperature = model_config.get("default_temperature", 0.7)
+    output_format = "wav"
 
-    gen_params = {"speed": default_speed, "temperature": default_temperature}
+    gen_params_from_config = {"speed": default_speed, "temperature": default_temperature}
+    gen_params_runtime = {} # For CLI overrides
+
     if model_params_override:
         try:
             cli_params = json.loads(model_params_override)
-            gen_params.update({k: cli_params[k] for k in ["speed", "temperature"] if k in cli_params})
-            if "lang_code" in cli_params: lang_code = cli_params["lang_code"]
-        except (json.JSONDecodeError, ValueError) as e:
+            if "speed" in cli_params: gen_params_runtime["speed"] = float(cli_params["speed"])
+            if "temperature" in cli_params: gen_params_runtime["temperature"] = float(cli_params["temperature"])
+            if "lang_code" in cli_params: lang_code = cli_params["lang_code"] # Override lang_code
+            if "ref_text" in cli_params and cli_params["ref_text"]: # For passing manual ref_text
+                 gen_params_runtime["ref_text"] = cli_params["ref_text"]
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
             logger.warning(f"mlx-audio: Error parsing --model-params '{model_params_override}': {e}")
 
-    temp_dir_manager = tempfile.TemporaryDirectory(prefix="crisptts_mlx_")
-    temp_output_dir_path = Path(temp_dir_manager.name)
-    temp_file_prefix = "mlx_synth_temp"
-    
-    actual_model_to_load_for_mlx = mlx_model_path_config # For Kokoro, CSM
-    
-    # --- Logic for OuteTTS-via-MLX using specific ONNX files ---
-    # This assumes mlx_audio.tts.generate.generate_audio can take a local path to a directory
-    # containing an ONNX model and its associated files.
-    if onnx_repo_id_for_mlx_outetts and model_config.get("handler_function_key") == "mlx_audio_outetts_q4": # Specific key
-        if not HF_HUB_AVAILABLE_FOR_MLX_HANDLER:
-            logger.error("mlx-audio (OuteTTS ONNX): huggingface_hub needed to download ONNX files. Skipping.")
-            temp_dir_manager.cleanup(); return
+    # Prioritize runtime params over config defaults for these specific ones
+    final_gen_params = {**gen_params_from_config, **gen_params_runtime}
 
-        onnx_files_to_try = model_config.get("onnx_filename_options_for_mlx", [])
-        onnx_subfolder_in_repo = model_config.get("onnx_subfolder", "onnx")
-        
-        successfully_downloaded_onnx_dir = None
-        for onnx_file_relative in onnx_files_to_try:
-            full_path_in_repo = f"{onnx_subfolder_in_repo}/{Path(onnx_file_relative).name}" if onnx_subfolder_in_repo else Path(onnx_file_relative).name
-            
-            # Create a unique subdirectory within the temp dir for this specific ONNX attempt
-            current_attempt_local_dir = temp_output_dir_path / Path(onnx_file_relative).stem
-            current_attempt_local_dir.mkdir(parents=True, exist_ok=True)
-            
-            logger.info(f"mlx-audio (OuteTTS ONNX): Attempting to download '{full_path_in_repo}' from '{onnx_repo_id}' to '{current_attempt_local_dir}'.")
-            try:
-                hf_hub_download_mlx(repo_id=onnx_repo_id, filename=full_path_in_repo,
-                                   local_dir=str(current_attempt_local_dir), local_dir_use_symlinks=False, token=os.getenv("HF_TOKEN"))
-                
-                # Attempt to download corresponding .onnx_data file
-                onnx_data_file_relative = full_path_in_repo + "_data"
-                if hf_fs_mlx and hf_fs_mlx.exists(f"{onnx_repo_id}/{onnx_data_file_relative}"):
-                    hf_hub_download_mlx(repo_id=onnx_repo_id, filename=onnx_data_file_relative,
-                                       local_dir=str(current_attempt_local_dir), local_dir_use_symlinks=False, token=os.getenv("HF_TOKEN"))
-                    logger.info(f"mlx-audio (OuteTTS ONNX): Downloaded '{Path(onnx_data_file_relative).name}'.")
-                
-                actual_model_to_load_for_mlx = str(current_model_attempt_dir) # Point to the directory containing the ONNX
-                successfully_downloaded_onnx_dir = current_model_attempt_dir
-                break # Successfully downloaded, proceed with this one
-            except Exception as e_dl:
-                logger.warning(f"mlx-audio (OuteTTS ONNX): Failed to download '{full_path_in_repo}': {e_dl}. Trying next if available.")
-                shutil.rmtree(current_attempt_local_dir, ignore_errors=True) # Clean up failed attempt dir
-        
-        if not successfully_downloaded_onnx_dir:
-            logger.error(f"mlx-audio (OuteTTS ONNX): Failed to download any specified ONNX model from {onnx_repo_id}.")
-            temp_dir_manager.cleanup(); return
-        logger.info(f"mlx-audio (OuteTTS ONNX): Will use local ONNX model at: {actual_model_to_load_for_mlx}")
-
-
-    generate_kwargs = {
-        "text": text, "model_path": actual_model_to_load_for_mlx,
-        "speed": gen_params["speed"], "temperature": gen_params.get("temperature"),
-        "lang_code": lang_code, "file_prefix": temp_file_prefix,
-        "output_path": str(temp_output_dir_path), "audio_format": output_format,
-        "sample_rate": target_sample_rate, "join_audio": True,
-        "verbose": logger.isEnabledFor(logging.DEBUG)
-    }
-
-    is_ref_audio_path = Path(voice_input).is_file() and Path(voice_input).suffix.lower() in ['.wav', '.mp3', '.flac', '.ogg']
-    if is_ref_audio_path: # For CSM or OuteTTS-via-MLX with reference audio
-        logger.info(f"mlx-audio: Using '{voice_input}' as reference audio.")
-        generate_kwargs["ref_audio_path"] = str(voice_input)
-    else: # For Kokoro-style predefined voices
-        logger.info(f"mlx-audio: Using pre-defined voice ID: '{voice_input}'.")
-        generate_kwargs["voice"] = voice_input
-
-    logger.debug(f"mlx-audio: Final generate_kwargs: {generate_kwargs}")
-    
+    temp_dir_manager = None
     actual_generated_file_path = None
+    path_to_temp_trimmed_ref = None 
+
     try:
-        with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), suppress_stderr=True):
-            synthesis_result = generate_audio_mlx_func(**generate_kwargs)
+        temp_dir_manager = tempfile.TemporaryDirectory(prefix="crisptts_mlx_")
+        temp_context_dir = Path(temp_dir_manager.name) # This will be our CWD for mlx-audio
+        temp_file_base_name_in_ctx = "mlx_synth_output" # File will be created as temp_context_dir/mlx_synth_output.wav
 
-        if isinstance(synthesis_result, list) and synthesis_result: actual_generated_file_path = Path(synthesis_result[0])
-        elif isinstance(synthesis_result, str) and Path(synthesis_result).exists(): actual_generated_file_path = Path(synthesis_result)
-        else:
-            found_files = list(temp_output_dir_path.glob(f"{temp_file_prefix}*.{output_format}"))
-            if found_files: actual_generated_file_path = found_files[0]
+        generate_kwargs = {
+            "text": text,
+            "model_path": mlx_model_path_config,
+            "speed": final_gen_params["speed"],
+            "temperature": final_gen_params["temperature"],
+            "lang_code": lang_code,
+            "file_prefix": temp_file_base_name_in_ctx, # mlx-audio saves as {file_prefix}.{audio_format}
+            "audio_format": output_format,
+            "join_audio": True,
+            "verbose": logger.isEnabledFor(logging.DEBUG),
+            "play": False # CrispTTS handles playback
+        }
+        if "ref_text" in final_gen_params: # Pass manual ref_text if provided
+            generate_kwargs["ref_text"] = final_gen_params["ref_text"]
+            logger.info(f"mlx-audio: Using provided ref_text: '{final_gen_params['ref_text'][:50]}...'")
+
+
+        is_ref_audio_path = Path(voice_input).is_file() and Path(voice_input).suffix.lower() in ['.wav', '.mp3', '.flac', '.ogg']
         
-        if not actual_generated_file_path or not actual_generated_file_path.exists():
-            logger.error(f"mlx-audio: No audio file found/generated in '{temp_output_dir_path}' with prefix '{temp_file_prefix}'."); return
+        if is_ref_audio_path:
+            ref_audio_file_orig = Path(voice_input)
+            if not ref_audio_file_orig.is_absolute():
+                project_root = Path(__file__).resolve().parent.parent 
+                ref_audio_file_orig = (project_root / ref_audio_file_orig).resolve()
+            
+            if ref_audio_file_orig.exists():
+                MAX_REF_AUDIO_DURATION_MS_MLX = 15000 # 15 seconds, recommended by mlx-audio for CSM
+                
+                path_for_mlx_ref_audio, path_to_temp_trimmed_ref = _trim_ref_audio_if_needed(
+                    ref_audio_file_orig, 
+                    MAX_REF_AUDIO_DURATION_MS_MLX, 
+                    temp_context_dir 
+                )
+                logger.info(f"mlx-audio: Using '{path_for_mlx_ref_audio}' as reference audio for MLX.")
+                generate_kwargs["ref_audio"] = str(path_for_mlx_ref_audio) # Use path to original or trimmed
+            else:
+                logger.error(f"mlx-audio: Reference audio file not found: {ref_audio_file_orig}")
+                return
+        else: # For Kokoro-style predefined voices
+            logger.info(f"mlx-audio: Using pre-defined voice ID: '{voice_input}'.")
+            generate_kwargs["voice"] = voice_input
 
-        logger.info(f"mlx-audio: Synthesis successful. Temporary audio at: {actual_generated_file_path}")
-        final_output_path = None
-        if output_file_str:
-            final_output_path = Path(output_file_str).with_suffix(f".{output_format}")
-            final_output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(actual_generated_file_path), str(final_output_path))
-            logger.info(f"mlx-audio: Audio moved to {final_output_path}")
-        else: final_output_path = actual_generated_file_path
+        logger.debug(f"mlx-audio: Final generate_kwargs: {json.dumps(generate_kwargs, default=str)}")
 
-        if play_direct and final_output_path and final_output_path.exists():
-            play_audio(str(final_output_path), is_path=True)
+        original_cwd = Path.cwd()
+        os.chdir(temp_context_dir) # Change CWD so mlx-audio saves file here
 
-    except FileNotFoundError as e_fnf: logger.error(f"mlx-audio: Model assets error for '{actual_model_to_load_for_mlx}': {e_fnf}", exc_info=True)
-    except RuntimeError as e_runtime: logger.error(f"mlx-audio: Runtime error (possibly MLX backend/device issue for '{actual_model_to_load_for_mlx}'): {e_runtime}", exc_info=True)
-    except Exception as e: logger.error(f"mlx-audio: Synthesis failed for '{actual_model_to_load_for_mlx}': {e}", exc_info=True)
+        with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), 
+                            suppress_stderr=not logger.isEnabledFor(logging.DEBUG)):
+            generate_audio_mlx_func(**generate_kwargs)
+        
+        # mlx-audio saves as file_prefix.audio_format in the CWD (which is now temp_context_dir)
+        expected_temp_file = temp_context_dir / f"{temp_file_base_name_in_ctx}.{output_format}"
+        if expected_temp_file.exists() and expected_temp_file.stat().st_size > 100:
+            actual_generated_file_path = expected_temp_file
+            logger.info(f"mlx-audio: Synthesis successful. Temporary audio at: {actual_generated_file_path}")
+        else:
+            logger.error(f"mlx-audio: No audio file found at '{expected_temp_file}' or file is too small. Check mlx-audio output with debug.")
+    
+    except FileNotFoundError as e_fnf:
+        logger.error(f"mlx-audio: Model assets error for '{mlx_model_path_config}'. Error: {e_fnf}", exc_info=True)
+    except RuntimeError as e_runtime:
+        logger.error(f"mlx-audio: Runtime error for '{mlx_model_path_config}'. Error: {e_runtime}", exc_info=True)
+    except ValueError as e_val: # Catch "Inputs too long" or other ValueErrors from mlx-audio
+        logger.error(f"mlx-audio: ValueError for '{mlx_model_path_config}' (potentially input length or invalid param): {e_val}", exc_info=True)
+    except Exception as e:
+        logger.error(f"mlx-audio: Unexpected error for '{mlx_model_path_config}': {e}", exc_info=True)
     finally:
-        if temp_dir_manager:
-            try: temp_dir_manager.cleanup(); logger.debug("mlx-audio: Cleaned up temporary directory.")
-            except Exception as e_clean: logger.warning(f"mlx-audio: Failed to cleanup temporary directory: {e_clean}")
-        gc.collect()
+        if 'original_cwd' in locals() and Path.cwd() != original_cwd : # Ensure CWD is always changed back
+            os.chdir(original_cwd)
+
+    if actual_generated_file_path and actual_generated_file_path.exists():
+        final_output_path_to_play = actual_generated_file_path
+        if output_file_str:
+            target_output_file = Path(output_file_str).with_suffix(f".{output_format}")
+            target_output_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.move(str(actual_generated_file_path), str(target_output_file))
+                logger.info(f"mlx-audio: Audio moved to {target_output_file}")
+                final_output_path_to_play = target_output_file
+            except Exception as e_move:
+                logger.error(f"mlx-audio: Failed to move temp audio from {actual_generated_file_path} to {target_output_file}: {e_move}")
+        
+        if play_direct:
+            play_audio(str(final_output_path_to_play), is_path=True)
+            
+    elif not actual_generated_file_path :
+         logger.warning(f"mlx-audio: Synthesis function ran but no valid audio path was determined for model '{mlx_model_path_config}'.")
+
+    # Delete the temporary trimmed reference audio if one was created
+    if path_to_temp_trimmed_ref and path_to_temp_trimmed_ref.exists():
+        try:
+            path_to_temp_trimmed_ref.unlink()
+            logger.debug(f"mlx-audio: Deleted temporary trimmed reference audio: {path_to_temp_trimmed_ref}")
+        except Exception as e_del_trim:
+            logger.warning(f"mlx-audio: Failed to delete temporary trimmed reference audio {path_to_temp_trimmed_ref}: {e_del_trim}")
+
+    if temp_dir_manager:
+        try:
+            temp_dir_manager.cleanup()
+            logger.debug("mlx-audio: Cleaned up main temporary directory.")
+        except Exception as e_clean:
+            logger.warning(f"mlx-audio: Error cleaning up main temporary directory {temp_dir_manager.name}: {e_clean}", exc_info=True)
+    gc.collect()
