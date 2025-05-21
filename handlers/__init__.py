@@ -5,6 +5,7 @@ import logging
 logger = logging.getLogger("CrispTTS.handlers")
 
 # These imports should be okay as they are relative within the 'handlers' package
+
 try:
     from .edge_handler import synthesize_with_edge_tts
     logger.debug("EdgeTTS handler imported.")
@@ -62,6 +63,22 @@ except ImportError as e:
     synthesize_with_coqui_tts = None
 
 
+synthesize_with_orpheus_kartoffel = None # Initialize
+try:
+    from .kartoffel import synthesize_with_orpheus_kartoffel
+    if synthesize_with_orpheus_kartoffel:
+        logger.info("Orpheus Kartoffel (Transformers) handler imported SUCCESSFULLY.")
+    else:
+        logger.warning("Orpheus Kartoffel handler file imported, BUT 'synthesize_with_orpheus_kartoffel' function is None.")
+        synthesize_with_orpheus_kartoffel = None 
+except ImportError as e_imp_kartoffel: 
+    logger.error(f"INIT.PY: Could not import Orpheus Kartoffel handler due to ImportError: {e_imp_kartoffel}", exc_info=True)
+    synthesize_with_orpheus_kartoffel = None
+except Exception as e_other_kartoffel: 
+    logger.error(f"INIT.PY: An UNEXPECTED error occurred during import of orpheus_kartoffel_handler.py: {e_other_kartoffel}", exc_info=True)
+    synthesize_with_orpheus_kartoffel = None
+
+
 ALL_HANDLERS = {
     "edge": synthesize_with_edge_tts,
     "piper_local": synthesize_with_piper_local,
@@ -79,6 +96,7 @@ ALL_HANDLERS = {
     "coqui_tts_thorsten_ddc": synthesize_with_coqui_tts,
     "coqui_tts_thorsten_vits": synthesize_with_coqui_tts,
     "coqui_tts_thorsten_dca": synthesize_with_coqui_tts,
+    "orpheus_kartoffel_natural": synthesize_with_orpheus_kartoffel,
 }
 
 ALL_HANDLERS = {k: v for k, v in ALL_HANDLERS.items() if v is not None}

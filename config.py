@@ -77,6 +77,23 @@ LM_STUDIO_API_URL_DEFAULT = "http://127.0.0.1:1234/v1/completions"
 OLLAMA_API_URL_DEFAULT = "http://localhost:11434/api/generate"
 LM_STUDIO_HEADERS = {"Content-Type": "application/json"}
 
+# --- Kartoffel Orpheus (Transformers-based) Specific Configs ---
+KARTORPHEUS_NATURAL_MODEL_ID = "SebastianBodza/Kartoffel_Orpheus-3B_german_natural-v0.1"
+KARTORPHEUS_SNAC_MODEL_ID = "hubertsiuzdak/snac_24khz"
+KARTORPHEUS_NATURAL_SPEAKERS = [ # From the model card
+    "Jakob", "Anton", "Julian", "Jan", "Alexander", "Emil", "Ben", 
+    "Elias", "Felix", "Jonas", "Noah", "Maximilian", "Sophie", 
+    "Marie", "Mia", "Maria", "Sophia", "Lina", "Lea"
+]
+KARTORPHEUS_NATURAL_DEFAULT_SPEAKER = "Julian" # Or your preferred default
+
+# Specific token IDs for Kartoffel Orpheus prompt construction and output processing
+KARTORPHEUS_PROMPT_START_TOKEN_ID = 128259
+KARTORPHEUS_PROMPT_END_TOKEN_IDS = [128009, 128260] # EOT_ID, TEXT_END_ID
+KARTORPHEUS_GENERATION_EOS_TOKEN_ID = 128258
+KARTORPHEUS_AUDIO_START_MARKER_TOKEN_ID = 128257 # To find where audio tokens begin
+KARTORPHEUS_AUDIO_END_MARKER_TOKEN_ID = 128258   # To remove from audio token sequence
+KARTORPHEUS_AUDIO_TOKEN_OFFSET = 128266          # Base offset to subtract from raw audio tokens
 
 # --- MLX Audio Specific Configs ---
 MLX_AUDIO_KOKORO_MODEL_ID = "mlx-community/Kokoro-82M-bf16"
@@ -116,6 +133,24 @@ GERMAN_TTS_MODELS = {
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
         "available_voices": EDGE_TTS_ALL_GERMAN_VOICES,
         "notes": "MS Edge TTS (cloud). Output: MP3. Internet required."
+    },
+    "orpheus_kartoffel_natural": {
+        "model_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
+        "tokenizer_repo_id": KARTORPHEUS_NATURAL_MODEL_ID, # Usually same as model
+        "snac_model_id": KARTORPHEUS_SNAC_MODEL_ID,
+        "default_voice_id": KARTORPHEUS_NATURAL_DEFAULT_SPEAKER,
+        "available_voices": KARTORPHEUS_NATURAL_SPEAKERS,
+        "language": "de", # Model is German
+        "sample_rate": 24000, # SNAC output is 24kHz
+        "requires_hf_token": True, # It's a gated model
+        # Specific token IDs for this model type
+        "prompt_start_token_id": KARTORPHEUS_PROMPT_START_TOKEN_ID,
+        "prompt_end_token_ids": KARTORPHEUS_PROMPT_END_TOKEN_IDS,
+        "generation_eos_token_id": KARTORPHEUS_GENERATION_EOS_TOKEN_ID,
+        "audio_start_marker_token_id": KARTORPHEUS_AUDIO_START_MARKER_TOKEN_ID,
+        "audio_end_marker_token_id": KARTORPHEUS_AUDIO_END_MARKER_TOKEN_ID,
+        "audio_token_offset": KARTORPHEUS_AUDIO_TOKEN_OFFSET,
+        "notes": "Kartoffel Orpheus-3B (Natural German) via Transformers & SNAC. Gated model, requires HF token."
     },
     "piper_local": {
         # "handler_function_key": "piper_local", # Redundant
