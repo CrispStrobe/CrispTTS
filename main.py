@@ -222,28 +222,52 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
 
 
         else: # This is for --test-all (test_all_speakers_flag is False), test only default voice
-            default_v_candidate = (
-                current_config_for_handler.get('default_voice_id') or
-                current_config_for_handler.get('default_model_path_in_repo')
-            )
-            if not default_v_candidate:
-                idx_val = current_config_for_handler.get('default_speaker_embedding_index')
-                if idx_val is not None: default_v_candidate = str(idx_val)
+            default_v_to_add = None # Initialize variable to hold the voice/speaker to test
+
+            # 1. Try standard explicit default keys first 
+            # (e.g., for Piper path, Edge voice ID, MLX Kokoro voice name, Coqui XTTS ref WAV path)
+            std_default_keys = ['default_voice_id', 'default_model_path_in_repo']
+            for key in std_default_keys:
+                val = current_config_for_handler.get(key)
+                if val and str(val).strip(): 
+                    default_v_to_add = str(val)
+                    logger.debug(f"Model '{model_id}': Found default via '{key}': {default_v_to_add}")
+                    break
+            
+            # 2. If not found by generic keys, try Coqui-specific 'default_coqui_speaker' (for VCTK like 'p225')
+            if not default_v_to_add and model_id.startswith("coqui_tts"):
+                coqui_default_speaker_id = current_config_for_handler.get('default_coqui_speaker')
+                if coqui_default_speaker_id and str(coqui_default_speaker_id).strip():
+                    default_v_to_add = str(coqui_default_speaker_id)
+                    logger.info(f"Model '{model_id}': Using 'default_coqui_speaker': {default_v_to_add} for default test run.")
+            
+            # 3. If still not found, try numeric/index defaults (like for SpeechT5, NeMo)
+            if not default_v_to_add:
+                idx_val_embed = current_config_for_handler.get('default_speaker_embedding_index')
+                if idx_val_embed is not None: # Can be 0, so check for None explicitly
+                    default_v_to_add = str(idx_val_embed)
+                    logger.debug(f"Model '{model_id}': Found default via 'default_speaker_embedding_index': {default_v_to_add}")
                 else:
                     idx_val_speaker = current_config_for_handler.get('default_speaker_id')
-                    if idx_val_speaker is not None: default_v_candidate = str(idx_val_speaker)
-
-            if default_v_candidate and str(default_v_candidate).strip():
-                voices_to_test_this_run.append(str(default_v_candidate))
-            # **** START MODIFICATION FOR COQUI DEFAULT TEST ****
-            elif model_id.startswith("coqui_tts") and current_config_for_handler.get("default_coqui_speaker") is None:
-                # For single-speaker Coqui models in --test-all mode,
-                # if available_voices is ["default_speaker"], use that string.
-                # The handler will interpret "default_speaker" as "use intrinsic speaker".
+                    if idx_val_speaker is not None: # Can be 0
+                        default_v_to_add = str(idx_val_speaker)
+                        logger.debug(f"Model '{model_id}': Found default via 'default_speaker_id': {default_v_to_add}")
+            
+            # 4. Specific handling for Coqui single-speaker models (Thorsten, CSS10) 
+            #    that use "default_speaker" placeholder in `available_voices`.
+            if not default_v_to_add and \
+               model_id.startswith("coqui_tts") and \
+               current_config_for_handler.get("default_coqui_speaker") is None: # It's a single-speaker type config
                 if current_config_for_handler.get("available_voices") == ["default_speaker"]:
-                    voices_to_test_this_run.append("default_speaker")
-                    logger.info(f"Coqui single-speaker model '{model_id}', using placeholder 'default_speaker' for default test run.")
-            # **** END MODIFICATION FOR COQUI DEFAULT TEST ****
+                    default_v_to_add = "default_speaker" # The string placeholder
+                    logger.info(f"Coqui single-speaker model '{model_id}': Using placeholder 'default_speaker' for default test run.")
+            
+            # Add the determined default voice/speaker to the list if one was found
+            if default_v_to_add and str(default_v_to_add).strip(): # Ensure it's not an empty string
+                voices_to_test_this_run.append(str(default_v_to_add))
+            elif not voices_to_test_this_run: # If after all these checks, the list is still empty for this model
+                 logger.debug(f"Model '{model_id}': No default voice/speaker could be determined for --test-all mode based on its config keys.")
+        
         
         # Ensure unique_voices_to_test is populated correctly:
         voices_to_test_this_run = [v for v in voices_to_test_this_run if v is not None and str(v).strip()] # Filter out None or empty strings
