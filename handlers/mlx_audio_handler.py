@@ -18,7 +18,6 @@ try:
     AudioSegment_pydub = AudioSegment
     PYDUB_AVAILABLE_FOR_TRIM = True
 except ImportError:
-    # Initialize logger here if module-level logging is desired before main config
     logger_mlx_init = logging.getLogger("CrispTTS.handlers.mlx_audio.init")
     logger_mlx_init.warning("pydub not found. Reference audio trimming for MLX-Audio will not be available.")
 
@@ -46,25 +45,19 @@ except Exception as e:
 
 def _trim_ref_audio_if_needed(ref_audio_path: Path, max_duration_ms: int, temp_dir_for_trimmed_audio: Path) -> tuple[Path, Path | None]:
     """Trims audio if longer than max_duration_ms. Saves to temp_dir_for_trimmed_audio.
-    Returns path to (potentially trimmed) audio and path of new temp file if created."""
+    Returns path to (potentially trimmed) audio and path of new temp file if created for deletion."""
     if not PYDUB_AVAILABLE_FOR_TRIM or not AudioSegment_pydub:
         logger.warning(f"pydub not available, cannot trim reference audio: {ref_audio_path}. Using as is.")
         return ref_audio_path, None
-
     try:
-        audio_segment = AudioSegment_pydub.from_file(str(ref_audio_path)) # pydub needs string path
+        audio_segment = AudioSegment_pydub.from_file(str(ref_audio_path))
         if len(audio_segment) > max_duration_ms:
             logger.info(f"Reference audio '{ref_audio_path}' ({len(audio_segment)/1000.0:.1f}s) is > {max_duration_ms/1000.0:.1f}s. Trimming.")
             trimmed_segment = audio_segment[:max_duration_ms]
-            
             temp_trimmed_filename = f"trimmed_ref_{ref_audio_path.stem}{ref_audio_path.suffix}"
-            # Ensure the temp_dir_for_trimmed_audio (which is likely the main temp_dir_manager.name) exists
             temp_dir_for_trimmed_audio.mkdir(parents=True, exist_ok=True)
             path_to_newly_trimmed_file = temp_dir_for_trimmed_audio / temp_trimmed_filename
-            
-            file_format = ref_audio_path.suffix.lstrip('.')
-            if not file_format: file_format = 'wav' # Default if no suffix
-
+            file_format = ref_audio_path.suffix.lstrip('.') or 'wav'
             trimmed_segment.export(str(path_to_newly_trimmed_file), format=file_format)
             logger.info(f"Using trimmed temporary reference audio: {path_to_newly_trimmed_file}")
             return path_to_newly_trimmed_file, path_to_newly_trimmed_file
@@ -96,20 +89,19 @@ def synthesize_with_mlx_audio(model_config, text, voice_id_or_path_override, mod
     output_format = "wav"
 
     gen_params_from_config = {"speed": default_speed, "temperature": default_temperature}
-    gen_params_runtime = {} # For CLI overrides
+    gen_params_runtime = {}
 
     if model_params_override:
         try:
             cli_params = json.loads(model_params_override)
             if "speed" in cli_params: gen_params_runtime["speed"] = float(cli_params["speed"])
             if "temperature" in cli_params: gen_params_runtime["temperature"] = float(cli_params["temperature"])
-            if "lang_code" in cli_params: lang_code = cli_params["lang_code"] # Override lang_code
-            if "ref_text" in cli_params and cli_params["ref_text"]: # For passing manual ref_text
+            if "lang_code" in cli_params: lang_code = cli_params["lang_code"]
+            if "ref_text" in cli_params and cli_params["ref_text"]:
                  gen_params_runtime["ref_text"] = cli_params["ref_text"]
         except (json.JSONDecodeError, ValueError, TypeError) as e:
             logger.warning(f"mlx-audio: Error parsing --model-params '{model_params_override}': {e}")
 
-    # Prioritize runtime params over config defaults for these specific ones
     final_gen_params = {**gen_params_from_config, **gen_params_runtime}
 
     temp_dir_manager = None
@@ -118,8 +110,8 @@ def synthesize_with_mlx_audio(model_config, text, voice_id_or_path_override, mod
 
     try:
         temp_dir_manager = tempfile.TemporaryDirectory(prefix="crisptts_mlx_")
-        temp_context_dir = Path(temp_dir_manager.name) # This will be our CWD for mlx-audio
-        temp_file_base_name_in_ctx = "mlx_synth_output" # File will be created as temp_context_dir/mlx_synth_output.wav
+        temp_context_dir = Path(temp_dir_manager.name)
+        temp_file_base_name_in_ctx = "mlx_synth_output"
 
         generate_kwargs = {
             "text": text,
@@ -127,16 +119,15 @@ def synthesize_with_mlx_audio(model_config, text, voice_id_or_path_override, mod
             "speed": final_gen_params["speed"],
             "temperature": final_gen_params["temperature"],
             "lang_code": lang_code,
-            "file_prefix": temp_file_base_name_in_ctx, # mlx-audio saves as {file_prefix}.{audio_format}
+            "file_prefix": temp_file_base_name_in_ctx,
             "audio_format": output_format,
             "join_audio": True,
             "verbose": logger.isEnabledFor(logging.DEBUG),
-            "play": False # CrispTTS handles playback
+            "play": False
         }
-        if "ref_text" in final_gen_params: # Pass manual ref_text if provided
+        if "ref_text" in final_gen_params:
             generate_kwargs["ref_text"] = final_gen_params["ref_text"]
             logger.info(f"mlx-audio: Using provided ref_text: '{final_gen_params['ref_text'][:50]}...'")
-
 
         is_ref_audio_path = Path(voice_input).is_file() and Path(voice_input).suffix.lower() in ['.wav', '.mp3', '.flac', '.ogg']
         
@@ -147,32 +138,33 @@ def synthesize_with_mlx_audio(model_config, text, voice_id_or_path_override, mod
                 ref_audio_file_orig = (project_root / ref_audio_file_orig).resolve()
             
             if ref_audio_file_orig.exists():
-                MAX_REF_AUDIO_DURATION_MS_MLX = 15000 # 15 seconds, recommended by mlx-audio for CSM
-                
+                MAX_REF_AUDIO_DURATION_MS_MLX = 15000 
                 path_for_mlx_ref_audio, path_to_temp_trimmed_ref = _trim_ref_audio_if_needed(
-                    ref_audio_file_orig, 
-                    MAX_REF_AUDIO_DURATION_MS_MLX, 
-                    temp_context_dir 
+                    ref_audio_file_orig, MAX_REF_AUDIO_DURATION_MS_MLX, temp_context_dir
                 )
                 logger.info(f"mlx-audio: Using '{path_for_mlx_ref_audio}' as reference audio for MLX.")
-                generate_kwargs["ref_audio"] = str(path_for_mlx_ref_audio) # Use path to original or trimmed
+                generate_kwargs["ref_audio"] = str(path_for_mlx_ref_audio)
+                generate_kwargs["voice"] = None  # **** CRITICAL FIX: Explicitly None ****
             else:
                 logger.error(f"mlx-audio: Reference audio file not found: {ref_audio_file_orig}")
+                # Ensure cleanup if we exit early
+                if path_to_temp_trimmed_ref and path_to_temp_trimmed_ref.exists(): path_to_temp_trimmed_ref.unlink(missing_ok=True)
+                if temp_dir_manager: temp_dir_manager.cleanup()
                 return
-        else: # For Kokoro-style predefined voices
+        else: 
             logger.info(f"mlx-audio: Using pre-defined voice ID: '{voice_input}'.")
             generate_kwargs["voice"] = voice_input
+            generate_kwargs["ref_audio"] = None # **** CRITICAL FIX: Explicitly None ****
 
         logger.debug(f"mlx-audio: Final generate_kwargs: {json.dumps(generate_kwargs, default=str)}")
 
         original_cwd = Path.cwd()
-        os.chdir(temp_context_dir) # Change CWD so mlx-audio saves file here
+        os.chdir(temp_context_dir) 
 
         with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), 
                             suppress_stderr=not logger.isEnabledFor(logging.DEBUG)):
             generate_audio_mlx_func(**generate_kwargs)
         
-        # mlx-audio saves as file_prefix.audio_format in the CWD (which is now temp_context_dir)
         expected_temp_file = temp_context_dir / f"{temp_file_base_name_in_ctx}.{output_format}"
         if expected_temp_file.exists() and expected_temp_file.stat().st_size > 100:
             actual_generated_file_path = expected_temp_file
@@ -184,12 +176,12 @@ def synthesize_with_mlx_audio(model_config, text, voice_id_or_path_override, mod
         logger.error(f"mlx-audio: Model assets error for '{mlx_model_path_config}'. Error: {e_fnf}", exc_info=True)
     except RuntimeError as e_runtime:
         logger.error(f"mlx-audio: Runtime error for '{mlx_model_path_config}'. Error: {e_runtime}", exc_info=True)
-    except ValueError as e_val: # Catch "Inputs too long" or other ValueErrors from mlx-audio
-        logger.error(f"mlx-audio: ValueError for '{mlx_model_path_config}' (potentially input length or invalid param): {e_val}", exc_info=True)
+    except ValueError as e_val:
+        logger.error(f"mlx-audio: ValueError for '{mlx_model_path_config}': {e_val}", exc_info=True)
     except Exception as e:
         logger.error(f"mlx-audio: Unexpected error for '{mlx_model_path_config}': {e}", exc_info=True)
     finally:
-        if 'original_cwd' in locals() and Path.cwd() != original_cwd : # Ensure CWD is always changed back
+        if 'original_cwd' in locals() and Path.cwd() != original_cwd :
             os.chdir(original_cwd)
 
     if actual_generated_file_path and actual_generated_file_path.exists():
@@ -202,26 +194,25 @@ def synthesize_with_mlx_audio(model_config, text, voice_id_or_path_override, mod
                 logger.info(f"mlx-audio: Audio moved to {target_output_file}")
                 final_output_path_to_play = target_output_file
             except Exception as e_move:
-                logger.error(f"mlx-audio: Failed to move temp audio from {actual_generated_file_path} to {target_output_file}: {e_move}")
+                logger.error(f"mlx-audio: Failed to move temp audio: {e_move}")
         
         if play_direct:
             play_audio(str(final_output_path_to_play), is_path=True)
             
     elif not actual_generated_file_path :
-         logger.warning(f"mlx-audio: Synthesis function ran but no valid audio path was determined for model '{mlx_model_path_config}'.")
+         logger.warning(f"mlx-audio: Synthesis ran but no audio path determined for '{mlx_model_path_config}'.")
 
-    # Delete the temporary trimmed reference audio if one was created
     if path_to_temp_trimmed_ref and path_to_temp_trimmed_ref.exists():
         try:
             path_to_temp_trimmed_ref.unlink()
-            logger.debug(f"mlx-audio: Deleted temporary trimmed reference audio: {path_to_temp_trimmed_ref}")
+            logger.debug(f"mlx-audio: Deleted temporary trimmed reference: {path_to_temp_trimmed_ref}")
         except Exception as e_del_trim:
-            logger.warning(f"mlx-audio: Failed to delete temporary trimmed reference audio {path_to_temp_trimmed_ref}: {e_del_trim}")
+            logger.warning(f"mlx-audio: Failed to delete temp trimmed ref: {e_del_trim}")
 
     if temp_dir_manager:
         try:
             temp_dir_manager.cleanup()
             logger.debug("mlx-audio: Cleaned up main temporary directory.")
         except Exception as e_clean:
-            logger.warning(f"mlx-audio: Error cleaning up main temporary directory {temp_dir_manager.name}: {e_clean}", exc_info=True)
+            logger.warning(f"mlx-audio: Error cleaning main temp dir {temp_dir_manager.name}: {e_clean}", exc_info=True)
     gc.collect()
