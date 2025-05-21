@@ -257,4 +257,34 @@ GERMAN_TTS_MODELS = {
         "available_voices": ["default_speaker"], # ADDED
         "notes": "Coqui TTS (Tacotron2-DCA) for German (Thorsten dataset). Uses 'TTS' library. May require espeak/gruut."
     },
+    "coqui_xtts_v2_de_clone": {
+        # Handler key will default to model_id, which maps to synthesize_with_coqui_tts
+        "coqui_model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
+        "default_coqui_speaker": None, # XTTS uses speaker_wav for cloning, not a named speaker
+        "language": "de",              # Specify German for XTTS
+        "sample_rate": 24000,          # XTTS v2 outputs at 24kHz
+        # For --test-all mode, it will use this reference WAV.
+        # For --test-all-speakers, this will also be the one tested unless you add more to available_voices.
+        "default_voice_id": "./german.wav", # User MUST provide this file
+        "available_voices": ["./german.wav"], # Can add more reference WAV paths here
+        "notes": "Coqui XTTS v2 (multilingual, 24kHz). Requires a speaker_wav (from default_voice_id or --german-voice-id) for voice cloning. Ensure reference WAV is ~6-20s."
+    },
+    "coqui_css10_de_vits": {
+        # Handler key will default to model_id
+        "coqui_model_name": "tts_models/de/css10/vits", # Verify this exact model string via `tts --list_models` if possible
+        "default_coqui_speaker": None, # This is a single-speaker model for German
+        "language": "de",
+        "sample_rate": 22050,          # VITS models are typically 22050 Hz
+        "available_voices": ["default_speaker"], # Signal for main.py and handler
+        "notes": "Coqui TTS: German CSS10 VITS model (single-speaker for German)."
+    },
+    # VCTK Example (English, multi-speaker using speaker ID)
+    "coqui_vctk_en_vits": {
+        "coqui_model_name": "tts_models/en/vctk/vits",
+        "default_coqui_speaker": "p225", # Example VCTK speaker ID, verify with `tts --list_models ... --list_speaker_idxs`
+        "language": "en",
+        "sample_rate": 22050, 
+        "available_voices": ["p225", "p228", "p232", "p249"], # Replace with actual valid speaker IDs
+        "notes": "Coqui TTS: English VCTK VITS (multi-speaker). Use speaker IDs from --list_speaker_idxs."
+    },
 }

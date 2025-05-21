@@ -193,47 +193,76 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                 current_config_for_handler["ollama_model_name"] = cli_args.ollama_model_name
         
         voices_to_test_this_run = []
-        # ... (voices_to_test_this_run population logic remains the same) ...
         if test_all_speakers_flag:
+            # This part is for --test-all-speakers, uses "available_voices"
             if current_config_for_handler.get("available_voices"):
                 voices_to_test_this_run.extend(current_config_for_handler.get("available_voices"))
-            if "oute" in model_id and current_config_for_handler.get("test_default_speakers"): # Specific to OuteTTS structure
+            if "oute" in model_id and current_config_for_handler.get("test_default_speakers"):
                 voices_to_test_this_run.extend(current_config_for_handler.get("test_default_speakers"))
-            # If still empty after checking available_voices, try the default
+            
+            # Fallback to a single default if --test-all-speakers found no specific voices
             if not voices_to_test_this_run:
-                default_v = current_config_for_handler.get('default_voice_id') or \
-                            current_config_for_handler.get('default_model_path_in_repo') or \
-                            str(current_config_for_handler.get('default_speaker_embedding_index', '')) or \
-                            str(current_config_for_handler.get('default_speaker_id', ''))
-                if default_v: voices_to_test_this_run.append(default_v)
-        else: # Not test_all_speakers, so just the default
-            default_v = current_config_for_handler.get('default_voice_id') or \
-                        current_config_for_handler.get('default_model_path_in_repo') or \
-                        str(current_config_for_handler.get('default_speaker_embedding_index', '')) or \
-                        str(current_config_for_handler.get('default_speaker_id', ''))
-            if default_v: voices_to_test_this_run.append(default_v)
+                default_v_candidate = (
+                    current_config_for_handler.get('default_voice_id') or
+                    current_config_for_handler.get('default_model_path_in_repo')
+                )
+                if not default_v_candidate:
+                    idx_val = current_config_for_handler.get('default_speaker_embedding_index')
+                    if idx_val is not None: default_v_candidate = str(idx_val)
+                    else:
+                        idx_val_speaker = current_config_for_handler.get('default_speaker_id')
+                        if idx_val_speaker is not None: default_v_candidate = str(idx_val_speaker)
+                
+                if default_v_candidate and str(default_v_candidate).strip():
+                    voices_to_test_this_run.append(str(default_v_candidate))
+                elif model_id.startswith("coqui_tts") and current_config_for_handler.get("default_coqui_speaker") is None and current_config_for_handler.get("available_voices") == ["default_speaker"]:
+                    # If --test-all-speakers but Coqui only has "default_speaker", use it
+                    voices_to_test_this_run.append("default_speaker")
+                    logger.info(f"Coqui single-speaker model '{model_id}' for --test-all-speakers, using placeholder 'default_speaker'.")
 
 
-        voices_to_test_this_run = [v for v in voices_to_test_this_run if v is not None and str(v).strip()]
+        else: # This is for --test-all (test_all_speakers_flag is False), test only default voice
+            default_v_candidate = (
+                current_config_for_handler.get('default_voice_id') or
+                current_config_for_handler.get('default_model_path_in_repo')
+            )
+            if not default_v_candidate:
+                idx_val = current_config_for_handler.get('default_speaker_embedding_index')
+                if idx_val is not None: default_v_candidate = str(idx_val)
+                else:
+                    idx_val_speaker = current_config_for_handler.get('default_speaker_id')
+                    if idx_val_speaker is not None: default_v_candidate = str(idx_val_speaker)
+
+            if default_v_candidate and str(default_v_candidate).strip():
+                voices_to_test_this_run.append(str(default_v_candidate))
+            # **** START MODIFICATION FOR COQUI DEFAULT TEST ****
+            elif model_id.startswith("coqui_tts") and current_config_for_handler.get("default_coqui_speaker") is None:
+                # For single-speaker Coqui models in --test-all mode,
+                # if available_voices is ["default_speaker"], use that string.
+                # The handler will interpret "default_speaker" as "use intrinsic speaker".
+                if current_config_for_handler.get("available_voices") == ["default_speaker"]:
+                    voices_to_test_this_run.append("default_speaker")
+                    logger.info(f"Coqui single-speaker model '{model_id}', using placeholder 'default_speaker' for default test run.")
+            # **** END MODIFICATION FOR COQUI DEFAULT TEST ****
+        
+        # Ensure unique_voices_to_test is populated correctly:
+        voices_to_test_this_run = [v for v in voices_to_test_this_run if v is not None and str(v).strip()] # Filter out None or empty strings
         seen_voices = set()
-        unique_voices_to_test = [v for v in voices_to_test_this_run if not (str(v) in seen_voices or seen_voices.add(str(v)))]
+        unique_voices_to_test = []
+        if voices_to_test_this_run: # Only proceed if there's something to make unique
+            unique_voices_to_test = [v for v in voices_to_test_this_run if not (str(v) in seen_voices or seen_voices.add(str(v)))]
 
         if not unique_voices_to_test:
-            # Fallback for OuteTTS if ./german.wav exists and no other voices found
-            if model_id.startswith("oute") and Path("./german.wav").exists() and str(Path("./german.wav").resolve()) not in [str(Path(v).resolve()) for v in voices_to_test_this_run if Path(v).exists()]:
-                logger.info(f"Model '{model_id}' - No specific voices configured, adding ./german.wav for test.")
-                unique_voices_to_test.append(str(Path("./german.wav").resolve()))
-            
-            if not unique_voices_to_test: # Check again
-                current_model_status = "SKIPPED (No Voice)"
-                logger.info(f"\n>>> Skipping Model: {model_id} (No voices to test configured/found) <<<")
-                benchmark_results.append({
-                    "model_id": model_id, "voice_id": "N/A", "status": current_model_status,
-                    "gen_time_sec": "N/A", "file_size_bytes": "N/A",
-                    "audio_duration_sec": "N/A", "output_file": "N/A"
-                })
-                logger.info("------------------------------------")
-                continue
+            # This block is now the final check if NO voices were found by any logic above
+            current_model_status = "SKIPPED (No Voice)"
+            logger.info(f"\n>>> Skipping Model: {model_id} (No voices to test configured/found for this mode) <<<")
+            benchmark_results.append({
+                "model_id": model_id, "voice_id": "N/A", "status": current_model_status,
+                "gen_time_sec": "N/A", "file_size_bytes": "N/A",
+                "audio_duration_sec": "N/A", "output_file": "N/A"
+            })
+            logger.info("------------------------------------")
+            continue
         
         for voice_idx, voice_id_for_test in enumerate(unique_voices_to_test):
             current_voice_id_tested = str(voice_id_for_test)
