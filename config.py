@@ -34,10 +34,12 @@ if TORCH_AVAILABLE_FOR_CONFIG: # OuteTTS depends on PyTorch
         OuteTTSLlamaCppQuantization_Enum = _OuteTTSLlamaCppQuantization_Enum
         OuteTTSInterfaceVersion_Enum = _OuteTTSInterfaceVersion_Enum
         OUTETTS_AVAILABLE_FOR_CONFIG = True
+        logger_cfg.debug("Successfully imported OuteTTS enums.")
     except ImportError:
         logger_cfg.info("OuteTTS library not found during config load. OuteTTS enums will be placeholders.")
-    except AttributeError:
-        logger_cfg.warning("OuteTTS import has AttributeError (likely protobuf). OuteTTS enums will be placeholders.")
+    except AttributeError: # Catches error if protobufs for OuteTTS are not compiled
+        logger_cfg.warning("OuteTTS import has AttributeError (likely protobuf issue). OuteTTS enums will be placeholders.")
+
 
 # --- Global TTS Constants ---
 ORPHEUS_SAMPLE_RATE = 24000
@@ -46,7 +48,7 @@ ORPHEUS_SAMPLE_RATE = 24000
 ORPHEUS_AVAILABLE_VOICES_BASE = ["tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"]
 ORPHEUS_GERMAN_VOICES = ["jana", "thomas", "max"]
 SAUERKRAUT_VOICES = ["Tom", "Anna", "Max", "Lena"]
-ORPHEUS_DEFAULT_VOICE = "jana"
+ORPHEUS_DEFAULT_VOICE = "jana" # General fallback for Orpheus-like models if not specified
 
 EDGE_TTS_ALL_GERMAN_VOICES = [
     "de-AT-IngridNeural", "de-AT-JonasNeural", "de-DE-AmalaNeural", "de-DE-ConradNeural",
@@ -55,7 +57,6 @@ EDGE_TTS_ALL_GERMAN_VOICES = [
 EDGE_TTS_DEFAULT_GERMAN_VOICE = "de-DE-KatjaNeural"
 
 # --- Piper German Voices ---
-# Paths are relative to the root of the piper-voices repository for the specified version (e.g., v1.0.0)
 PIPER_GERMAN_VOICE_PATHS = [
     "de/de_DE/eva_k/x_low/de_DE-eva_k-x_low.onnx",
     "de/de_DE/karlsson/low/de_DE-karlsson-low.onnx",
@@ -64,13 +65,14 @@ PIPER_GERMAN_VOICE_PATHS = [
     "de/de_DE/pavoque/low/de_DE-pavoque-low.onnx",
     "de/de_DE/ramona/low/de_DE-ramona-low.onnx",
     "de/de_DE/thorsten/low/de_DE-thorsten-low.onnx",
-    "de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx", # Current default
+    "de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx",
     "de/de_DE/thorsten/high/de_DE-thorsten-high.onnx",
     "de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx",
 ]
 PIPER_DEFAULT_GERMAN_VOICE_PATH = "de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx"
 
-COQUI_THORSTEN_TACOTRON2_DCA = "tts_models/de/thorsten/tacotron2-DCA"
+# --- Coqui Specific Constants ---
+COQUI_THORSTEN_TACOTRON2_DCA = "tts_models/de/thorsten/tacotron2-DCA" # Used in your existing config
 
 # API Endpoint Defaults
 LM_STUDIO_API_URL_DEFAULT = "http://127.0.0.1:1234/v1/completions"
@@ -80,32 +82,46 @@ LM_STUDIO_HEADERS = {"Content-Type": "application/json"}
 # --- Kartoffel Orpheus (Transformers-based) Specific Configs ---
 KARTORPHEUS_NATURAL_MODEL_ID = "SebastianBodza/Kartoffel_Orpheus-3B_german_natural-v0.1"
 KARTORPHEUS_SNAC_MODEL_ID = "hubertsiuzdak/snac_24khz"
-KARTORPHEUS_NATURAL_SPEAKERS = [ # From the model card
+KARTORPHEUS_NATURAL_SPEAKERS = [
     "Jakob", "Anton", "Julian", "Jan", "Alexander", "Emil", "Ben", 
     "Elias", "Felix", "Jonas", "Noah", "Maximilian", "Sophie", 
     "Marie", "Mia", "Maria", "Sophia", "Lina", "Lea"
 ]
-KARTORPHEUS_NATURAL_DEFAULT_SPEAKER = "Julian" # Or your preferred default
+KARTORPHEUS_NATURAL_DEFAULT_SPEAKER = "Julian"
 
-# Specific token IDs for Kartoffel Orpheus prompt construction and output processing
 KARTORPHEUS_PROMPT_START_TOKEN_ID = 128259
-KARTORPHEUS_PROMPT_END_TOKEN_IDS = [128009, 128260] # EOT_ID, TEXT_END_ID
+KARTORPHEUS_PROMPT_END_TOKEN_IDS = [128009, 128260]
 KARTORPHEUS_GENERATION_EOS_TOKEN_ID = 128258
-KARTORPHEUS_AUDIO_START_MARKER_TOKEN_ID = 128257 # To find where audio tokens begin
-KARTORPHEUS_AUDIO_END_MARKER_TOKEN_ID = 128258   # To remove from audio token sequence
-KARTORPHEUS_AUDIO_TOKEN_OFFSET = 128266          # Base offset to subtract from raw audio tokens
+KARTORPHEUS_AUDIO_START_MARKER_TOKEN_ID = 128257
+KARTORPHEUS_AUDIO_END_MARKER_TOKEN_ID = 128258
+KARTORPHEUS_AUDIO_TOKEN_OFFSET = 128266
 
-# --- MLX Audio Specific Configs ---
+# --- LLaSA Hybrid Specific Configs ---
+LLASA_MLX_LLM_MODEL_ID = "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
+LLASA_CHAT_TEMPLATE_TOKENIZER_ID = "HKUSTAudio/Llasa-1B-Multilingual" 
+LLASA_XCODEC2_VOCODER_MODEL_ID = "HKUSTAudio/xcodec2"
+
+# --- MLX Audio Specific Configs (Consolidated from your file and new additions) ---
+DEFAULT_GERMAN_REF_WAV = "./german.wav" # Path in CrispTTS root for reference audio
+
 MLX_AUDIO_KOKORO_MODEL_ID = "mlx-community/Kokoro-82M-bf16"
-MLX_AUDIO_CSM_MODEL_ID = "mlx-community/csm-1b-8bit"
-MLX_AUDIO_KOKORO_LANG_CODE_GERMAN = "a" # must verify this
-MLX_AUDIO_KOKORO_LANG_CODE_FALLBACK = "a" # For Kokoro if "de" fails
-MLX_AUDIO_KOKORO_DEFAULT_VOICE = "af_heart"
-MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "af_bella", "bf_emma"]
+MLX_AUDIO_KOKORO_LANG_CODE_GERMAN = "de" # For espeak G2P, verify if `mlx-audio` supports this for Kokoro
+MLX_AUDIO_KOKORO_DEFAULT_VOICE = "de_speaker_0" # Hypothetical, or use "af_heart" for testing
+MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "bf_emma", "ef_heart", "de_speaker_0", "en_speaker_1"] # Check actual valid voices
+
+MLX_AUDIO_CSM_MODEL_ID = "mlx-community/csm-1b-8bit" # Sesame
+MLX_AUDIO_OUTETTS_MAIN_REPO_ID = "mlx-community/Llama-OuteTTS-1.0-1B-4bit" # For mlx-audio OuteTTS handler
+MLX_AUDIO_SPARK_REPO_ID = "mlx-community/spark-tts-0.5b-instruct-bf16"
+MLX_AUDIO_BARK_REPO_ID = "mlx-community/bark-ft-mlx" # Or "suno/bark" / "suno/bark-small" if directly loadable
+MLX_AUDIO_DIA_REPO_ID = "mlx-community/Dia-1.6B"
+MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID = "mlx-community/orpheus-3b-0.1-ft-bf16" # mlx-audio's Llama variant
+
+# This was for your OuteTTS HF ONNX handler, separate from mlx-audio OuteTTS
 MLX_AUDIO_OUTETTS_ONNX_REPO_ID = "OuteAI/Llama-OuteTTS-1.0-1B-ONNX"
-MLX_AUDIO_OUTETTS_MAIN_REPO_ID = "mlx-community/Llama-OuteTTS-1.0-1B-4bit"
+
 
 # --- OuteTTS Internal Data Structures (Fallback if not directly queryable from library) ---
+# (This section from your config.py is kept as is)
 OUTETTS_INTERNAL_MODEL_INFO_DATA = {}
 if OUTETTS_AVAILABLE_FOR_CONFIG and OuteTTSModels_Enum and OuteTTSInterfaceVersion_Enum:
     try:
@@ -128,198 +144,254 @@ OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA = {
 
 # --- Main Model Configuration Dictionary ---
 GERMAN_TTS_MODELS = {
+    # === Your Existing Model Configurations (ensure 'handler_function_key' is present and correct) ===
     "edge": {
-        # "handler_function_key": "edge", # Redundant if model_id is the same and used as key in ALL_HANDLERS
+        "handler_function_key": "edge",
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
         "available_voices": EDGE_TTS_ALL_GERMAN_VOICES,
         "notes": "MS Edge TTS (cloud). Output: MP3. Internet required."
     },
     "orpheus_kartoffel_natural": {
+        "handler_function_key": "orpheus_kartoffel", # Standardized key
         "model_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
-        "tokenizer_repo_id": KARTORPHEUS_NATURAL_MODEL_ID, # Usually same as model
+        "tokenizer_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
         "snac_model_id": KARTORPHEUS_SNAC_MODEL_ID,
         "default_voice_id": KARTORPHEUS_NATURAL_DEFAULT_SPEAKER,
         "available_voices": KARTORPHEUS_NATURAL_SPEAKERS,
-        "language": "de", # Model is German
-        "sample_rate": 24000, # SNAC output is 24kHz
-        "requires_hf_token": True, # It's a gated model
-        # Specific token IDs for this model type
+        "language": "de",
+        "sample_rate": ORPHEUS_SAMPLE_RATE,
+        "requires_hf_token": True,
         "prompt_start_token_id": KARTORPHEUS_PROMPT_START_TOKEN_ID,
         "prompt_end_token_ids": KARTORPHEUS_PROMPT_END_TOKEN_IDS,
         "generation_eos_token_id": KARTORPHEUS_GENERATION_EOS_TOKEN_ID,
         "audio_start_marker_token_id": KARTORPHEUS_AUDIO_START_MARKER_TOKEN_ID,
         "audio_end_marker_token_id": KARTORPHEUS_AUDIO_END_MARKER_TOKEN_ID,
         "audio_token_offset": KARTORPHEUS_AUDIO_TOKEN_OFFSET,
-        "notes": "Kartoffel Orpheus-3B (Natural German) via Transformers & SNAC. Gated model, requires HF token."
+        "notes": "Kartoffel Orpheus-3B (Natural German) via Transformers & SNAC. Gated model."
     },
     "piper_local": {
-        # "handler_function_key": "piper_local", # Redundant
+        "handler_function_key": "piper", # Standardized key
         "piper_voice_repo_id": "rhasspy/piper-voices",
         "default_model_path_in_repo": PIPER_DEFAULT_GERMAN_VOICE_PATH,
         "available_voices": PIPER_GERMAN_VOICE_PATHS,
         "requires_hf_token": False,
-        "notes": "Local Piper TTS (ONNX). Downloads model/voice from Hugging Face. Output: WAV."
+        "notes": "Local Piper TTS (ONNX). Downloads model/voice. Output: WAV."
     },
     "orpheus_lex_au": {
-        # "handler_function_key": "orpheus_gguf", # REMOVED: ALL_HANDLERS key is "orpheus_lex_au"
-        "model_repo_id": "lex-au/Orpheus-3b-FT-Q4_K_M.gguf", # lex-au/Orpheus-3b-FT-Q4_K_M.gguf
-        "model_filename": "Orpheus-3b-FT-Q4_K_M.gguf", # Orpheus-3b-German-FT-Q8_0.gguf 
+        "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
+        "model_repo_id": "lex-au/Orpheus-3b-FT-Q4_K_M.gguf",
+        "model_filename": "Orpheus-3b-FT-Q4_K_M.gguf",
         "requires_hf_token": False,
-        "default_voice_id": "jana",
+        "default_voice_id": ORPHEUS_DEFAULT_VOICE,
         "available_voices": ORPHEUS_GERMAN_VOICES,
-        "notes": "Local Orpheus GGUF (lex-au). Uses llama-cpp-python & decoder.py. Output: WAV."
+        "notes": "Local Orpheus GGUF (lex-au). Uses llama-cpp-python & custom decoder. Output: WAV."
     },
     "orpheus_sauerkraut": {
-        # "handler_function_key": "orpheus_gguf", # REMOVED: ALL_HANDLERS key is "orpheus_sauerkraut"
+        "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
         "model_repo_id": "VAGOsolutions/SauerkrautTTS-Preview-0.1-Q4_K_M-GGUF",
         "model_filename": "sauerkrauttts_preview_0_1.Q4_K_M.gguf",
         "requires_hf_token": False,
         "default_voice_id": "Tom",
         "available_voices": SAUERKRAUT_VOICES,
-        "notes": "Local SauerkrautTTS (Orpheus GGUF). Uses llama-cpp-python & decoder.py. Output: WAV."
+        "notes": "Local SauerkrautTTS GGUF. Uses llama-cpp-python & custom decoder. Output: WAV."
     },
     "orpheus_lm_studio": {
-        # "handler_function_key": "orpheus_lm_studio", # Redundant
+        "handler_function_key": "orpheus_lm_studio",
         "api_url": LM_STUDIO_API_URL_DEFAULT,
         "gguf_model_name_in_api": "SauerkrautTTS-Preview-0.1",
         "default_voice_id": "Tom",
         "available_voices": SAUERKRAUT_VOICES + ORPHEUS_GERMAN_VOICES + ORPHEUS_AVAILABLE_VOICES_BASE,
-        "notes": "Orpheus via LM Studio API. Requires decoder.py. Output: WAV."
+        "notes": "Orpheus via LM Studio API. Requires custom decoder. Output: WAV."
     },
     "orpheus_ollama": {
-        # "handler_function_key": "orpheus_ollama", # Redundant
+        "handler_function_key": "orpheus_ollama",
         "api_url": OLLAMA_API_URL_DEFAULT,
         "ollama_model_name": "legraphista/Orpheus",
         "default_voice_id": "tara",
         "available_voices": ORPHEUS_AVAILABLE_VOICES_BASE,
-        # ORPHEUS_GERMAN_VOICES + SAUERKRAUT_VOICES + 
-        "notes": "Orpheus via Ollama API. Requires decoder.py. Output: WAV."
+        "notes": "Orpheus via Ollama API. Requires custom decoder. Output: WAV."
     },
     "oute_llamacpp": {
-        # "handler_function_key": "outetts", # REMOVED: ALL_HANDLERS key is "oute_llamacpp"
+        "handler_function_key": "outetts", # Standardized key for OuteTTS
         "outetts_model_enum": OuteTTSModels_Enum.VERSION_1_0_SIZE_1B if OUTETTS_AVAILABLE_FOR_CONFIG else "VERSION_1_0_SIZE_1B_STR_FALLBACK",
         "backend_to_use": OuteTTSBackend_Enum.LLAMACPP if OUTETTS_AVAILABLE_FOR_CONFIG else "LLAMACPP_STR_FALLBACK",
         "quantization_to_use": OuteTTSLlamaCppQuantization_Enum.FP16 if OUTETTS_AVAILABLE_FOR_CONFIG else "FP16_STR_FALLBACK",
-        "default_voice_id": "./german.wav",
-        "available_voices": ["./german.wav"],
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
         "test_default_speakers": ["EN-FEMALE-1-NEUTRAL"],
         "notes": "Local OuteTTS (LlamaCPP backend). Custom WAV or OuteTTS default ID."
     },
     "oute_hf": {
+        "handler_function_key": "outetts", # Standardized key for OuteTTS
         "outetts_model_version_str": "1.0",
-        "onnx_repo_id": "OuteAI/Llama-OuteTTS-1.0-1B-ONNX", # Source of ONNX files
-        "tokenizer_path": "OuteAI/Llama-OuteTTS-1.0-1B",   # Source of base model config/tokenizer
+        "onnx_repo_id": MLX_AUDIO_OUTETTS_ONNX_REPO_ID,
+        "tokenizer_path": "OuteAI/Llama-OuteTTS-1.0-1B",
         "onnx_filename_options": ["onnx/model_int8.onnx"],
-        # "onnx/model_q4f16.onnx", "onnx/model_q4.onnx", 
-        # "onnx_subfolder" is implicit in onnx_filename_options
         "wavtokenizer_model_path": "onnx-community/WavTokenizer-large-speech-75token_decode",
         "interface_version_enum": OuteTTSInterfaceVersion_Enum.V3 if OUTETTS_AVAILABLE_FOR_CONFIG else "V3_STR_FALLBACK",
         "backend_to_use": OuteTTSBackend_Enum.HF if OUTETTS_AVAILABLE_FOR_CONFIG else "HF_STR_FALLBACK",
         "language": "de",
-        "torch_dtype_for_hf_wrapper": torch.float16 if TORCH_AVAILABLE_FOR_CONFIG else "torch.float32_STR_FALLBACK",
-        "default_voice_id": "./german.wav", # IMPORTANT: Must be < 15-20s
-        "available_voices": ["./german.wav"],
+        "torch_dtype_for_hf_wrapper": torch.float16 if TORCH_AVAILABLE_FOR_CONFIG else "torch.float16_STR_FALLBACK",
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
         "test_default_speakers": ["EN-FEMALE-1-NEUTRAL"],
-        "notes": "OuteTTS (HF ONNX). Ref WAV will be shortened <15s. Output: WAV. Clears /var/folders/ on Mac on failure."
+        "notes": "OuteTTS (HF ONNX). Ref WAV ideally <15s. Output: WAV."
     },
-    "mlx_audio_kokoro_de": {
-        # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_kokoro_de"
+    "speecht5_german_transformers": {
+        "handler_function_key": "speecht5", # Standardized key
+        "model_id": "sjdata/speecht5_finetuned_common_voice_11_de",
+        "vocoder_id": "microsoft/speecht5_hifigan",
+        "speaker_embeddings_repo": "Matthijs/cmu-arctic-xvectors",
+        "default_speaker_embedding_index": 7306,
+        "available_voices": ["7306", "path/to/your/custom_xvector.pt"],
+        "notes": "Local SpeechT5 (German fine-tune) via Transformers. Output: WAV."
+    },
+    "fastpitch_german_nemo": {
+        "handler_function_key": "nemo_fastpitch", # Standardized key
+        "spectrogram_model_repo_id": "inOXcrm/German_multispeaker_FastPitch_nemo",
+        "spectrogram_model_filename": "German_multispeaker_FastPitch_nemo.nemo",
+        "vocoder_model_name": "tts_de_hui_hifigan_ft_fastpitch_multispeaker_5",
+        "default_speaker_id": 0,
+        "available_voices": [str(i) for i in range(10)],
+        "notes": "Local FastPitch (German) via NeMo. Output: WAV."
+    },
+    "coqui_tts_thorsten_ddc": {
+        "handler_function_key": "coqui_tts", # Standardized Coqui key
+        "coqui_model_name": "tts_models/de/thorsten/tacotron2-DDC",
+        "default_coqui_speaker": None,
+        "language": "de",
+        "sample_rate": 22050,
+        "available_voices": ["default_speaker"],
+        "notes": "Coqui TTS (Tacotron2 DDC) for German. Uses 'TTS' library."
+    },
+    "coqui_tts_thorsten_vits": {
+        "handler_function_key": "coqui_tts",
+        "coqui_model_name": "tts_models/de/thorsten/vits",
+        "default_coqui_speaker": None,
+        "language": "de",
+        "sample_rate": 22050,
+        "available_voices": ["default_speaker"],
+        "notes": "Coqui TTS (VITS model) for German. Uses 'TTS' library."
+    },
+    "coqui_tts_thorsten_dca": {
+        "handler_function_key": "coqui_tts",
+        "coqui_model_name": COQUI_THORSTEN_TACOTRON2_DCA,
+        "default_coqui_speaker": None,
+        "language": "de",
+        "sample_rate": 22050,
+        "available_voices": ["default_speaker"],
+        "notes": "Coqui TTS (Tacotron2-DCA) for German. Uses 'TTS' library. May require espeak/gruut."
+    },
+    "coqui_xtts_v2_de_clone": {
+        "handler_function_key": "coqui_tts", # XTTS also uses the Coqui TTS API
+        "coqui_model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
+        "default_coqui_speaker": None, 
+        "language": "de",      
+        "sample_rate": 24000,  
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV], 
+        "notes": "Coqui XTTS v2 (multilingual, 24kHz). Requires a speaker_wav for voice cloning. Ref WAV ~6-20s."
+    },
+    "coqui_css10_de_vits": {
+        "handler_function_key": "coqui_tts",
+        "coqui_model_name": "tts_models/de/css10/vits",
+        "default_coqui_speaker": None,
+        "language": "de",
+        "sample_rate": 22050,
+        "available_voices": ["default_speaker"],
+        "notes": "Coqui TTS: German CSS10 VITS model (single-speaker)."
+    },
+    "coqui_vctk_en_vits": {
+        "handler_function_key": "coqui_tts",
+        "coqui_model_name": "tts_models/en/vctk/vits",
+        "default_coqui_speaker": "p225", 
+        "available_voices": ["p225", "p228", "p232", "p249"],
+        "language": "en",
+        "sample_rate": 22050, 
+        "notes": "Coqui TTS: English VCTK VITS (multi-speaker). Use VCTK speaker IDs."
+    },
+    "llasa_hybrid_de_clone": {
+        "handler_function_key": "llasa_hybrid",
+        "llm_model_id": LLASA_MLX_LLM_MODEL_ID,
+        "chat_tokenizer_id": LLASA_CHAT_TEMPLATE_TOKENIZER_ID, 
+        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
+        "language": "de",
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV], 
+        "sample_rate": 16000,
+        "requires_hf_token": False, 
+        "notes": "LLaSA 1B Hybrid (MLX LLM + PyTorch XCodec2). Uses ref WAV for cloning. 16kHz. Experimental."
+    },
+
+    # --- MLX-AUDIO MODEL ENTRIES using "mlx_audio" handler_function_key ---
+    "mlx_audio_kokoro_de": { # Your original ID for Kokoro
+        "handler_function_key": "mlx_audio",
         "mlx_model_path": MLX_AUDIO_KOKORO_MODEL_ID,
         "default_voice_id": MLX_AUDIO_KOKORO_DEFAULT_VOICE,
         "available_voices": MLX_AUDIO_KOKORO_VOICES,
         "lang_code": MLX_AUDIO_KOKORO_LANG_CODE_GERMAN,
         "sample_rate": 24000,
-        "notes": "mlx-audio (Kokoro model) for Apple Silicon. German lang_code needed. Voice may be non-German."
+        "notes": "mlx-audio (Kokoro model) for Apple Silicon. Lang: German ('de' with espeak). Uses Apple Silicon MLX."
     },
-    "mlx_audio_csm_clone": {
-        # "handler_function_key": "mlx_audio", # REMOVED: ALL_HANDLERS key is "mlx_audio_csm_clone"
+    "mlx_audio_csm_clone": { # Your existing ID for CSM/Sesame
+        "handler_function_key": "mlx_audio",
         "mlx_model_path": MLX_AUDIO_CSM_MODEL_ID,
-        "default_voice_id": "./german.wav",
-        "available_voices": ["./german.wav"],
-        "lang_code": "de",
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
+        # "lang_code": "de", # Optional for CSM, often inferred
         "sample_rate": 24000,
-        "notes": "mlx-audio (CSM model) for voice cloning on Apple Silicon. Requires German reference WAV."
+        "notes": "mlx-audio (CSM/Sesame) for voice cloning. Ref WAV & ref_text needed. Uses Apple Silicon MLX."
     },
-    "mlx_audio_outetts_q4": {
-        "mlx_model_path": MLX_AUDIO_OUTETTS_MAIN_REPO_ID, # Using mlx-community 4-bit version
-        "tokenizer_path_for_mlx_outetts": MLX_AUDIO_OUTETTS_MAIN_REPO_ID, # mlx-audio usually infers from model_path for these
-        "lang_code": "de",
-        "default_voice_id": "./german.wav",
-        "sample_rate": 24000, # OuteTTS is 24kHz
-        "notes": "OuteTTS Llama 1B run via mlx-audio. Requires reference audio. Quantization (if any) handled by mlx-audio."
+    "mlx_audio_outetts_clone": { # Your existing ID for OuteTTS via mlx-audio
+        "handler_function_key": "mlx_audio",
+        "mlx_model_path": MLX_AUDIO_OUTETTS_MAIN_REPO_ID,
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
+        "sample_rate": 24000,
+        "notes": "mlx-audio (OuteTTS Llama) for voice cloning. Ref WAV & ref_text needed. Uses Apple Silicon MLX."
     },
-    "speecht5_german_transformers": {
-        # "handler_function_key": "speecht5", # REMOVED: ALL_HANDLERS key is "speecht5_german_transformers"
-        "model_id": "sjdata/speecht5_finetuned_common_voice_11_de",
-        "vocoder_id": "microsoft/speecht5_hifigan",
-        "speaker_embeddings_repo": "Matthijs/cmu-arctic-xvectors",
-        "default_speaker_embedding_index": 7306,
-        "notes": "Local SpeechT5 (German fine-tune) via Transformers. Output: WAV."
+    # --- NEW MLX-AUDIO ENTRIES with standardized IDs ---
+    "mlx_audio_spark_clone": {
+        "handler_function_key": "mlx_audio",
+        "mlx_model_path": MLX_AUDIO_SPARK_REPO_ID,
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
+        "sample_rate": 16000,
+        "notes": "mlx-audio (Spark model) for voice cloning. Ref WAV & ref_text needed. Uses Apple Silicon MLX."
     },
-    "fastpitch_german_nemo": {
-        # "handler_function_key": "nemo", # REMOVED: ALL_HANDLERS key is "fastpitch_german_nemo"
-        "spectrogram_model_repo_id": "inOXcrm/German_multispeaker_FastPitch_nemo",
-        "spectrogram_model_filename": "German_multispeaker_FastPitch_nemo.nemo",
-        "vocoder_model_name": "tts_de_hui_hifigan_ft_fastpitch_multispeaker_5",
-        "default_speaker_id": 0,
-        "available_voices": [i for i in range(10)],
-        "notes": "Local FastPitch (German) via NeMo. Output: WAV."
+    "mlx_audio_spark_control": {
+        "handler_function_key": "mlx_audio",
+        "mlx_model_path": MLX_AUDIO_SPARK_REPO_ID,
+        "default_voice_id": "female", 
+        "available_voices": ["female", "male"],
+        "default_speed": 1.0, 
+        "default_pitch": 1.0, 
+        "sample_rate": 16000,
+        "notes": "mlx-audio (Spark model) with controllable attributes. Uses Apple Silicon MLX."
     },
-    "coqui_tts_thorsten_ddc": {
-        # "handler_function_key": "coqui_tts", # Already correct or redundant if model_id is key in ALL_HANDLERS
-        "coqui_model_name": "tts_models/de/thorsten/tacotron2-DDC",
-        "default_coqui_speaker": None,
-        "language": "de",
-        "sample_rate": 22050,
-        "available_voices": ["default_speaker"], # ADDED to allow test loop to pick it up
-        "notes": "Coqui TTS (Tacotron2 DDC) for German (Thorsten dataset). Uses 'TTS' library."
+    "mlx_audio_bark_de": {
+        "handler_function_key": "mlx_audio",
+        "mlx_model_path": MLX_AUDIO_BARK_REPO_ID, 
+        "default_voice_id": "v2/de_speaker_3", # Example German Bark voice
+        "available_voices": ["de_speaker_0", "de_speaker_1", "v2/de_speaker_3", "v2/en_speaker_0"],
+        "lang_code": "de", 
+        "sample_rate": 24000,
+        "notes": "mlx-audio (Bark model) using predefined voice prompts. Uses Apple Silicon MLX."
     },
-    "coqui_tts_thorsten_vits": {
-        # "handler_function_key": "coqui_tts",
-        "coqui_model_name": "tts_models/de/thorsten/vits",
-        "default_coqui_speaker": None,
-        "language": "de",
-        "sample_rate": 22050,
-        "available_voices": ["default_speaker"], # ADDED
-        "notes": "Coqui TTS (VITS model) for German (Thorsten dataset). Uses 'TTS' library."
+    "mlx_audio_dia_clone": {
+        "handler_function_key": "mlx_audio",
+        "mlx_model_path": MLX_AUDIO_DIA_REPO_ID,
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
+        "sample_rate": 44100,
+        "notes": "mlx-audio (Dia model) for voice cloning. Ref WAV & ref_text needed. Uses Apple Silicon MLX."
     },
-    "coqui_tts_thorsten_dca": {
-        # "handler_function_key": "coqui_tts",
-        "coqui_model_name": COQUI_THORSTEN_TACOTRON2_DCA,
-        "default_coqui_speaker": None,
-        "language": "de",
-        "sample_rate": 22050,
-        "available_voices": ["default_speaker"], # ADDED
-        "notes": "Coqui TTS (Tacotron2-DCA) for German (Thorsten dataset). Uses 'TTS' library. May require espeak/gruut."
-    },
-    "coqui_xtts_v2_de_clone": {
-        # Handler key will default to model_id, which maps to synthesize_with_coqui_tts
-        "coqui_model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
-        "default_coqui_speaker": None, # XTTS uses speaker_wav for cloning, not a named speaker
-        "language": "de",              # Specify German for XTTS
-        "sample_rate": 24000,          # XTTS v2 outputs at 24kHz
-        # For --test-all mode, it will use this reference WAV.
-        # For --test-all-speakers, this will also be the one tested unless you add more to available_voices.
-        "default_voice_id": "./german.wav", # User MUST provide this file
-        "available_voices": ["./german.wav"], # Can add more reference WAV paths here
-        "notes": "Coqui XTTS v2 (multilingual, 24kHz). Requires a speaker_wav (from default_voice_id or --german-voice-id) for voice cloning. Ensure reference WAV is ~6-20s."
-    },
-    "coqui_css10_de_vits": {
-        # Handler key will default to model_id
-        "coqui_model_name": "tts_models/de/css10/vits", # Verify this exact model string via `tts --list_models` if possible
-        "default_coqui_speaker": None, # This is a single-speaker model for German
-        "language": "de",
-        "sample_rate": 22050,          # VITS models are typically 22050 Hz
-        "available_voices": ["default_speaker"], # Signal for main.py and handler
-        "notes": "Coqui TTS: German CSS10 VITS model (single-speaker for German)."
-    },
-    # VCTK Example (English, multi-speaker using speaker ID)
-    "coqui_vctk_en_vits": {
-        "coqui_model_name": "tts_models/en/vctk/vits",
-        "default_coqui_speaker": "p225", # Example VCTK speaker ID, verify with `tts --list_models ... --list_speaker_idxs`
-        "language": "en",
-        "sample_rate": 22050, 
-        "available_voices": ["p225", "p228", "p232", "p249"], # Replace with actual valid speaker IDs
-        "notes": "Coqui TTS: English VCTK VITS (multi-speaker). Use speaker IDs from --list_speaker_idxs."
-    },
+    "mlx_audio_orpheus_llama": { # For the Orpheus-like Llama in mlx-audio
+        "handler_function_key": "mlx_audio",
+        "mlx_model_path": MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID,
+        "default_voice_id": "zac", # Orpheus-style voice name
+        "available_voices": ORPHEUS_AVAILABLE_VOICES_BASE + ORPHEUS_GERMAN_VOICES,
+        "sample_rate": ORPHEUS_SAMPLE_RATE,
+        "notes": "mlx-audio (Orpheus-like Llama). Uses string voice names. Uses Apple Silicon MLX."
+    }
 }
