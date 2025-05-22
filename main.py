@@ -2,9 +2,9 @@
 # CrispTTS - main.py
 # Main Command-Line Interface for the Text-to-Speech Synthesizer (Modularized with Overrides)
 
-import sys
-from pathlib import Path
-import time # For benchmarking
+import sys # KEEP AT TOP
+from pathlib import Path # KEEP AT TOP
+import time # KEEP AT TOP
 
 # --- Add project root to sys.path to ensure relative imports work ---
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -12,14 +12,177 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 # --- End Path Adjustment ---
 
-import argparse
-import os
-import json
-import logging
+import argparse # KEEP
+import os # KEEP
+import json # KEEP
+import logging # KEEP
+import types # NEEDED FOR MONKEY PATCH TYPE CHECKING
 
 # --- Environment Setup ---
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["GGML_METAL_NDEBUG"] = "1" 
+os.environ["TOKENIZERS_PARALLELISM"] = "false" # KEEP
+os.environ["GGML_METAL_NDEBUG"] = "1" # KEEP
+
+# === START MONKEY PATCH FOR VLLM TRITON PLACEHOLDER ===
+# Setup a specific logger for the monkey patch actions that can log early
+_main_mp_logger = logging.getLogger("CrispTTS.main_monkey_patch")
+if not _main_mp_logger.handlers:
+    _mp_handler = logging.StreamHandler(sys.stderr)
+    _mp_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - MONKEY_PATCH: %(message)s')
+    _mp_handler.setFormatter(_mp_formatter)
+    _main_mp_logger.addHandler(_mp_handler)
+    _main_mp_logger.setLevel(logging.INFO) # Ensure INFO messages from patch are visible
+    _main_mp_logger.propagate = False # Don't send to root logger if already handled
+
+class _CrispTTSDummyTritonConfig:
+    """A dummy class to stand in for triton.Config."""
+    def __init__(self, *args, **kwargs):
+        _main_mp_logger.debug(f"DummyTritonConfig initialized with args: {args}, kwargs: {kwargs}")
+        pass
+
+def _apply_triton_config_monkey_patch_for_vllm():
+    """
+    Checks if vLLM's TritonPlaceholder is in sys.modules and, if so,
+    adds dummy 'Config', 'cdiv', and various triton.language attributes
+    to it, to prevent AttributeErrors when torchao tries to access them.
+    """
+    # Logger is already defined globally in main.py as _main_mp_logger
+    # _main_mp_logger = logging.getLogger("CrispTTS.main_monkey_patch") # Redundant if already global
+
+    try:
+        if 'triton' in sys.modules:
+            triton_module = sys.modules['triton']
+            placeholder_type_name = str(type(triton_module))
+            
+            # Check if it's vLLM's placeholder by its specific type name and a known unique attribute
+            is_likely_vllm_placeholder = (
+                "vllm" in placeholder_type_name and 
+                "TritonPlaceholder" in placeholder_type_name and
+                hasattr(triton_module, '_dummy_decorator') 
+            )
+
+            if is_likely_vllm_placeholder:
+                _main_mp_logger.info("vLLM's TritonPlaceholder detected in sys.modules.")
+
+                # Patch triton.Config
+                if not hasattr(triton_module, 'Config'):
+                    _main_mp_logger.info("Adding 'Config' attribute to vLLM's TritonPlaceholder.")
+                    setattr(triton_module, 'Config', _CrispTTSDummyTritonConfig) # _CrispTTSDummyTritonConfig needs to be defined globally in main.py
+                else:
+                    _main_mp_logger.info("vLLM's TritonPlaceholder already has 'Config'.")
+
+                # Patch triton.cdiv
+                if not hasattr(triton_module, 'cdiv'):
+                    _main_mp_logger.info("Adding 'cdiv' attribute to vLLM's TritonPlaceholder.")
+                    setattr(triton_module, 'cdiv', lambda x, y: (x + y - 1) // y)
+                else:
+                    _main_mp_logger.info("vLLM's TritonPlaceholder already has 'cdiv'.")
+
+                # Patch attributes within triton.language
+                if hasattr(triton_module, 'language'):
+                    triton_lang_module = triton_module.language
+                    lang_placeholder_type_name = str(type(triton_lang_module))
+
+                    is_likely_vllm_lang_placeholder = (
+                        "vllm" in lang_placeholder_type_name and
+                        "TritonLanguagePlaceholder" in lang_placeholder_type_name
+                    )
+
+                    if is_likely_vllm_lang_placeholder:
+                        _main_mp_logger.info("vLLM's TritonLanguagePlaceholder found. Patching missing attributes.")
+                        
+                        class _DummyDtypePlaceholder:
+                            def __init__(self, name_): self.name = name_
+                            def __repr__(self): return f"tl.{self.name}" # Mimic Triton dtype repr
+                            # Add .to() method as it might be called by tl.constexpr(dtype.to(device_type))
+                            def to(self, target_device_type_str): # target_device_type_str e.g. "device_type"
+                                _main_mp_logger.debug(f"DummyDtypePlaceholder {self.name}.to({target_device_type_str}) called.")
+                                return self # Return self, as it's just a type descriptor
+
+                        dtypes_to_add = {
+                            "int1": _DummyDtypePlaceholder("int1"), # Often used for masks
+                            "int8": _DummyDtypePlaceholder("int8"),
+                            "int16": _DummyDtypePlaceholder("int16"),
+                            "int32": _DummyDtypePlaceholder("int32"), # Error was here
+                            "uint8": _DummyDtypePlaceholder("uint8"),
+                            "uint16": _DummyDtypePlaceholder("uint16"),
+                            "uint32": _DummyDtypePlaceholder("uint32"),
+                            "uint64": _DummyDtypePlaceholder("uint64"),
+                            "float8e4nv": _DummyDtypePlaceholder("float8e4nv"), # Common in new models
+                            "float8e5": _DummyDtypePlaceholder("float8e5"),   # Common in new models
+                            "float16": _DummyDtypePlaceholder("float16"),
+                            "bfloat16": _DummyDtypePlaceholder("bfloat16"),
+                            "float32": _DummyDtypePlaceholder("float32"),
+                            "float64": _DummyDtypePlaceholder("float64"), # Proactive
+                            # tl.int64 is already defined in vllm's placeholder
+                        }
+                        
+                        for dtype_name, dtype_obj in dtypes_to_add.items():
+                            if not hasattr(triton_lang_module, dtype_name):
+                                _main_mp_logger.info(f"Adding dtype '{dtype_name}' to TritonLanguagePlaceholder.")
+                                setattr(triton_lang_module, dtype_name, dtype_obj)
+                        
+                        # Patch tl.constexpr (vllm has it as None)
+                        # In real Triton, it's a decorator/function. For type hints/annotations, identity works.
+                        # If torchao uses it as `tl.constexpr[X]`, this simple lambda won't work.
+                        # `torchao/kernel/intmm_triton.py` uses `ACC_TYPE: tl.constexpr = tl.int32`
+                        # This means tl.constexpr is used as a type hint for assignment, not a call.
+                        # However, it can also be used as `@triton.jit def kernel(..., X: tl.constexpr):`
+                        # An identity function is a safer bet than None if it's ever called.
+                        if getattr(triton_lang_module, 'constexpr', 'NOT_SET') is None:
+                            _main_mp_logger.info("Patching 'constexpr' in TritonLanguagePlaceholder to be an identity function.")
+                            setattr(triton_lang_module, 'constexpr', lambda x: x)
+                        
+                        # Patch tl.dtype (vllm has it as None)
+                        # In real Triton, tl.dtype is a class/factory: e.g. tl.dtype("int32")
+                        # Or it can be a dictionary: tl.dtype = {"int32": tl.int32_t, ...}
+                        # Making it a factory for our dummy dtypes is safer.
+                        current_dtype_attr = getattr(triton_lang_module, 'dtype', 'NOT_SET')
+                        if current_dtype_attr is None or not callable(current_dtype_attr):
+                             _main_mp_logger.info("Patching 'dtype' in TritonLanguagePlaceholder to be a dummy factory.")
+                             setattr(triton_lang_module, 'dtype', 
+                                     lambda name_str_or_obj: dtypes_to_add.get(str(name_str_or_obj), _DummyDtypePlaceholder(str(name_str_or_obj))) 
+                                     if isinstance(name_str_or_obj, str) 
+                                     else name_str_or_obj # If an object is passed, return it (e.g. tl.int32)
+                                    )
+                        
+                        # Other potentially needed triton.language attributes by torchao's intmm_triton.py:
+                        # tl.dot, tl.zeros, tl.arange, tl.sum, tl.sigmoid, tl.exp, tl.clamp
+                        # tl.load, tl.store, tl.make_block_ptr, tl.advance, tl.PROGRAM_ID, tl.num_programs
+                        # For now, only adding what's explicitly errored or highly likely.
+                        if not hasattr(triton_lang_module, 'PROGRAM_ID'):
+                            _main_mp_logger.info("Adding dummy 'PROGRAM_ID' to TritonLanguagePlaceholder.")
+                            setattr(triton_lang_module, 'PROGRAM_ID', lambda axis: 0) # Needs to be callable
+
+                        if not hasattr(triton_lang_module, 'make_block_ptr'):
+                            _main_mp_logger.info("Adding dummy 'make_block_ptr' to TritonLanguagePlaceholder.")
+                            # This is complex. For now, a placeholder that doesn't crash on call.
+                            setattr(triton_lang_module, 'make_block_ptr', lambda *args, **kwargs: None)
+
+                        if not hasattr(triton_lang_module, 'load'):
+                            _main_mp_logger.info("Adding dummy 'load' to TritonLanguagePlaceholder.")
+                            setattr(triton_lang_module, 'load',  lambda *args, **kwargs: None) # Assuming it returns something like a tensor
+
+                        if not hasattr(triton_lang_module, 'store'):
+                            _main_mp_logger.info("Adding dummy 'store' to TritonLanguagePlaceholder.")
+                            setattr(triton_lang_module, 'store', lambda *args, **kwargs: None)
+
+                        if not hasattr(triton_lang_module, 'dot'):
+                            _main_mp_logger.info("Adding dummy 'dot' to TritonLanguagePlaceholder.")
+                            setattr(triton_lang_module, 'dot', lambda *args, **kwargs: None) # Assuming it returns something
+
+                    else:
+                        _main_mp_logger.debug(f"sys.modules['triton'].language (type: {lang_placeholder_type_name}) is not the target vLLM placeholder.")
+                else:
+                    _main_mp_logger.warning("vLLM's TritonPlaceholder does not have a 'language' attribute to patch.")
+            # else:
+            #     _main_mp_logger.debug(f"sys.modules['triton'] (type: {placeholder_type_name}) is present but not target vLLM placeholder, or already patched.")
+        # else:
+        #     _main_mp_logger.debug("'triton' not in sys.modules when attempting patch. This may be okay if vLLM imports later.")
+    except Exception as e_mp:
+        print(f"CRITICAL MONKEY PATCH ERROR: {e_mp}", file=sys.stderr)
+        _main_mp_logger.error(f"Error during Triton monkey patching: {e_mp}", exc_info=True)
+
+# === END MONKEY PATCH DEFINITIONS ===
 
 # --- Project-Specific Imports ---
 try:
@@ -32,15 +195,22 @@ try:
         get_text_from_input,
         list_available_models,
         get_voice_info,
-        PYDUB_AVAILABLE as UTILS_PYDUB_AVAILABLE, # Get availability from utils
-        SOUNDFILE_AVAILABLE as UTILS_SOUNDFILE_AVAILABLE # Get availability from utils
+        PYDUB_AVAILABLE as UTILS_PYDUB_AVAILABLE,
+        SOUNDFILE_AVAILABLE as UTILS_SOUNDFILE_AVAILABLE
     )
+
+    # --- Call the monkey patch here ---
+    # This timing is crucial: after potential vLLM import via config/utils,
+    # and before handlers trigger transformers/torchao.
+    _apply_triton_config_monkey_patch_for_vllm()
+
     from handlers import ALL_HANDLERS 
+
 except ImportError as e:
     print(f"CRITICAL ERROR: Failed to import from project modules (config, utils, handlers): {e}", file=sys.stderr)
     print("Please ensure these modules/packages are correctly structured and in PYTHONPATH.", file=sys.stderr)
     sys.exit(1)
-except KeyError as e_key: # Should not happen if __init__.py in handlers is correct
+except KeyError as e_key: 
     print(f"CRITICAL ERROR: 'ALL_HANDLERS' map not found or incomplete in handlers package: {e_key}", file=sys.stderr)
     sys.exit(1)
 
@@ -78,7 +248,6 @@ logger = logging.getLogger("CrispTTS.main")
 
 
 def _apply_cli_overrides_to_config(model_config_dict, model_id_key, cli_args):
-    # ... (this function remains the same as in your provided code) ...
     config_to_modify = model_config_dict.copy() 
 
     if cli_args.override_main_model_repo:
@@ -88,7 +257,7 @@ def _apply_cli_overrides_to_config(model_config_dict, model_id_key, cli_args):
             config_to_modify["model_repo_id"] = repo_override; updated = True
         elif model_id_key == "piper_local" and "piper_voice_repo_id" in config_to_modify and not cli_args.override_piper_voices_repo:
             config_to_modify["piper_voice_repo_id"] = repo_override; updated = True
-        elif model_id_key == "oute_hf" and "onnx_repo_id" in config_to_modify: # Assuming oute_hf can have its onnx_repo_id overridden
+        elif model_id_key == "oute_hf" and "onnx_repo_id" in config_to_modify: 
             config_to_modify["onnx_repo_id"] = repo_override; updated = True
         elif model_id_key.startswith("mlx_audio") and "mlx_model_path" in config_to_modify:
             config_to_modify["mlx_model_path"] = repo_override; updated = True
@@ -116,7 +285,6 @@ def _apply_cli_overrides_to_config(model_config_dict, model_id_key, cli_args):
 
     if cli_args.override_tokenizer_repo:
         tok_override = cli_args.override_tokenizer_repo
-        # OuteTTS and some MLX configurations might use 'tokenizer_path' or 'tokenizer_path_for_mlx_outetts'
         if ("oute_hf" == model_id_key or "oute_llamacpp" == model_id_key) and "tokenizer_path" in config_to_modify:
             config_to_modify["tokenizer_path"] = tok_override
             logger.info(f"Overriding 'tokenizer_path' for '{model_id_key}' to: {tok_override}")
@@ -156,13 +324,12 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
     logger.info(f"Outputs will be saved to: {base_output_dir.resolve()}")
     logger.info("------------------------------------")
 
-    benchmark_results = [] # For storing benchmark data
+    benchmark_results = [] 
 
     for model_id, config_entry_original in GERMAN_TTS_MODELS.items():
         handler_key = config_entry_original.get("handler_function_key", model_id)
         handler_func = ALL_HANDLERS.get(handler_key)
         
-        # Initialize benchmark fields for this model_id (will be refined per voice)
         current_model_status = "SKIPPED (No Handler)"
         current_gen_time_sec = None
         current_file_size_bytes = None
@@ -194,13 +361,11 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
         
         voices_to_test_this_run = []
         if test_all_speakers_flag:
-            # This part is for --test-all-speakers, uses "available_voices"
             if current_config_for_handler.get("available_voices"):
                 voices_to_test_this_run.extend(current_config_for_handler.get("available_voices"))
             if "oute" in model_id and current_config_for_handler.get("test_default_speakers"):
                 voices_to_test_this_run.extend(current_config_for_handler.get("test_default_speakers"))
             
-            # Fallback to a single default if --test-all-speakers found no specific voices
             if not voices_to_test_this_run:
                 default_v_candidate = (
                     current_config_for_handler.get('default_voice_id') or
@@ -216,16 +381,12 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                 if default_v_candidate and str(default_v_candidate).strip():
                     voices_to_test_this_run.append(str(default_v_candidate))
                 elif model_id.startswith("coqui_tts") and current_config_for_handler.get("default_coqui_speaker") is None and current_config_for_handler.get("available_voices") == ["default_speaker"]:
-                    # If --test-all-speakers but Coqui only has "default_speaker", use it
                     voices_to_test_this_run.append("default_speaker")
                     logger.info(f"Coqui single-speaker model '{model_id}' for --test-all-speakers, using placeholder 'default_speaker'.")
 
 
-        else: # This is for --test-all (test_all_speakers_flag is False), test only default voice
-            default_v_to_add = None # Initialize variable to hold the voice/speaker to test
-
-            # 1. Try standard explicit default keys first 
-            # (e.g., for Piper path, Edge voice ID, MLX Kokoro voice name, Coqui XTTS ref WAV path)
+        else: 
+            default_v_to_add = None 
             std_default_keys = ['default_voice_id', 'default_model_path_in_repo']
             for key in std_default_keys:
                 val = current_config_for_handler.get(key)
@@ -234,50 +395,43 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                     logger.debug(f"Model '{model_id}': Found default via '{key}': {default_v_to_add}")
                     break
             
-            # 2. If not found by generic keys, try Coqui-specific 'default_coqui_speaker' (for VCTK like 'p225')
             if not default_v_to_add and model_id.startswith("coqui_tts"):
                 coqui_default_speaker_id = current_config_for_handler.get('default_coqui_speaker')
                 if coqui_default_speaker_id and str(coqui_default_speaker_id).strip():
                     default_v_to_add = str(coqui_default_speaker_id)
                     logger.info(f"Model '{model_id}': Using 'default_coqui_speaker': {default_v_to_add} for default test run.")
             
-            # 3. If still not found, try numeric/index defaults (like for SpeechT5, NeMo)
             if not default_v_to_add:
                 idx_val_embed = current_config_for_handler.get('default_speaker_embedding_index')
-                if idx_val_embed is not None: # Can be 0, so check for None explicitly
+                if idx_val_embed is not None: 
                     default_v_to_add = str(idx_val_embed)
                     logger.debug(f"Model '{model_id}': Found default via 'default_speaker_embedding_index': {default_v_to_add}")
                 else:
                     idx_val_speaker = current_config_for_handler.get('default_speaker_id')
-                    if idx_val_speaker is not None: # Can be 0
+                    if idx_val_speaker is not None: 
                         default_v_to_add = str(idx_val_speaker)
                         logger.debug(f"Model '{model_id}': Found default via 'default_speaker_id': {default_v_to_add}")
             
-            # 4. Specific handling for Coqui single-speaker models (Thorsten, CSS10) 
-            #    that use "default_speaker" placeholder in `available_voices`.
             if not default_v_to_add and \
-               model_id.startswith("coqui_tts") and \
-               current_config_for_handler.get("default_coqui_speaker") is None: # It's a single-speaker type config
+                model_id.startswith("coqui_tts") and \
+                current_config_for_handler.get("default_coqui_speaker") is None: 
                 if current_config_for_handler.get("available_voices") == ["default_speaker"]:
-                    default_v_to_add = "default_speaker" # The string placeholder
+                    default_v_to_add = "default_speaker" 
                     logger.info(f"Coqui single-speaker model '{model_id}': Using placeholder 'default_speaker' for default test run.")
             
-            # Add the determined default voice/speaker to the list if one was found
-            if default_v_to_add and str(default_v_to_add).strip(): # Ensure it's not an empty string
+            if default_v_to_add and str(default_v_to_add).strip(): 
                 voices_to_test_this_run.append(str(default_v_to_add))
-            elif not voices_to_test_this_run: # If after all these checks, the list is still empty for this model
-                 logger.debug(f"Model '{model_id}': No default voice/speaker could be determined for --test-all mode based on its config keys.")
+            elif not voices_to_test_this_run: 
+                    logger.debug(f"Model '{model_id}': No default voice/speaker could be determined for --test-all mode based on its config keys.")
         
         
-        # Ensure unique_voices_to_test is populated correctly:
-        voices_to_test_this_run = [v for v in voices_to_test_this_run if v is not None and str(v).strip()] # Filter out None or empty strings
+        voices_to_test_this_run = [v for v in voices_to_test_this_run if v is not None and str(v).strip()] 
         seen_voices = set()
         unique_voices_to_test = []
-        if voices_to_test_this_run: # Only proceed if there's something to make unique
+        if voices_to_test_this_run: 
             unique_voices_to_test = [v for v in voices_to_test_this_run if not (str(v) in seen_voices or seen_voices.add(str(v)))]
 
         if not unique_voices_to_test:
-            # This block is now the final check if NO voices were found by any logic above
             current_model_status = "SKIPPED (No Voice)"
             logger.info(f"\n>>> Skipping Model: {model_id} (No voices to test configured/found for this mode) <<<")
             benchmark_results.append({
@@ -315,7 +469,7 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                 )
                 current_gen_time_sec = time.time() - start_time
 
-                if output_filename.exists() and output_filename.stat().st_size > 100: # Basic check for output
+                if output_filename.exists() and output_filename.stat().st_size > 100: 
                     current_model_status = "SUCCESS"
                     logger.info(f"SUCCESS: Output for {model_id} (Voice: {voice_id_for_test}) saved to {output_filename}")
                     current_file_size_bytes = output_filename.stat().st_size
@@ -334,10 +488,9 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                     logger.warning(f"NOTE: Synthesis for {model_id} (Voice: {voice_id_for_test}) ran. Output file '{output_filename}' not created or is empty/too small.")
             
             except Exception as e_test_model:
-                if current_gen_time_sec is None: # Ensure gen_time is recorded even if error occurs mid-handler
+                if current_gen_time_sec is None: 
                     current_gen_time_sec = time.time() - start_time
                 current_model_status = "ERROR"
-                # Log full error for main log, but not for benchmark summary for cleaner table
                 logger.error(f"ERROR: Testing {model_id} (Voice: {voice_id_for_test}) failed: {e_test_model}", exc_info=True)
 
 
@@ -352,10 +505,9 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
             })
             
             if test_all_speakers_flag and len(unique_voices_to_test) > 1 and voice_idx < len(unique_voices_to_test) -1 :
-                logger.info("---") # Separator between voices for the same model
+                logger.info("---") 
         logger.info("------------------------------------")
 
-    # --- Print Benchmark Table ---
     logger.info("--- Test for All Models Finished ---")
     logger.info("\n--- BENCHMARK SUMMARY ---")
     if benchmark_results:
@@ -410,17 +562,15 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
 
 
 def run_synthesis(args):
-    # ... (this function remains the same) ...
     text_to_synthesize = get_text_from_input(args.input_text, args.input_file)
     if not text_to_synthesize:
-        if not args.input_text and not args.input_file: # Only error if neither was given for explicit synthesis
+        if not args.input_text and not args.input_file: 
             logger.error("No input provided. Use --input-text or --input-file for synthesis.")
-        return # If text extraction failed, get_text_from_input logs it.
+        return 
 
-    # Limit text length for individual synthesis too, if desired
-    text_to_synthesize = text_to_synthesize[:3000] # Example limit
+    text_to_synthesize = text_to_synthesize[:3000]
 
-    if not args.model_id: # Should be caught by argparser if not test_all etc.
+    if not args.model_id: 
         logger.error("--model-id is required for single synthesis.")
         return
 
@@ -447,18 +597,15 @@ def run_synthesis(args):
             return
     
     effective_voice_id = args.german_voice_id
-    if not effective_voice_id: # Determine default if not overridden
+    if not effective_voice_id: 
         default_v = current_config_for_handler.get('default_voice_id') or \
                     current_config_for_handler.get('default_model_path_in_repo') or \
                     str(current_config_for_handler.get('default_speaker_embedding_index', '')) or \
                     str(current_config_for_handler.get('default_speaker_id', ''))
-        # Handle cases where default_v might be an empty string after str() conversion
         effective_voice_id = default_v if (isinstance(default_v, Path) or (isinstance(default_v, str) and default_v.strip())) else None
 
 
     if not effective_voice_id and not (args.model_id.startswith("coqui_tts") and current_config_for_handler.get("default_coqui_speaker") is None):
-        # Coqui single-speaker models might not need an explicit voice_id if default_coqui_speaker is None
-        # and the handler can cope.
         logger.error(f"No voice ID specified and no default could be determined for model {args.model_id}.")
         return
 
@@ -470,7 +617,7 @@ def run_synthesis(args):
             handler_func(
                 current_config_for_handler,
                 text_to_synthesize,
-                str(effective_voice_id) if effective_voice_id is not None else None, # Pass None if no voice ID
+                str(effective_voice_id) if effective_voice_id is not None else None, 
                 args.model_params,
                 args.output_file,
                 args.play_direct
@@ -482,13 +629,11 @@ def run_synthesis(args):
 
 
 def main_cli_entrypoint():
-    # ... (argparse setup remains the same) ...
     parser = argparse.ArgumentParser(
         description="CrispTTS: Modular German Text-to-Speech Synthesizer",
-        formatter_class=argparse.RawTextHelpFormatter # Keep this for good help text
+        formatter_class=argparse.RawTextHelpFormatter 
     )
     action_group = parser.add_argument_group(title="Primary Actions")
-    # input_group requires one or the other for synthesis/test, but not for list/info
     input_group = parser.add_mutually_exclusive_group(required=False) 
 
     action_group.add_argument("--list-models", action="store_true", help="List all configured TTS models.")
@@ -500,8 +645,12 @@ def main_cli_entrypoint():
     input_group.add_argument("--input-text", type=str, help="Text to synthesize.")
     input_group.add_argument("--input-file", type=str, help="Path to input file (txt, md, html, pdf, epub).")
     
-    synth_group.add_argument("--model-id", type=str, choices=list(GERMAN_TTS_MODELS.keys()) + [None], default=None,  
-                             help="Select TTS model ID. Required for single synthesis if not using an action flag.")
+    # Ensure GERMAN_TTS_MODELS is available for choices, or handle its potential unavailability if config fails to load
+    model_choices = list(GERMAN_TTS_MODELS.keys()) if GERMAN_TTS_MODELS else []
+    model_choices.append(None) # Add None as a valid choice for argparse
+
+    synth_group.add_argument("--model-id", type=str, choices=model_choices, default=None,      
+                                help="Select TTS model ID. Required for single synthesis if not using an action flag.")
     synth_group.add_argument("--output-file", type=str, help="Path to save synthesized audio (for single synthesis).")
     synth_group.add_argument("--output-dir", type=str, default="tts_test_outputs", help="Directory for --test-all* outputs (default: tts_test_outputs).")
     synth_group.add_argument("--play-direct", action="store_true", help="Play audio directly after synthesis (not with --test-all*).")
@@ -514,7 +663,6 @@ def main_cli_entrypoint():
     )
 
     override_group = parser.add_argument_group(title="Runtime Model Path/Repo Overrides (for selected --model-id or during --test-all*)")
-    # ... (override arguments remain the same) ...
     override_group.add_argument("--override-main-model-repo", type=str, metavar="REPO_OR_PATH", help="Override main model repository ID or path.")
     override_group.add_argument("--override-model-filename", type=str, metavar="FILENAME", help="Override specific model filename within the main repo.")
     override_group.add_argument("--override-tokenizer-repo", type=str, metavar="REPO_OR_PATH", help="Override tokenizer repository ID or path.")
@@ -524,27 +672,45 @@ def main_cli_entrypoint():
 
 
     api_group = parser.add_argument_group(title="API Backend Overrides (also in config.py)")
-    # ... (API arguments remain the same) ...
-    api_group.add_argument("--lm-studio-api-url", type=str, default=LM_STUDIO_API_URL_DEFAULT, help=f"Override LM Studio API URL (default: {LM_STUDIO_API_URL_DEFAULT}).")
+    api_group.add_argument("--lm-studio-api-url", type=str, default=LM_STUDIO_API_URL_DEFAULT if 'LM_STUDIO_API_URL_DEFAULT' in globals() else "http://127.0.0.1:1234/v1/completions", help=f"Override LM Studio API URL.")
     api_group.add_argument("--gguf-model-name-in-api", type=str, help="Override model name for LM Studio API (from config or this flag).")
-    api_group.add_argument("--ollama-api-url", type=str, default=OLLAMA_API_URL_DEFAULT, help=f"Override Ollama API URL (default: {OLLAMA_API_URL_DEFAULT}).")
+    api_group.add_argument("--ollama-api-url", type=str, default=OLLAMA_API_URL_DEFAULT if 'OLLAMA_API_URL_DEFAULT' in globals() else "http://localhost:11434/api/generate", help=f"Override Ollama API URL.")
     api_group.add_argument("--ollama-model-name", type=str, help="Override model name/tag for Ollama (from config or this flag).")
 
 
     args = parser.parse_args()
 
-    # Setup root logger
-    # Basic config for the root logger. Individual module loggers will inherit this.
-    # Format includes the logger name to identify messages from different modules.
+    # Setup root logger AFTER parsing args for loglevel
+    # This will apply to the main_mp_logger as well if it wasn't set to propagate=False
     logging.basicConfig(
-        level=args.loglevel.upper(),
+        level=args.loglevel.upper(), # Set initial level from CLI
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        datefmt='%Y-%m-%d %H:%M:%S',
+        force=True 
     )
-    # Re-apply level to the root logger specifically, in case it was already configured by an import
-    logging.getLogger().setLevel(args.loglevel.upper())
-    logger.info(f"Logging level set to: {args.loglevel.upper()}")
+    
+    # Get the numeric representation of the desired log level from CLI args
+    cli_numeric_log_level = getattr(logging, args.loglevel.upper(), logging.INFO)
 
+    # Ensure all existing loggers (including root and any created by libraries)
+    # are set to at least the verbosity specified by the CLI.
+    # This also correctly sets the level for _main_mp_logger.
+    loggers_to_update = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+    loggers_to_update.append(logging.root) # include the root logger
+    
+    for lgr in loggers_to_update:
+        if lgr.level == 0 or lgr.level > cli_numeric_log_level: # if not set or less verbose
+            lgr.setLevel(cli_numeric_log_level)
+        # For the monkey patch logger, ensure its handler also respects the level
+        if lgr.name == "CrispTTS.main_monkey_patch":
+            for handler in lgr.handlers:
+                 if handler.level == 0 or handler.level > cli_numeric_log_level:
+                    handler.setLevel(cli_numeric_log_level)
+
+    # Log the effective level
+    logger.info(f"Effective logging level for CrispTTS and sub-loggers set to: {args.loglevel.upper()}")
+    # Confirm the monkey_patch logger's level as well, using its effective level
+    _main_mp_logger.info(f"Monkey patch logger effective level is: {logging.getLevelName(_main_mp_logger.getEffectiveLevel())}")
 
     if args.list_models:
         list_available_models(GERMAN_TTS_MODELS)
@@ -556,26 +722,25 @@ def main_cli_entrypoint():
         get_voice_info(args.voice_info, GERMAN_TTS_MODELS)
         return
 
-    # Input text is required for --test-all, --test-all-speakers, or direct synthesis with --model-id
     text_to_process = get_text_from_input(args.input_text, args.input_file)
     if not text_to_process:
         if args.test_all or args.test_all_speakers:
             parser.error("--test-all or --test-all-speakers requires --input-text or --input-file.")
-        elif args.model_id : # Only if --model-id was specified for synthesis
-             logger.error("No text input provided for synthesis via --input-text or --input-file.")
-        else: # No action flag and no model_id for synthesis
+        elif args.model_id : 
+            logger.error("No text input provided for synthesis via --input-text or --input-file.")
+        else: 
             parser.print_help()
         return
 
     if args.test_all or args.test_all_speakers:
-        test_text = text_to_process[:500] if len(text_to_process) > 500 else text_to_process # Limit test text length
+        test_text = text_to_process[:500] if len(text_to_process) > 500 else text_to_process 
         logger.info(f"--- Applying Test Mode: {'All Speakers' if args.test_all_speakers else 'Default Speaker Only'} ---")
         if args.override_main_model_repo or args.override_tokenizer_repo or args.override_vocoder_repo or args.override_speaker_embed_repo or args.override_piper_voices_repo or args.override_model_filename:
             logger.warning("CLI repo/path overrides are active and will apply to all compatible models during --test-all(-speakers). This might not be intended for all models.")
         test_all_models(test_text, args.output_dir, args)
         return
 
-    if not args.model_id: # If not test_all and no model_id, it's an invalid combo
+    if not args.model_id: 
         parser.error("A --model-id is required for synthesis if not using an action flag like --list-models or --test-all.")
         return
     
@@ -583,22 +748,4 @@ def main_cli_entrypoint():
 
 
 if __name__ == "__main__":
-    # These initial logs will use the default root logger level until CLI parsing sets it.
-    # We now configure basicConfig inside main_cli_entrypoint after args are parsed.
-    # For very early messages before that, they might have a different default format/level.
-    
-    # Pre-flight checks / Info messages (will use root logger's default before main_cli_entrypoint config)
-    # if any(GERMAN_TTS_MODELS[m].get("requires_hf_token", False) for m in GERMAN_TTS_MODELS if m in GERMAN_TTS_MODELS):
-    #     if not os.getenv("HF_TOKEN"):
-    #         logging.info("Hint: Some models configured might require a Hugging Face token (HF_TOKEN env var).")
-
-    # device_message = "PyTorch "
-    # if TORCH_AVAILABLE_MAIN:
-    #     if torch.cuda.is_available(): device_message += f"detected CUDA: {torch.cuda.get_device_name(0)}"
-    #     elif IS_MPS_MAIN: device_message += "detected MPS (Apple Metal)."
-    #     else: device_message += "detected CPU."
-    # else: 
-    #     device_message += "not available."
-    # logging.info(device_message)
-    
     main_cli_entrypoint()

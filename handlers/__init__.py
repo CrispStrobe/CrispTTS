@@ -62,10 +62,10 @@ except ImportError as e:
     logger.warning(f"Could not import Coqui TTS handler (coqui_tts_handler.py): {e}. This handler will be unavailable.")
     synthesize_with_coqui_tts = None
 
-
+# FIXED: Import from kartoffel.py (not .kartoffel)
 synthesize_with_orpheus_kartoffel = None # Initialize
 try:
-    from .kartoffel import synthesize_with_orpheus_kartoffel
+    from .kartoffel import synthesize_with_orpheus_kartoffel  # FIXED: matches filename
     if synthesize_with_orpheus_kartoffel:
         logger.info("Orpheus Kartoffel (Transformers) handler imported SUCCESSFULLY.")
     else:
@@ -75,9 +75,22 @@ except ImportError as e_imp_kartoffel:
     logger.error(f"INIT.PY: Could not import Orpheus Kartoffel handler due to ImportError: {e_imp_kartoffel}", exc_info=True)
     synthesize_with_orpheus_kartoffel = None
 except Exception as e_other_kartoffel: 
-    logger.error(f"INIT.PY: An UNEXPECTED error occurred during import of orpheus_kartoffel_handler.py: {e_other_kartoffel}", exc_info=True)
+    logger.error(f"INIT.PY: An UNEXPECTED error occurred during import of kartoffel.py: {e_other_kartoffel}", exc_info=True)
     synthesize_with_orpheus_kartoffel = None
 
+# FIXED: Import from llasa_hybrid_handler.py (not .llasa_hybrid_handler)
+synthesize_with_llasa_hybrid_func = None # Initialize
+try:
+    from .llasa_hybrid_handler import synthesize_with_llasa_hybrid  # FIXED: matches filename
+    synthesize_with_llasa_hybrid_func = synthesize_with_llasa_hybrid 
+    if synthesize_with_llasa_hybrid_func:
+        logger.info("LLaSA Hybrid handler imported SUCCESSFULLY.")
+    else:
+        logger.warning("LLaSA Hybrid handler file imported, but function is None.")
+except ImportError as e_imp_llasa: 
+    logger.error(f"INIT.PY: Could not import LLaSA Hybrid handler due to ImportError: {e_imp_llasa}", exc_info=True)
+except Exception as e_other_llasa: 
+    logger.error(f"INIT.PY: An UNEXPECTED error during import of llasa_hybrid_handler.py: {e_other_llasa}", exc_info=True)
 
 ALL_HANDLERS = {
     "edge": synthesize_with_edge_tts,
@@ -97,12 +110,13 @@ ALL_HANDLERS = {
     "coqui_tts_thorsten_vits": synthesize_with_coqui_tts,
     "coqui_tts_thorsten_dca": synthesize_with_coqui_tts,
     "orpheus_kartoffel_natural": synthesize_with_orpheus_kartoffel,
+    "llasa_hybrid": synthesize_with_llasa_hybrid_func, 
+    "llasa_hybrid_de_clone": synthesize_with_llasa_hybrid_func, 
 }
 
 ALL_HANDLERS = {k: v for k, v in ALL_HANDLERS.items() if v is not None}
 
 __all__ = [name for name, func in ALL_HANDLERS.items() if func is not None] # Export only function names
 __all__.append("ALL_HANDLERS")
-
 
 logger.info(f"TTS Handlers package initialized. Mapped and available handlers: {list(ALL_HANDLERS.keys())}")
