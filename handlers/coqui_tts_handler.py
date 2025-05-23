@@ -49,13 +49,12 @@ except ImportError:
 try:
     import TTS # For accessing submodules like TTS.config
     from TTS.tts.configs.xtts_config import XttsConfig
-    from TTS.tts.models.xtts import XttsAudioConfig
-    from TTS.config.shared_configs import BaseDatasetConfig # <-- IMPORT THIS
+    from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs # <-- Ensure XttsArgs is imported
+    from TTS.config.shared_configs import BaseDatasetConfig
     # If more errors appear for other TTS.* classes, import and add them too.
-    # from TTS.tts.layers.xtts.speaker_encoder import SpeakerEncoderConfig # Example if this class appears later
-    CLASSES_FOR_XTTS_UNPICKLING = [XttsConfig, XttsAudioConfig, BaseDatasetConfig] # Potentially more later
+    CLASSES_FOR_XTTS_UNPICKLING = [XttsConfig, XttsAudioConfig, BaseDatasetConfig, XttsArgs] # <-- Add XttsArgs here
 except ImportError as e_xtts_imp:
-    logger_init.warning(f"Coqui TTS Init: Could not import one or more XTTS-specific config/model classes for unpickling: {e_xtts_imp}. XTTS loading might fail.")
+    logger_init.warning(f"Coqui TTS Init: Could not import one or more XTTS-specific classes for unpickling: {e_xtts_imp}. XTTS loading might fail.")
     CLASSES_FOR_XTTS_UNPICKLING = [] # Fallback
 
 if TORCH_AVAILABLE_IN_HANDLER:

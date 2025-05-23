@@ -2,6 +2,8 @@
 
 CrispTTS is a versatile command-line Text-to-Speech (TTS) tool designed for synthesizing German speech using a variety of popular local and cloud-based TTS engines. Its modular architecture allows for easy maintenance and straightforward addition of new TTS handlers.
 
+NOTE: This is in very early experimental / work in progress state. Currently these models are BROKEN: dia, llasa per xml, coqui_css10_de_vits, maybe nemo. (It proved a bit difficult to make up a consistent python environment with all libraries at once, and nemo was therefore postponed for now.) They might be fixed later if my time allows...
+
 ## Features
 
 - **Multiple TTS Engine Support**:

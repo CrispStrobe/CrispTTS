@@ -101,6 +101,11 @@ LLASA_MLX_LLM_MODEL_ID = "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
 LLASA_CHAT_TEMPLATE_TOKENIZER_ID = "HKUSTAudio/Llasa-1B-Multilingual" 
 LLASA_XCODEC2_VOCODER_MODEL_ID = "HKUSTAudio/xcodec2"
 
+LLASA_GERMAN_TRANSFORMERS_MODEL_ID = "MultiLlasa/Llasa-1B-Multilingual-German"
+LLASA_GERMAN_TRANSFORMERS_TOKENIZER_ID = "MultiLlasa/Llasa-1B-Multilingual-German" # Or "HKUSTAudio/Llasa-1B-Multilingual" if preferred, but example uses specific.
+# LLASA_XCODEC2_VOCODER_MODEL_ID is likely already defined as "HKUSTAudio/xcodec2"
+LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION = "openai/whisper-large-v3-turbo" # Or another Whisper variant
+
 # --- MLX Audio Specific Configs (Consolidated from your file and new additions) ---
 DEFAULT_GERMAN_REF_WAV = "./german.wav" # Path in CrispTTS root for reference audio
 
@@ -323,6 +328,19 @@ GERMAN_TTS_MODELS = {
         "sample_rate": 16000,
         "requires_hf_token": False, 
         "notes": "LLaSA 1B Hybrid (MLX LLM + PyTorch XCodec2). Uses ref WAV for cloning. 16kHz. Experimental."
+    },
+    "llasa_german_transformers_clone": {
+        "handler_function_key": "llasa_german_transformers", # New handler key
+        "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
+        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_TOKENIZER_ID,
+        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID, # Should match existing definition
+        "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION,
+        "language": "de", # Primarily for informational purposes or if model needs it
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV, # Path to your default German reference WAV
+        "available_voices": [DEFAULT_GERMAN_REF_WAV], # List containing paths to reference WAVs
+        "sample_rate": 16000, # Output sample rate
+        "requires_hf_token": False, # Set to True if model access requires token
+        "notes": "LLaSA German (Transformers LLM + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
     },
 
     # --- MLX-AUDIO MODEL ENTRIES using "mlx_audio" handler_function_key ---
