@@ -105,14 +105,14 @@ except Exception as e_other_llasa:
 # These keys should be used in config.py's "handler_function_key"
 ALL_HANDLERS = {
     "edge": synthesize_with_edge_tts,
-    "piper_local": synthesize_with_piper_local,
+    "piper": synthesize_with_piper_local,
     # Orpheus GGUF models can share a handler if logic is identical based on config
     "orpheus_gguf": synthesize_with_orpheus_gguf_local, # Use this for both "orpheus_lex_au" and "orpheus_sauerkraut"
     "orpheus_lm_studio": synthesize_with_orpheus_lm_studio,
     "orpheus_ollama": synthesize_with_orpheus_ollama,
     # OuteTTS models can share a handler if logic differentiates via config
     "outetts": synthesize_with_outetts_local, # Use this for "oute_llamacpp" and "oute_hf"
-    "speecht5_transformers": synthesize_with_speecht5_transformers, # More specific than just "speecht5"
+    "speecht5": synthesize_with_speecht5_transformers, # More specific than just "speecht5"
     "nemo_fastpitch": synthesize_with_fastpitch_nemo, # More specific
     "coqui_tts": synthesize_with_coqui_tts, # Generic handler for all Coqui TTS API models
     "orpheus_kartoffel": synthesize_with_orpheus_kartoffel,

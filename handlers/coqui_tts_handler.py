@@ -8,6 +8,7 @@ import json
 import numpy as np
 import collections # For defaultdict fix
 import builtins    # For builtins.dict fix
+import pickle
 
 # Conditional imports for PyTorch and Coqui TTS
 TORCH_AVAILABLE_IN_HANDLER = False
@@ -44,6 +45,18 @@ except ImportError:
     logger_init.info(
         "PyTorch (or a component like torch.serialization) not found. Coqui TTS handler will be limited."
     )
+
+try:
+    import TTS # For accessing submodules like TTS.config
+    from TTS.tts.configs.xtts_config import XttsConfig
+    from TTS.tts.models.xtts import XttsAudioConfig
+    from TTS.config.shared_configs import BaseDatasetConfig # <-- IMPORT THIS
+    # If more errors appear for other TTS.* classes, import and add them too.
+    # from TTS.tts.layers.xtts.speaker_encoder import SpeakerEncoderConfig # Example if this class appears later
+    CLASSES_FOR_XTTS_UNPICKLING = [XttsConfig, XttsAudioConfig, BaseDatasetConfig] # Potentially more later
+except ImportError as e_xtts_imp:
+    logger_init.warning(f"Coqui TTS Init: Could not import one or more XTTS-specific config/model classes for unpickling: {e_xtts_imp}. XTTS loading might fail.")
+    CLASSES_FOR_XTTS_UNPICKLING = [] # Fallback
 
 if TORCH_AVAILABLE_IN_HANDLER:
     try:
@@ -168,6 +181,25 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
         if force_cpu_init and target_device == "mps":
             logger.info(f"Coqui TTS ({coqui_model_name}): Target MPS. Using CPU init (gpu=False) strategy to avoid CUDA asserts, then will attempt move to MPS.")
         
+        if coqui_model_name == "tts_models/multilingual/multi-dataset/xtts_v2":
+            if TORCH_SERIALIZATION_AVAILABLE and hasattr(torch_coqui, 'serialization') and CLASSES_FOR_XTTS_UNPICKLING:
+                try:
+                    current_safe_globals = getattr(torch_coqui.serialization, '_SAFE_GLOBALS', [])
+                    new_globals_to_add = [cls for cls in CLASSES_FOR_XTTS_UNPICKLING if cls not in current_safe_globals]
+                    if new_globals_to_add:
+                        torch_coqui.serialization.add_safe_globals(new_globals_to_add)
+                        added_names_str = ", ".join([cls.__name__ for cls in new_globals_to_add])
+                        logger.info(f"Coqui TTS: Added {added_names_str} to torch safe globals for {coqui_model_name}.")
+                    else:
+                        logger.debug(f"Coqui TTS: Required XTTS classes for unpickling already in torch safe globals for {coqui_model_name}.")
+                except Exception as e_safe_global_xtts:
+                    logger.warning(f"Coqui TTS: Failed to add classes to torch safe globals for {coqui_model_name}: {e_safe_global_xtts}", exc_info=True)
+            elif not CLASSES_FOR_XTTS_UNPICKLING:
+                logger.warning(f"Coqui TTS: CLASSES_FOR_XTTS_UNPICKLING list is empty, cannot apply unpickling fix for {coqui_model_name}.")
+            elif not TORCH_SERIALIZATION_AVAILABLE:
+                logger.warning(f"Coqui TTS: torch.serialization not available, cannot apply unpickling fix for {coqui_model_name}.")
+
+
         with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), suppress_stderr=not logger.isEnabledFor(logging.DEBUG)):
             tts_instance = CoquiTTS_API_CLASS(gpu=constructor_gpu_param, **tts_constructor_kwargs, progress_bar=False)
             
@@ -251,8 +283,11 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
             logger.error(f"Coqui TTS ({coqui_model_name}): Failed due to CUDA assertion by the TTS library. Error: {e_assert}", exc_info=True)
         else: 
             logger.error(f"Coqui TTS ({coqui_model_name}): Assertion error: {e_assert}", exc_info=True)
-    except _pickle.UnpicklingError as e_pickle: # Catch specific UnpicklingError
+    except pickle.UnpicklingError as e_pickle: # Use the imported pickle module
         logger.error(f"Coqui TTS ({coqui_model_name}): Unpickling error during model loading. This often happens with older models and newer PyTorch versions. Error: {e_pickle}", exc_info=True)
+        # You might also want to add the advice from the PyTorch 2.6 error message here if applicable
+        if "TTS.tts.configs.xtts_config.XttsConfig" in str(e_pickle) and hasattr(torch_coqui, 'serialization'):
+             logger.warning("This might be resolved by adding TTS.tts.configs.xtts_config.XttsConfig to torch.serialization.add_safe_globals(). The handler attempts some common fixes but might miss specific ones for XTTS.")
     except RuntimeError as e_runtime:
         device_for_log = "unknown"
         if 'target_device' in locals() and target_device: device_for_log = target_device

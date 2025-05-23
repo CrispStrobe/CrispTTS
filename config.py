@@ -105,13 +105,16 @@ LLASA_XCODEC2_VOCODER_MODEL_ID = "HKUSTAudio/xcodec2"
 DEFAULT_GERMAN_REF_WAV = "./german.wav" # Path in CrispTTS root for reference audio
 
 MLX_AUDIO_KOKORO_MODEL_ID = "mlx-community/Kokoro-82M-bf16"
-MLX_AUDIO_KOKORO_LANG_CODE_GERMAN = "de" # For espeak G2P, verify if `mlx-audio` supports this for Kokoro
-MLX_AUDIO_KOKORO_DEFAULT_VOICE = "de_speaker_0" # Hypothetical, or use "af_heart" for testing
-MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "bf_emma", "ef_heart", "de_speaker_0", "en_speaker_1"] # Check actual valid voices
+MLX_AUDIO_KOKORO_LANG_CODE = "en-us" # For espeak G2P
+MLX_AUDIO_KOKORO_DEFAULT_VOICE = "af_heart" # Hypothetical, or use "af_heart" for testing
+MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "bf_emma", ] 
+# en-us: af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky
+# en-us: am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck
+# en-gb: bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis
 
 MLX_AUDIO_CSM_MODEL_ID = "mlx-community/csm-1b-8bit" # Sesame
 MLX_AUDIO_OUTETTS_MAIN_REPO_ID = "mlx-community/Llama-OuteTTS-1.0-1B-4bit" # For mlx-audio OuteTTS handler
-MLX_AUDIO_SPARK_REPO_ID = "mlx-community/spark-tts-0.5b-instruct-bf16"
+MLX_AUDIO_SPARK_REPO_ID = "mlx-community/Spark-TTS-0.5B-8bit"
 MLX_AUDIO_BARK_REPO_ID = "mlx-community/bark-small" # or: mlx_bark, but needs config.json fix
 MLX_AUDIO_DIA_REPO_ID = "mlx-community/Dia-1.6B-4bit"
 MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID = "mlx-community/orpheus-3b-0.1-ft-4bit" # mlx-audio's Llama variant
@@ -328,7 +331,7 @@ GERMAN_TTS_MODELS = {
         "mlx_model_path": MLX_AUDIO_KOKORO_MODEL_ID,
         "default_voice_id": MLX_AUDIO_KOKORO_DEFAULT_VOICE,
         "available_voices": MLX_AUDIO_KOKORO_VOICES,
-        "lang_code": MLX_AUDIO_KOKORO_LANG_CODE_GERMAN,
+        "lang_code": MLX_AUDIO_KOKORO_LANG_CODE,
         "sample_rate": 24000,
         "notes": "mlx-audio (Kokoro model) for Apple Silicon. Lang: German ('de' with espeak). Uses Apple Silicon MLX."
     },
