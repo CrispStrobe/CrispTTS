@@ -14,6 +14,8 @@ except ImportError:
     torch = None # type: ignore
     TORCH_AVAILABLE_FOR_CONFIG = False
 
+DEFAULT_GERMAN_REF_WAV = "./german.wav"
+
 # --- Attempt to import OuteTTS enums ---
 OUTETTS_AVAILABLE_FOR_CONFIG = False
 OuteTTSModels_Enum = None # type: ignore
@@ -96,18 +98,16 @@ KARTORPHEUS_AUDIO_START_MARKER_TOKEN_ID = 128257
 KARTORPHEUS_AUDIO_END_MARKER_TOKEN_ID = 128258
 KARTORPHEUS_AUDIO_TOKEN_OFFSET = 128266
 
-# --- LLaSA Hybrid Specific Configs ---
+# --- LLaSA Specific Configs ---
 LLASA_MLX_LLM_MODEL_ID = "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
+
 LLASA_CHAT_TEMPLATE_TOKENIZER_ID = "HKUSTAudio/Llasa-1B-Multilingual" 
+
 LLASA_XCODEC2_VOCODER_MODEL_ID = "HKUSTAudio/xcodec2"
-
 LLASA_GERMAN_TRANSFORMERS_MODEL_ID = "MultiLlasa/Llasa-1B-Multilingual-German"
-LLASA_GERMAN_TRANSFORMERS_TOKENIZER_ID = "MultiLlasa/Llasa-1B-Multilingual-German" # Or "HKUSTAudio/Llasa-1B-Multilingual" if preferred, but example uses specific.
-# LLASA_XCODEC2_VOCODER_MODEL_ID is likely already defined as "HKUSTAudio/xcodec2"
-LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION = "openai/whisper-large-v3-turbo" # Or another Whisper variant
+LLASA_MULTILINGUAL_HF_MODEL_ID = "HKUSTAudio/Llasa-1B-Multilingual"
 
-# --- MLX Audio Specific Configs (Consolidated from your file and new additions) ---
-DEFAULT_GERMAN_REF_WAV = "./german.wav" # Path in CrispTTS root for reference audio
+LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION = "openai/whisper-large-v3-turbo" # Or your preferred Whisper model
 
 MLX_AUDIO_KOKORO_MODEL_ID = "mlx-community/Kokoro-82M-bf16"
 MLX_AUDIO_KOKORO_LANG_CODE = "en-us" # For espeak G2P
@@ -301,12 +301,12 @@ GERMAN_TTS_MODELS = {
     },
     "coqui_css10_de_vits": {
         "handler_function_key": "coqui_tts",
-        "coqui_model_name": "tts_models/de/css10/vits",
+        "coqui_model_name": "tts_models/de/css10/vits-neon", 
         "default_coqui_speaker": None,
         "language": "de",
-        "sample_rate": 22050,
-        "available_voices": ["default_speaker"],
-        "notes": "Coqui TTS: German CSS10 VITS model (single-speaker)."
+        "sample_rate": 22050, # VITS typical sample rate
+        "available_voices": ["default_speaker"], # Placeholder for single-speaker
+        "notes": "Coqui TTS: German CSS10 VITS model (single-speaker, Neon variant)."
     },
     "coqui_vctk_en_vits": {
         "handler_function_key": "coqui_tts",
@@ -329,18 +329,68 @@ GERMAN_TTS_MODELS = {
         "requires_hf_token": False, 
         "notes": "LLaSA 1B Hybrid (MLX LLM + PyTorch XCodec2). Uses ref WAV for cloning. 16kHz. Experimental."
     },
+    "llasa_hybrid_de_zeroshot": { 
+        "handler_function_key": "llasa_hybrid",
+        "llm_model_id": LLASA_MLX_LLM_MODEL_ID, # e.g., "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
+        "chat_tokenizer_id": LLASA_CHAT_TEMPLATE_TOKENIZER_ID, # e.g., "HKUSTAudio/Llasa-1B-Multilingual"
+        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID, # PyTorch-based XCodec2
+        "language": "de", # Or None if truly multilingual and language is in text
+        "default_voice_id": None, # Indicates zero-shot
+        "available_voices": [],
+        "sample_rate": 16000,
+        "requires_hf_token": False,
+        "notes": "LLaSA Hybrid (MLX LLM + PyTorch XCodec2). Zero-shot German TTS. 16kHz."
+    },
     "llasa_german_transformers_clone": {
-        "handler_function_key": "llasa_german_transformers", # New handler key
+        "handler_function_key": "llasa_hf_transformers", # Updated to new generic handler key
         "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
-        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_TOKENIZER_ID,
-        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID, # Should match existing definition
+        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID, # Specific tokenizer for the German model
+        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
         "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION,
-        "language": "de", # Primarily for informational purposes or if model needs it
-        "default_voice_id": DEFAULT_GERMAN_REF_WAV, # Path to your default German reference WAV
-        "available_voices": [DEFAULT_GERMAN_REF_WAV], # List containing paths to reference WAVs
-        "sample_rate": 16000, # Output sample rate
-        "requires_hf_token": False, # Set to True if model access requires token
+        "language": "de", # Hint for German
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
+        "sample_rate": 16000,
+        "requires_hf_token": False, # Adjust if model needs token
         "notes": "LLaSA German (Transformers LLM + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
+    },
+    "llasa_german_transformers_zeroshot": {
+        "handler_function_key": "llasa_hf_transformers", # Uses the existing generic LLaSA HF handler
+        "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
+        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID, # Or general LLaSA tokenizer
+        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
+        # "whisper_model_id_for_transcription": None, # Not needed for zero-shot
+        "language": "de", # Important hint for the model if it's multilingual or for text processing
+        "default_voice_id": None, # Explicitly None to indicate zero-shot
+        "available_voices": [],   # No voices to select in zero-shot
+        "sample_rate": 16000,
+        "requires_hf_token": False, # Adjust if model access requires token
+        "notes": "LLaSA German (Transformers LLM + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
+    },
+    "llasa_multilingual_hf_clone": {
+        "handler_function_key": "llasa_hf_transformers", # Uses the same generic handler
+        "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
+        "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID, # Tokenizer for the multilingual model
+        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
+        "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION,
+        "language": None, # Multilingual; language inferred from text or reference
+        "default_voice_id": "./my_bark_output.wav", # Example generic reference
+        "available_voices": ["./my_bark_output.wav", "./german.wav"], # List paths to general reference audio files
+        "sample_rate": 16000,
+        "requires_hf_token": False,
+        "notes": "LLaSA Multilingual (Transformers LLM + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
+    },
+    "llasa_multilingual_hf_zeroshot": { # New entry for zero-shot multilingual
+        "handler_function_key": "llasa_hf_transformers",
+        "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
+        "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
+        "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
+        "language": None, # Language should be in the input text
+        "default_voice_id": None, # Not used in zero-shot
+        "available_voices": [],   # Not used in zero-shot
+        "sample_rate": 16000,
+        "requires_hf_token": False,
+        "notes": "LLaSA Multilingual (Transformers LLM + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
     },
 
     # --- MLX-AUDIO MODEL ENTRIES using "mlx_audio" handler_function_key ---
@@ -405,11 +455,13 @@ GERMAN_TTS_MODELS = {
     },
     "mlx_audio_dia_clone": {
         "handler_function_key": "mlx_audio",
-        "mlx_model_path": MLX_AUDIO_DIA_REPO_ID,
-        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "mlx_model_path": MLX_AUDIO_DIA_REPO_ID, # Should be "mlx-community/Dia-1.6B-4bit"
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV, # e.g., "./german.wav"
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
-        "sample_rate": 44100,
-        "notes": "mlx-audio (Dia model) for voice cloning. Ref WAV & ref_text needed. Uses Apple Silicon MLX."
+        "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION, # Use the same Whisper as LLaSA or a specific one
+        "language_for_whisper": "de", # Hint for Whisper when transcribing the default_voice_id
+        "sample_rate": 44100, # Correct for Dia
+        "notes": "mlx-audio (Dia model) for voice cloning. CrispTTS handles ref_audio transcription. Ref WAV & ref_text needed by Dia. Uses Apple Silicon MLX."
     },
     "mlx_audio_orpheus_llama": { # For the Orpheus-like Llama in mlx-audio
         "handler_function_key": "mlx_audio",

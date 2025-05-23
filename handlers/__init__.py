@@ -101,18 +101,19 @@ except ImportError as e_imp_llasa:
 except Exception as e_other_llasa: 
     logger.error(f"An UNEXPECTED error during import of llasa_hybrid_handler.py: {e_other_llasa}", exc_info=True)
 
-synthesize_with_llasa_german_transformers_func = None
+synthesize_with_llasa_hf_transformers_func = None
 try:
-    from .llasa_german_transformers_handler import synthesize_with_llasa_german_transformers
-    synthesize_with_llasa_german_transformers_func = synthesize_with_llasa_german_transformers
-    if synthesize_with_llasa_german_transformers_func:
-        logger.info("LLaSA German Transformers handler imported SUCCESSFULLY.")
+    # Assuming you renamed the file to llasa_hf_transformers_handler.py
+    from .llasa_hf_transformers_handler import synthesize_with_llasa_hf_transformers
+    synthesize_with_llasa_hf_transformers_func = synthesize_with_llasa_hf_transformers
+    if synthesize_with_llasa_hf_transformers_func:
+        logger.info("LLaSA HF Transformers (Generic) handler imported SUCCESSFULLY.")
     else:
-        logger.warning("LLaSA German Transformers handler file imported, but function is None.")
+        logger.warning("LLaSA HF Transformers handler file imported, but function is None.")
 except ImportError as e_imp_llasa_hf:
-    logger.warning(f"Could not import LLaSA German Transformers handler (llasa_german_transformers_handler.py) due to ImportError: {e_imp_llasa_hf}", exc_info=False)
+    logger.warning(f"Could not import LLaSA HF Transformers handler due to ImportError: {e_imp_llasa_hf}", exc_info=False)
 except Exception as e_other_llasa_hf:
-    logger.error(f"An UNEXPECTED error during import of llasa_german_transformers_handler.py: {e_other_llasa_hf}", exc_info=True)
+    logger.error(f"An UNEXPECTED error during import of LLaSA HF Transformers handler: {e_other_llasa_hf}", exc_info=True)
 
 # --- Standardized Handler Keys ---
 # These keys should be used in config.py's "handler_function_key"
@@ -125,11 +126,11 @@ ALL_HANDLERS = {
     "orpheus_ollama": synthesize_with_orpheus_ollama,
     # OuteTTS models can share a handler if logic differentiates via config
     "outetts": synthesize_with_outetts_local, # Use this for "oute_llamacpp" and "oute_hf"
-    "speecht5": synthesize_with_speecht5_transformers, # More specific than just "speecht5"
-    "nemo_fastpitch": synthesize_with_fastpitch_nemo, # More specific
+    "speecht5": synthesize_with_speecht5_transformers, 
+    "nemo_fastpitch": synthesize_with_fastpitch_nemo, 
     "coqui_tts": synthesize_with_coqui_tts, # Generic handler for all Coqui TTS API models
     "orpheus_kartoffel": synthesize_with_orpheus_kartoffel,
-    "llasa_german_transformers": synthesize_with_llasa_german_transformers_func,
+    "llasa_hf_transformers": synthesize_with_llasa_hf_transformers_func,
     "llasa_hybrid": synthesize_with_llasa_hybrid_func,
     "mlx_audio": synthesize_with_mlx_audio, # Single key for all mlx-audio handled models
 }
