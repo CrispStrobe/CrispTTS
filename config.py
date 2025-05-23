@@ -112,13 +112,12 @@ MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "bf_emma", "ef_heart", "de_spe
 MLX_AUDIO_CSM_MODEL_ID = "mlx-community/csm-1b-8bit" # Sesame
 MLX_AUDIO_OUTETTS_MAIN_REPO_ID = "mlx-community/Llama-OuteTTS-1.0-1B-4bit" # For mlx-audio OuteTTS handler
 MLX_AUDIO_SPARK_REPO_ID = "mlx-community/spark-tts-0.5b-instruct-bf16"
-MLX_AUDIO_BARK_REPO_ID = "mlx-community/bark-ft-mlx" # Or "suno/bark" / "suno/bark-small" if directly loadable
-MLX_AUDIO_DIA_REPO_ID = "mlx-community/Dia-1.6B"
-MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID = "mlx-community/orpheus-3b-0.1-ft-bf16" # mlx-audio's Llama variant
+MLX_AUDIO_BARK_REPO_ID = "mlx-community/bark-small" # or: mlx_bark, but needs config.json fix
+MLX_AUDIO_DIA_REPO_ID = "mlx-community/Dia-1.6B-4bit"
+MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID = "mlx-community/orpheus-3b-0.1-ft-4bit" # mlx-audio's Llama variant
 
 # This was for your OuteTTS HF ONNX handler, separate from mlx-audio OuteTTS
-MLX_AUDIO_OUTETTS_ONNX_REPO_ID = "OuteAI/Llama-OuteTTS-1.0-1B-ONNX"
-
+OUTETTS_HF_REPO_ID = "OuteAI/Llama-OuteTTS-1.0-1B-ONNX"
 
 # --- OuteTTS Internal Data Structures (Fallback if not directly queryable from library) ---
 # (This section from your config.py is kept as is)
@@ -224,7 +223,7 @@ GERMAN_TTS_MODELS = {
     "oute_hf": {
         "handler_function_key": "outetts", # Standardized key for OuteTTS
         "outetts_model_version_str": "1.0",
-        "onnx_repo_id": MLX_AUDIO_OUTETTS_ONNX_REPO_ID,
+        "onnx_repo_id": OUTETTS_HF_REPO_ID,
         "tokenizer_path": "OuteAI/Llama-OuteTTS-1.0-1B",
         "onnx_filename_options": ["onnx/model_int8.onnx"],
         "wavtokenizer_model_path": "onnx-community/WavTokenizer-large-speech-75token_decode",
@@ -371,12 +370,17 @@ GERMAN_TTS_MODELS = {
     },
     "mlx_audio_bark_de": {
         "handler_function_key": "mlx_audio",
-        "mlx_model_path": MLX_AUDIO_BARK_REPO_ID, 
-        "default_voice_id": "v2/de_speaker_3", # Example German Bark voice
-        "available_voices": ["de_speaker_0", "de_speaker_1", "v2/de_speaker_3", "v2/en_speaker_0"],
+        "mlx_model_path": "mlx-community/bark-small", # For the main MLX model
+        "default_voice_id": "v2/de_speaker_3",        # This voice will be fetched from "suno/bark-small" by the patch
+        "available_voices": [
+            "v2/de_speaker_0", "v2/de_speaker_1", "v2/de_speaker_2", 
+            "v2/de_speaker_3", "v2/de_speaker_4", "v2/de_speaker_5", 
+            "v2/de_speaker_6", "v2/de_speaker_7", "v2/de_speaker_8", 
+            "v2/de_speaker_9", "v2/en_speaker_1" # Example
+        ],
         "lang_code": "de", 
         "sample_rate": 24000,
-        "notes": "mlx-audio (Bark model) using predefined voice prompts. Uses Apple Silicon MLX."
+        "notes": "mlx-audio (Bark) with main model from mlx-community/bark-small and voices from suno/bark-small (via patch)."
     },
     "mlx_audio_dia_clone": {
         "handler_function_key": "mlx_audio",
