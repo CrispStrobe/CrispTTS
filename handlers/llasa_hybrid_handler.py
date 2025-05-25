@@ -286,14 +286,25 @@ def _llasa_ids_to_speech_tokens_str(speech_ids: List[int]) -> List[str]:
     return [f"<|s_{speech_id}|>" for speech_id in speech_ids if isinstance(speech_id, int)]
 
 def _llasa_extract_speech_ids_from_str_list(speech_tokens_text: str) -> List[int]:
+    """Extract speech IDs from generated text - improved version"""
     speech_ids = []
     if not isinstance(speech_tokens_text, str):
         logger.warning(f"LLaSA Extract Speech IDs: Expected string input, got {type(speech_tokens_text)}")
         return []
+    
+    # More robust regex to find speech tokens
     matches = re.findall(r"<\|s_(\d+)\|>", speech_tokens_text)
     for num_str in matches:
-        try: speech_ids.append(int(num_str))
-        except ValueError: logger.warning(f"LLaSA Extract Speech IDs: Could not parse int from '{num_str}' in '{speech_tokens_text[:100]}...'")
+        try: 
+            speech_id = int(num_str)
+            # Basic validation - speech IDs should be reasonable
+            if 0 <= speech_id <= 70000:  # XCodec2 typical range
+                speech_ids.append(speech_id)
+            else:
+                logger.warning(f"LLaSA: Skipping unreasonable speech ID: {speech_id}")
+        except ValueError: 
+            logger.warning(f"LLaSA Extract Speech IDs: Could not parse int from '{num_str}' in '{speech_tokens_text[:100]}...'")
+    
     logger.debug(f"LLaSA Extract Speech IDs: Input (first 100): '{speech_tokens_text[:100]}...', Extracted IDs: {len(speech_ids)} (e.g., {speech_ids[:10]})")
     return speech_ids
 
@@ -326,185 +337,393 @@ def _cleanup_resources(*resources_to_del: object) -> None:
     gc.collect()
     logger.debug("LLaSA Cleanup: Garbage collection called.")
 
+
 def synthesize_with_llasa_hybrid(
     model_config: dict,
     text_to_synthesize: str,
-    voice_id_override: Optional[str],
+    voice_id_override: Optional[str], # This will be Python None for zero-shot test
     model_params_override: Optional[str],
     output_file_str: Optional[str],
     play_direct: bool,
-    attempt_no_cloning_fallback: bool = True,
-    _is_fallback_attempt: bool = False
+    attempt_no_cloning_fallback: bool = True, # True by default from main.py
+    _is_fallback_attempt: bool = False # Internal flag for recursion
 ) -> None:
     crisptts_model_id_for_log = model_config.get('crisptts_model_id', 'llasa_hybrid_unknown')
-    log_prefix = f"LLaSA Hybrid ({crisptts_model_id_for_log}{' Fallback NoClone' if _is_fallback_attempt else ''}): "
+    log_prefix_base = f"LLaSA Hybrid ({crisptts_model_id_for_log})"
+    log_prefix = f"{log_prefix_base}{' Fallback NoClone' if _is_fallback_attempt else ''}: "
 
     logger.info(f"{log_prefix}Starting synthesis process.")
     logger.debug(f"{log_prefix}Input text (first 100): '{text_to_synthesize[:100]}...'")
-    logger.debug(f"{log_prefix}Voice ID/Path: '{voice_id_override}'")
-    logger.debug(f"{log_prefix}Model params: '{model_params_override}'")
+    logger.debug(f"{log_prefix}Voice ID/Path override from main: '{voice_id_override}' (type: {type(voice_id_override)})")
+    logger.debug(f"{log_prefix}Model params override from main: '{model_params_override}'")
+    logger.debug(f"{log_prefix}Is fallback attempt: {_is_fallback_attempt}")
 
     deps_valid, missing_deps = _validate_dependencies()
-    if not deps_valid: logger.error(f"{log_prefix}Missing dependencies: {', '.join(missing_deps)}. Skip."); return
+    if not deps_valid:
+        logger.error(f"{log_prefix}Missing critical dependencies: {', '.join(missing_deps)}. Skipping synthesis.")
+        return
     objects_valid, missing_objects = _validate_model_objects()
-    if not objects_valid: logger.error(f"{log_prefix}Missing Python objects: {', '.join(missing_objects)}. Skip."); return
-    if not text_to_synthesize or not text_to_synthesize.strip(): logger.error(f"{log_prefix}Invalid/empty text. Skip."); return
+    if not objects_valid:
+        logger.error(f"{log_prefix}Essential Python objects not loaded: {', '.join(missing_objects)}. Skipping synthesis.")
+        return
+    if not text_to_synthesize or not text_to_synthesize.strip():
+        logger.error(f"{log_prefix}Input text is empty or invalid. Skipping synthesis.")
+        return
 
     llm_model_id_cfg = model_config.get("llm_model_id")
     chat_tokenizer_id_cfg = model_config.get("chat_tokenizer_id")
     codec_model_id_cfg = model_config.get("codec_model_id")
-    ref_speaker_wav_path_str = None if _is_fallback_attempt else (voice_id_override or model_config.get("default_voice_id"))
     target_sample_rate = model_config.get("sample_rate", 16000)
-    MIN_SPEECH_TOKENS_THRESHOLD = model_config.get("min_speech_tokens_threshold", 75)
+    MIN_SPEECH_TOKENS_THRESHOLD = model_config.get("min_speech_tokens_threshold", 50)  # Reduced threshold
 
-    logger.debug(f"{log_prefix}Config: LLM='{llm_model_id_cfg}', ChatTok='{chat_tokenizer_id_cfg}', Codec='{codec_model_id_cfg}', RefWAV='{ref_speaker_wav_path_str}', TargetSR={target_sample_rate}Hz")
-    if not all([llm_model_id_cfg, chat_tokenizer_id_cfg, codec_model_id_cfg]): logger.error(f"{log_prefix}Missing critical model IDs in config. Skip."); return
+    logger.debug(f"{log_prefix}Core Config: LLM='{llm_model_id_cfg}', ChatTokenizer='{chat_tokenizer_id_cfg}', Codec='{codec_model_id_cfg}', TargetSR={target_sample_rate}Hz")
+    if not all([llm_model_id_cfg, chat_tokenizer_id_cfg, codec_model_id_cfg]):
+        logger.error(f"{log_prefix}Missing critical model IDs (LLM, ChatTokenizer, or Codec) in configuration. Skipping synthesis.")
+        return
 
-    _, pt_device_obj = _get_pytorch_device()
-    if pt_device_obj is None: logger.error(f"{log_prefix}Could not init PyTorch device. Skip."); return
+    # Determine the definitive reference speaker WAV path or None
+    actual_ref_speaker_wav_for_processing: Optional[str] = None
+    if _is_fallback_attempt:
+        actual_ref_speaker_wav_for_processing = None
+        logger.info(f"{log_prefix}This is a fallback attempt, forcing no reference audio (zero-shot mode).")
+    else:
+        candidate_ref_path = voice_id_override or model_config.get("default_voice_id")
+        logger.debug(f"{log_prefix}Initial candidate_ref_path: '{candidate_ref_path}' (from voice_id_override or config default_voice_id)")
+        if isinstance(candidate_ref_path, str) and candidate_ref_path.strip().lower() == 'none':
+            actual_ref_speaker_wav_for_processing = None
+            logger.debug(f"{log_prefix}Candidate ref path was string 'None', normalized to Python None (zero-shot).")
+        elif candidate_ref_path is not None and isinstance(candidate_ref_path, str) and candidate_ref_path.strip():
+            actual_ref_speaker_wav_for_processing = candidate_ref_path.strip()
+            logger.debug(f"{log_prefix}Valid candidate ref path identified: '{actual_ref_speaker_wav_for_processing}'")
+        else: # Handles Python None or empty strings
+            actual_ref_speaker_wav_for_processing = None
+            logger.debug(f"{log_prefix}Candidate ref path is Python None or empty string, ensuring zero-shot mode.")
+    
+    logger.info(f"{log_prefix}Effective reference audio path for processing: '{actual_ref_speaker_wav_for_processing}' (type: {type(actual_ref_speaker_wav_for_processing)})")
+
+    # Get PyTorch device for XCodec2
+    pt_device_name_str, pt_device_obj = _get_pytorch_device()
+    if pt_device_obj is None:
+        logger.error(f"{log_prefix}Could not initialize PyTorch device for XCodec2. Skipping synthesis.")
+        return
+    logger.info(f"{log_prefix}PyTorch device for XCodec2 model set to: {pt_device_name_str}")
 
     llasa_llm_mlx_model, llasa_llm_mlx_tokenizer, chat_template_hf_tokenizer, codec_model_pt_inst = None, None, None, None
     temp_trimmed_ref_audio_file_to_delete: Optional[Path] = None
 
     try:
-        logger.info(f"{log_prefix}Loading models/tokenizers...")
-        suppress_ext_logs = not logger.isEnabledFor(logging.DEBUG)
-        with SuppressOutput_util(suppress_stdout=suppress_ext_logs, suppress_stderr=suppress_ext_logs): # type: ignore
+        logger.info(f"{log_prefix}Loading all models and tokenizers...")
+        suppress_external_lib_logs = not logger.isEnabledFor(logging.DEBUG)
+        with SuppressOutput_util(suppress_stdout=suppress_external_lib_logs, suppress_stderr=suppress_external_lib_logs):
             try:
-                llasa_llm_mlx_model, llasa_llm_mlx_tokenizer = mlx_lm_load(llm_model_id_cfg) # type: ignore
-                if not (llasa_llm_mlx_model and llasa_llm_mlx_tokenizer): raise ValueError("MLX model/tokenizer is None")
-            except Exception as e: logger.error(f"{log_prefix}MLX LLM load failed: {e}", exc_info=True); return
-            try:
-                chat_template_hf_tokenizer = AutoTokenizer_llasa_chat.from_pretrained(chat_tokenizer_id_cfg) # type: ignore
-                if not chat_template_hf_tokenizer: raise ValueError("Chat tokenizer is None")
-            except Exception as e: logger.error(f"{log_prefix}Chat Tokenizer load failed: {e}", exc_info=True); return
-            try:
-                codec_model_pt_inst = XCodec2Model_llasa.from_pretrained(codec_model_id_cfg).to(pt_device_obj).eval() # type: ignore
-                if not codec_model_pt_inst: raise ValueError("XCodec2 model is None")
-            except Exception as e: logger.error(f"{log_prefix}XCodec2 load failed: {e}", exc_info=True); return
-        logger.info(f"{log_prefix}All models/tokenizers loaded.")
+                logger.debug(f"{log_prefix}Loading MLX LLM: '{llm_model_id_cfg}'")
+                llasa_llm_mlx_model, llasa_llm_mlx_tokenizer = mlx_lm_load(llm_model_id_cfg)
+                if not (llasa_llm_mlx_model and llasa_llm_mlx_tokenizer): 
+                    raise ValueError("MLX LLM model or tokenizer failed to load (returned None).")
+                logger.info(f"{log_prefix}MLX LLM and its tokenizer loaded successfully.")
+            except Exception as e_mlx_load:
+                logger.error(f"{log_prefix}Failed to load MLX LLM '{llm_model_id_cfg}': {e_mlx_load}", exc_info=True)
+                return
 
+            try:
+                logger.debug(f"{log_prefix}Loading Chat Template Tokenizer (HF): '{chat_tokenizer_id_cfg}'")
+                chat_template_hf_tokenizer = AutoTokenizer_llasa_chat.from_pretrained(chat_tokenizer_id_cfg)
+                if not chat_template_hf_tokenizer: 
+                    raise ValueError("HF Chat Template Tokenizer failed to load (returned None).")
+                logger.info(f"{log_prefix}HF Chat Template Tokenizer loaded successfully.")
+            except Exception as e_hf_tok_load:
+                logger.error(f"{log_prefix}Failed to load HF Chat Template Tokenizer '{chat_tokenizer_id_cfg}': {e_hf_tok_load}", exc_info=True)
+                return
+
+            try:
+                logger.debug(f"{log_prefix}Loading PyTorch XCodec2 Model: '{codec_model_id_cfg}' to device '{pt_device_name_str}'")
+                codec_model_pt_inst = XCodec2Model_llasa.from_pretrained(codec_model_id_cfg).to(pt_device_obj).eval()
+                if not codec_model_pt_inst: 
+                    raise ValueError("XCodec2 model failed to load (returned None).")
+                logger.info(f"{log_prefix}PyTorch XCodec2 Model loaded successfully to {pt_device_name_str}.")
+            except Exception as e_xcodec_load:
+                logger.error(f"{log_prefix}Failed to load PyTorch XCodec2 Model '{codec_model_id_cfg}': {e_xcodec_load}", exc_info=True)
+                return
+        
+        logger.info(f"{log_prefix}All primary models and tokenizers appear to be loaded.")
+
+        # Initialize variables for processing
         assistant_content_prefix_str = "<|SPEECH_GENERATION_START|>"
-        if ref_speaker_wav_path_str:
-            logger.debug(f"{log_prefix}Processing ref WAV for cloning: '{ref_speaker_wav_path_str}'")
-            project_root = Path(__file__).resolve().parent.parent
-            ref_audio_data = _validate_and_prepare_reference_audio(ref_speaker_wav_path_str, project_root, target_sample_rate, 15)
-            if ref_audio_data:
-                _, samples, sr, temp_trimmed_ref_audio_file_to_delete = ref_audio_data
-                if sr == target_sample_rate:
+        is_cloning_mode = False
+        processed_ref_audio_np = None
+        ref_transcription = None
+
+        if actual_ref_speaker_wav_for_processing:
+            logger.info(f"{log_prefix}Attempting voice cloning using reference: '{actual_ref_speaker_wav_for_processing}'")
+            project_root_path = Path(__file__).resolve().parent.parent
+            
+            ref_audio_validation_result = _validate_and_prepare_reference_audio(
+                actual_ref_speaker_wav_for_processing,
+                project_root_path,
+                target_sample_rate,
+                max_duration_s=15
+            )
+            
+            if ref_audio_validation_result:
+                path_str_from_validation, audio_samples_np, actual_sr, temp_file_to_del_from_validation = ref_audio_validation_result
+                temp_trimmed_ref_audio_file_to_delete = temp_file_to_del_from_validation
+                processed_ref_audio_np = audio_samples_np
+                is_cloning_mode = True
+
+                if actual_sr == target_sample_rate:
+                    logger.info(f"{log_prefix}Encoding reference audio ('{path_str_from_validation}', {len(audio_samples_np)/actual_sr:.1f}s @ {actual_sr}Hz) with XCodec2...")
                     try:
-                        logger.info(f"{log_prefix}Encoding ref WAV ({len(samples)/sr:.1f}s) with XCodec2...")
-                        vq_codes = codec_model_pt_inst.encode_code(torch_llasa.from_numpy(samples).float().unsqueeze(0).to(pt_device_obj))[0,0,:].tolist() # type: ignore
-                        assistant_content_prefix_str += "".join(_llasa_ids_to_speech_tokens_str(vq_codes))
-                        logger.info(f"{log_prefix}Generated {len(vq_codes)} speech prefix tokens for cloning.")
-                    except Exception as e: logger.error(f"{log_prefix}Failed to encode ref audio: {e}", exc_info=True)
-                else: logger.warning(f"{log_prefix}Ref audio SR ({sr}Hz) != target ({target_sample_rate}Hz). Skipping cloning.")
-            else: logger.warning(f"{log_prefix}Ref audio processing failed. No cloning prefix.")
-        else: logger.info(f"{log_prefix}No ref WAV or fallback mode. Using basic assistant prefix.")
+                        with torch_llasa.no_grad():
+                            ref_audio_tensor = torch_llasa.from_numpy(audio_samples_np).float().unsqueeze(0).to(pt_device_obj)
+                            vq_codes_from_ref = codec_model_pt_inst.encode_code(ref_audio_tensor)[0,0,:].tolist()
+                        
+                        if vq_codes_from_ref:
+                            speech_prefix_tokens = _llasa_ids_to_speech_tokens_str(vq_codes_from_ref)
+                            assistant_content_prefix_str += "".join(speech_prefix_tokens)
+                            logger.info(f"{log_prefix}Generated {len(vq_codes_from_ref)} speech prefix tokens from reference audio for cloning.")
+                            logger.debug(f"{log_prefix}First 10 reference speech IDs: {vq_codes_from_ref[:10]}")
+                            
+                            # For German model workflow, get better transcription - simplified
+                            ref_transcription = "Das ist eine deutsche Sprachprobe"
+                            logger.debug(f"{log_prefix}Using simplified German transcription for text combination")
+                        else:
+                            logger.warning(f"{log_prefix}XCodec2 encoding of reference audio yielded no VQ codes. Using basic prefix.")
+                            assistant_content_prefix_str = "<|SPEECH_GENERATION_START|>"
+                            is_cloning_mode = False
+                    except Exception as e_encode:
+                        logger.error(f"{log_prefix}Failed to encode reference audio with XCodec2: {e_encode}", exc_info=True)
+                        assistant_content_prefix_str = "<|SPEECH_GENERATION_START|>"
+                        is_cloning_mode = False
+                else:
+                    logger.warning(f"{log_prefix}Reference audio SR after validation ({actual_sr}Hz) does not match target SR ({target_sample_rate}Hz). This is unexpected. Skipping VQ encoding for cloning.")
+                    assistant_content_prefix_str = "<|SPEECH_GENERATION_START|>"
+                    is_cloning_mode = False
+            else:
+                logger.warning(f"{log_prefix}Validation/preparation of reference audio failed. No VQ codes for cloning prefix. Proceeding with basic prefix.")
+                assistant_content_prefix_str = "<|SPEECH_GENERATION_START|>"
+                is_cloning_mode = False
+        else:
+            logger.info(f"{log_prefix}Operating in zero-shot mode (no valid reference audio path). Using basic speech generation prefix.")
+            assistant_content_prefix_str = "<|SPEECH_GENERATION_START|>"
+            is_cloning_mode = False
 
-        user_content = f"Convert the text to speech:<|TEXT_UNDERSTANDING_START|>{text_to_synthesize}<|TEXT_UNDERSTANDING_END|>"
-        chat = [{"role": "user", "content": user_content}, {"role": "assistant", "content": assistant_content_prefix_str}]
+        # Prepare input text following the blueprint pattern - CORRECTED
+        if is_cloning_mode and ref_transcription:
+            # For cloning mode: combine transcription with target text (blueprint pattern)
+            combined_text = f"{ref_transcription} {text_to_synthesize}"
+            logger.debug(f"{log_prefix}Cloning mode - combined text: '{combined_text[:100]}...'")
+        else:
+            # Zero-shot: just the target text
+            combined_text = text_to_synthesize
+            logger.debug(f"{log_prefix}Zero-shot mode - using target text directly")
+
+        # Construct chat prompt for MLX LLM - following blueprint format exactly
+        user_content = f"Convert the text to speech:<|TEXT_UNDERSTANDING_START|>{combined_text}<|TEXT_UNDERSTANDING_END|>"
+        chat_for_template = [
+            {"role": "user", "content": user_content}, 
+            {"role": "assistant", "content": assistant_content_prefix_str}
+        ]
+        
         try:
-            prompt_str = chat_template_hf_tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True) # type: ignore
-            if not prompt_str: raise ValueError("Empty prompt from chat template.")
-        except Exception as e: logger.error(f"{log_prefix}Chat template failed: {e}", exc_info=True); return
-        logger.debug(f"{log_prefix}Full prompt to LLM (first 300): '{prompt_str[:300]}...'")
+            logger.debug(f"{log_prefix}Applying chat template. User content (text part): '{text_to_synthesize[:60]}...', Assistant prefix starts with: '{assistant_content_prefix_str[:60]}...'")
+            prompt_str_for_llm = chat_template_hf_tokenizer.apply_chat_template(chat_for_template, tokenize=False, add_generation_prompt=True)
+            if not prompt_str_for_llm: 
+                raise ValueError("Applying chat template resulted in an empty prompt string.")
+            logger.debug(f"{log_prefix}Full prompt string for LLM (first 300 chars): '{prompt_str_for_llm[:300]}...'")
+        except Exception as e_chat_template:
+            logger.error(f"{log_prefix}Failed to apply chat template: {e_chat_template}", exc_info=True)
+            return
 
-        num_prompt_toks = len(llasa_llm_mlx_tokenizer.encode(prompt_str)) # type: ignore
-        max_ctx_cfg = getattr(llasa_llm_mlx_model, 'config', {}) # type: ignore
-        max_ctx = getattr(max_ctx_cfg, 'max_position_embeddings', 2048) # type: ignore
+        # Determine LLM generation parameters
+        num_prompt_tokens = len(llasa_llm_mlx_tokenizer.encode(prompt_str_for_llm))
+        llm_max_context = getattr(getattr(llasa_llm_mlx_model, 'config', {}), 'max_position_embeddings', 2048)
+        logger.debug(f"{log_prefix}Prompt token length: {num_prompt_tokens}, LLM max context: {llm_max_context}")
 
-        desired_max_speech_tokens = 1200 
-        max_new = max(75, min(max_ctx - num_prompt_toks - 20, desired_max_speech_tokens)) 
-        if max_new <= 0: logger.error(f"{log_prefix}Max new tokens {max_new} too low. Prompt: {num_prompt_toks} for ctx {max_ctx}. Skip."); return
+        # Max new tokens calculation with better limits - following blueprint approach
+        desired_max_speech_tokens_llm_can_generate = 300  # Reduced from 600 to prevent excessive generation
+        max_new_tokens_for_llm = max(MIN_SPEECH_TOKENS_THRESHOLD, min(llm_max_context - num_prompt_tokens - 50, desired_max_speech_tokens_llm_can_generate))
+        
+        if max_new_tokens_for_llm <= 0:
+            logger.error(f"{log_prefix}Calculated max_new_tokens for LLM is {max_new_tokens_for_llm}, which is too low (prompt too long for context). Prompt tokens: {num_prompt_tokens}, Max context: {llm_max_context}. Skipping LLM generation.")
+            return
 
-        temp_val, top_p_val, min_p_val, top_k_val = 0.6, 0.9, 0.05, 40 # Adjusted defaults: temp slightly higher to avoid repetition
+        # Default and overridden sampling parameters - improved for quality
+        sampler_temp = 0.8  # Following blueprint exactly
+        sampler_top_p = 1.0  # Following blueprint exactly
+        sampler_min_p = 0.05
+        sampler_top_k = 50   # Increased for better diversity
+        
         if model_params_override:
             try:
-                p = json.loads(model_params_override)
-                temp_val = float(p.get("temperature", temp_val))
-                top_p_val = float(p.get("top_p", top_p_val))
-                min_p_val = float(p.get("min_p", min_p_val))
-                top_k_val = int(p.get("top_k", top_k_val))
-            except: logger.warning(f"{log_prefix}Could not parse model_params for sampling. Using defaults.")
+                params_json = json.loads(model_params_override)
+                sampler_temp = float(params_json.get("temperature", sampler_temp))
+                sampler_top_p = float(params_json.get("top_p", sampler_top_p))
+                sampler_min_p = float(params_json.get("min_p", sampler_min_p))
+                sampler_top_k = int(params_json.get("top_k", sampler_top_k))
+            except (json.JSONDecodeError, ValueError) as e_params:
+                logger.warning(f"{log_prefix}Could not parse --model-params for LLM sampler settings: {e_params}. Using defaults.")
         
-        sampler = make_sampler_func(temp=temp_val, top_p=top_p_val, min_p=min_p_val, top_k=top_k_val) # type: ignore
-        logger.info(f"{log_prefix}LLM Gen: max_new_tokens={max_new}. Sampler: temp={temp_val}, top_p={top_p_val}, min_p={min_p_val}, top_k={top_k_val}.")
+        mlx_sampler = make_sampler_func(temp=sampler_temp, top_p=sampler_top_p)
+        logger.info(f"{log_prefix}Starting MLX LLM generation. max_new_tokens={max_new_tokens_for_llm}. Sampler settings: temp={sampler_temp}, top_p={sampler_top_p}")
 
-        llm_output = mlx_lm_generate_str_func( # type: ignore
+        # Generate speech tokens string from MLX LLM
+        llm_generated_output_str = mlx_lm_generate_str_func(
             model=llasa_llm_mlx_model,
             tokenizer=llasa_llm_mlx_tokenizer,
-            prompt=prompt_str,
-            max_tokens=max_new, # This should be the kwarg for mlx_lm.generate.generate
-            sampler=sampler,
+            prompt=prompt_str_for_llm,
+            max_tokens=max_new_tokens_for_llm, 
+            sampler=mlx_sampler,
             verbose=logger.isEnabledFor(logging.DEBUG)
         )
-        if not llm_output: logger.error(f"{log_prefix}LLM returned empty. Skip."); return
-        logger.debug(f"{log_prefix}Raw LLM output length {len(llm_output)}. Starts: '{llm_output[:100]}...', Ends: '...{llm_output[-100:]}'")
-        
-        completion = llm_output
-        if llm_output.startswith(prompt_str):
-            completion = llm_output[len(prompt_str):]
-            logger.debug(f"{log_prefix}Stripped echoed prompt. Completion length: {len(completion)}.")
-        else:
-            logger.debug(f"{log_prefix}LLM output did not start with prompt. Assuming full output is completion.")
-        
-        eos_str = '<|SPEECH_GENERATION_END|>'
-        if eos_str in completion:
-            completion = completion.split(eos_str, 1)[0]
-            logger.debug(f"{log_prefix}Truncated completion at '{eos_str}'. Final part length: {len(completion)}.")
-        else:
-            logger.debug(f"{log_prefix}Custom EOS '{eos_str}' not in completion. Using full completion (may lead to run-on audio if LLM didn't stop).")
-        if not completion.strip(): logger.error(f"{log_prefix}Completion empty after processing. Skip."); return
 
-        speech_ids = _llasa_extract_speech_ids_from_str_list(completion)
-        logger.info(f"{log_prefix}Extracted {len(speech_ids)} speech IDs.")
+        if not llm_generated_output_str:
+            logger.error(f"{log_prefix}MLX LLM generation returned an empty string. Skipping further processing.")
+            return
+        
+        logger.debug(f"{log_prefix}Raw LLM output string length: {len(llm_generated_output_str)}. Starts with: '{llm_generated_output_str[:100]}...', Ends with: '...{llm_generated_output_str[-100:]}'")
+        
+        # Process LLM output string - improved EOS handling
+        completion_part_str = llm_generated_output_str
+        
+        # Better EOS detection following blueprint patterns
+        eos_patterns = [
+            '<|SPEECH_GENERATION_END|>',
+            '<|end|>',
+            '<|eot_id|>',
+            '</s>',
+            '<|im_end|>'
+        ]
+        
+        earliest_eos_pos = len(completion_part_str)
+        found_eos = None
+        
+        for pattern in eos_patterns:
+            pos = completion_part_str.find(pattern)
+            if pos != -1 and pos < earliest_eos_pos:
+                earliest_eos_pos = pos
+                found_eos = pattern
+        
+        if found_eos:
+            completion_part_str = completion_part_str[:earliest_eos_pos]
+            logger.debug(f"{log_prefix}Truncated completion at '{found_eos}' (pos {earliest_eos_pos}). Final part length: {len(completion_part_str)}")
+        else:
+            logger.debug(f"{log_prefix}No EOS marker found. Using full completion.")
+        
+        # Additional safety: detect and handle repetitive patterns
+        if '<|s_' in completion_part_str:
+            tokens = re.findall(r'<\|s_\d+\|>', completion_part_str)
+            if len(tokens) > 50:  # If we have many tokens, check for excessive repetition
+                # Look for runs of identical tokens indicating model confusion
+                for i in range(min(len(tokens) - 10, 100)):  # Check first 100 positions max
+                    window = tokens[i:i+10]
+                    if len(set(window)) < 3:  # Too few unique tokens in a window
+                        # Found repetitive pattern, truncate here
+                        truncate_pos = completion_part_str.find(tokens[i])
+                        if truncate_pos != -1:
+                            completion_part_str = completion_part_str[:truncate_pos]
+                            logger.info(f"{log_prefix}Detected repetitive pattern at token {i}, truncated to prevent gibberish")
+                            break
+        
+        if not completion_part_str.strip():
+            logger.error(f"{log_prefix}LLM completion is empty after processing EOS. No speech IDs to extract.")
+            return
 
-        if len(speech_ids) < MIN_SPEECH_TOKENS_THRESHOLD:
-            logger.warning(f"{log_prefix}Extracted only {len(speech_ids)} speech IDs (< threshold {MIN_SPEECH_TOKENS_THRESHOLD}).")
-            if attempt_no_cloning_fallback and ref_speaker_wav_path_str and not _is_fallback_attempt:
-                logger.info(f"{log_prefix}Output too short with voice cloning. RETRYING WITHOUT CLONING.")
+        # Extract numeric speech IDs from the completion string
+        numeric_speech_ids_for_xcodec = _llasa_extract_speech_ids_from_str_list(completion_part_str)
+        logger.info(f"{log_prefix}Extracted {len(numeric_speech_ids_for_xcodec)} numeric speech IDs from LLM output.")
+        logger.debug(f"{log_prefix}Example extracted speech IDs (first 10): {numeric_speech_ids_for_xcodec[:10]}")
+
+        if len(numeric_speech_ids_for_xcodec) < MIN_SPEECH_TOKENS_THRESHOLD:
+            logger.warning(f"{log_prefix}Number of extracted speech IDs ({len(numeric_speech_ids_for_xcodec)}) is below threshold ({MIN_SPEECH_TOKENS_THRESHOLD}).")
+            if actual_ref_speaker_wav_for_processing and attempt_no_cloning_fallback and not _is_fallback_attempt:
+                logger.info(f"{log_prefix}Output too short with voice cloning. Attempting RETRY WITHOUT CLONING (zero-shot fallback).")
+                # Clean up resources before recursive call
                 if temp_trimmed_ref_audio_file_to_delete and temp_trimmed_ref_audio_file_to_delete.exists():
-                    try: temp_trimmed_ref_audio_file_to_delete.unlink()
-                    except OSError: pass
-                _cleanup_resources(llasa_llm_mlx_model,llasa_llm_mlx_tokenizer,chat_template_hf_tokenizer,codec_model_pt_inst)
-                return synthesize_with_llasa_hybrid(model_config, text_to_synthesize, None, model_params_override, output_file_str, play_direct, False, True)
-            else: logger.error(f"{log_prefix}Output too short. No further fallbacks. Skip audio decode."); return
+                    try: 
+                        temp_trimmed_ref_audio_file_to_delete.unlink(missing_ok=True)
+                    except OSError: 
+                        pass
+                _cleanup_resources(llasa_llm_mlx_model, llasa_llm_mlx_tokenizer, chat_template_hf_tokenizer, codec_model_pt_inst)
+                # Recursive call for fallback
+                synthesize_with_llasa_hybrid(model_config, text_to_synthesize, None, model_params_override, output_file_str, play_direct, False, True)
+                return
+            else:
+                logger.error(f"{log_prefix}Output too short, and no further fallbacks applicable (or fallback already attempted). Skipping XCodec2 decoding.")
+                return
 
-        speech_tensor = torch_llasa.tensor(speech_ids, device=pt_device_obj).unsqueeze(0).unsqueeze(0) # type: ignore
-        logger.info(f"{log_prefix}Decoding {len(speech_ids)} speech IDs with XCodec2...")
-        with torch_llasa.no_grad(), SuppressOutput_util(suppress_stdout=suppress_ext_logs, suppress_stderr=suppress_ext_logs): # type: ignore
-            gen_wav_pt = codec_model_pt_inst.decode_code(speech_tensor) # type: ignore
-        if gen_wav_pt is None: logger.error(f"{log_prefix}XCodec2 decode returned None. Skip."); return
-        audio_np = gen_wav_pt[0,0,:].cpu().numpy()
-        if audio_np.size == 0: logger.error(f"{log_prefix}XCodec2 decode empty. Skip."); return
+        # Decode speech IDs to waveform using XCodec2
+        speech_ids_tensor_for_xcodec = torch_llasa.tensor(numeric_speech_ids_for_xcodec, device=pt_device_obj).unsqueeze(0).unsqueeze(0)
+        logger.info(f"{log_prefix}Decoding {len(numeric_speech_ids_for_xcodec)} speech IDs with XCodec2 model...")
         
-        dur = audio_np.shape[0]/target_sample_rate
-        logger.info(f"{log_prefix}XCodec2 decode OK. Audio: {dur:.2f}s at {target_sample_rate}Hz.")
+        generated_waveform_pt = None
+        with torch_llasa.no_grad(), SuppressOutput_util(suppress_stdout=suppress_external_lib_logs, suppress_stderr=suppress_external_lib_logs):
+            generated_waveform_pt = codec_model_pt_inst.decode_code(speech_ids_tensor_for_xcodec)
+        
+        if generated_waveform_pt is None or generated_waveform_pt.numel() == 0:
+            logger.error(f"{log_prefix}XCodec2 decode_code returned None or an empty tensor. No audio produced.")
+            return
+        
+        # For cloning mode: trim the reconstructed reference audio (following blueprint)
+        if is_cloning_mode and processed_ref_audio_np is not None:
+            ref_samples = len(processed_ref_audio_np)
+            logger.info(f"{log_prefix}Generated audio shape before trimming: {generated_waveform_pt.shape}")
+            logger.info(f"{log_prefix}Reference audio samples to trim: {ref_samples}")
+            
+            if generated_waveform_pt.shape[2] > ref_samples:
+                logger.info(f"{log_prefix}Trimming {ref_samples} reference samples from generated audio")
+                generated_waveform_pt = generated_waveform_pt[:, :, ref_samples:]
+                logger.info(f"{log_prefix}Audio shape after trimming reference: {generated_waveform_pt.shape}")
+            else:
+                logger.warning(f"{log_prefix}Generated audio ({generated_waveform_pt.shape[2]} samples) shorter than reference ({ref_samples} samples). Cannot trim reference portion.")
+                # This may indicate synthesis failure - keep full generated audio
+                logger.warning(f"{log_prefix}This may indicate synthesis failure - keeping full generated audio")
+        else:
+            logger.debug(f"{log_prefix}Zero-shot mode or no reference - no audio trimming needed")
+        
+        # Convert to numpy array for saving/playing
+        audio_output_np = generated_waveform_pt[0,0,:].cpu().numpy()
+        if audio_output_np.size == 0:
+            logger.error(f"{log_prefix}XCodec2 decoding resulted in an empty numpy array. No audio produced.")
+            return
+        
+        duration_seconds = audio_output_np.shape[0] / target_sample_rate
+        logger.info(f"{log_prefix}XCodec2 decoding successful. Generated audio duration: {duration_seconds:.2f}s at {target_sample_rate}Hz.")
 
-        if output_file_str and UTILS_AVAILABLE and save_audio_util:
+        # Save and play audio
+        if output_file_str and save_audio_util:
             try:
-                out_path = Path(output_file_str).with_suffix(".wav")
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                s16le_bytes = (np.clip(audio_np.astype(np.float32),-1.0,1.0)*32767).astype(np.int16).tobytes()
-                save_audio_util(s16le_bytes, str(out_path), False, "pcm_s16le", target_sample_rate)
-                logger.info(f"{log_prefix}Audio saved to {out_path}")
-            except Exception as e: logger.error(f"{log_prefix}Save audio failed: {e}", exc_info=True)
-        if play_direct and UTILS_AVAILABLE and play_audio_util:
+                output_path_obj = Path(output_file_str).with_suffix(".wav")
+                output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+                # save_audio expects bytes, so convert float32 numpy to int16 bytes
+                audio_int16_bytes = (np.clip(audio_output_np.astype(np.float32), -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                save_audio_util(audio_int16_bytes, str(output_path_obj), source_is_path=False, input_format="pcm_s16le", sample_rate=target_sample_rate)
+                logger.info(f"{log_prefix}Synthesized audio successfully saved to: {output_path_obj}")
+            except Exception as e_save:
+                logger.error(f"{log_prefix}Failed to save synthesized audio to '{output_path_obj}': {e_save}", exc_info=True)
+        
+        if play_direct and play_audio_util:
             try:
-                s16le_bytes = (np.clip(audio_np.astype(np.float32),-1.0,1.0)*32767).astype(np.int16).tobytes()
-                play_audio_util(s16le_bytes, False, "pcm_s16le", target_sample_rate)
-            except Exception as e: logger.error(f"{log_prefix}Play audio failed: {e}", exc_info=True)
-        logger.info(f"{log_prefix}Synthesis completed{' (fallback)' if _is_fallback_attempt else ''}.")
+                logger.info(f"{log_prefix}Attempting to play synthesized audio directly...")
+                audio_int16_bytes_for_play = (np.clip(audio_output_np.astype(np.float32), -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                play_audio_util(audio_int16_bytes_for_play, is_path=False, input_format="pcm_s16le", sample_rate=target_sample_rate)
+            except Exception as e_play:
+                logger.error(f"{log_prefix}Failed to play synthesized audio directly: {e_play}", exc_info=True)
+        
+        logger.info(f"{log_prefix}Synthesis process completed successfully{'.' if not _is_fallback_attempt else ' (after fallback to zero-shot).'}")
 
-    except Exception as e: logger.error(f"{log_prefix}Unexpected error in main block: {e}", exc_info=True)
+    except Exception as e_main_synth:
+        logger.error(f"{log_prefix}An unexpected error occurred during the main synthesis block: {e_main_synth}", exc_info=True)
     finally:
-        logger.info(f"{log_prefix}Entering finally: cleanup.")
-        _cleanup_resources(llasa_llm_mlx_model,llasa_llm_mlx_tokenizer,chat_template_hf_tokenizer,codec_model_pt_inst)
+        logger.info(f"{log_prefix}Entering 'finally' block for resource cleanup.")
+        _cleanup_resources(llasa_llm_mlx_model, llasa_llm_mlx_tokenizer, chat_template_hf_tokenizer, codec_model_pt_inst)
         if temp_trimmed_ref_audio_file_to_delete and temp_trimmed_ref_audio_file_to_delete.exists():
-            try: temp_trimmed_ref_audio_file_to_delete.unlink(); logger.debug(f"{log_prefix}Deleted temp ref: {temp_trimmed_ref_audio_file_to_delete}")
-            except OSError as e_del: logger.warning(f"{log_prefix}Could not delete temp ref '{temp_trimmed_ref_audio_file_to_delete}': {e_del}")
+            try:
+                temp_trimmed_ref_audio_file_to_delete.unlink()
+                logger.debug(f"{log_prefix}Successfully deleted temporary trimmed reference audio: {temp_trimmed_ref_audio_file_to_delete}")
+            except OSError as e_del_temp:
+                logger.warning(f"{log_prefix}Could not delete temporary trimmed reference audio '{temp_trimmed_ref_audio_file_to_delete}': {e_del_temp}")
         logger.info(f"{log_prefix}Resource cleanup finished.")
+
 
 def validate_llasa_installation() -> Tuple[bool, dict]:
     is_functional, missing = _validate_dependencies()

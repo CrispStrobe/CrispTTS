@@ -311,57 +311,83 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                 elif model_id.startswith("coqui_") and current_config_for_handler.get("default_coqui_speaker") is None and current_config_for_handler.get("available_voices") == ["default_speaker"]:
                     voices_to_test_this_run.append("default_speaker")
                     logger.info(f"Coqui single-speaker model '{model_id}' for --test-all-speakers, using placeholder 'default_speaker'.")
-        else: # Not test_all_speakers_flag, so get only the single default voice
+        else: # Not test_all_speakers_flag, so get only the single default voice OR handle zero-shot
             default_v_to_add = None
-            # Priority 1: Coqui-specific default speaker ID
-            if model_id.startswith("coqui_"):
-                coqui_default_speaker_id = current_config_for_handler.get('default_coqui_speaker')
-                if coqui_default_speaker_id and str(coqui_default_speaker_id).strip():
-                    default_v_to_add = str(coqui_default_speaker_id)
-                    logger.debug(f"Model '{model_id}': Using 'default_coqui_speaker': {default_v_to_add} for default test run.")
             
-            # Priority 2: Standard default voice/path keys
-            if not default_v_to_add:
-                std_default_keys = ['default_voice_id', 'default_model_path_in_repo']
-                for key in std_default_keys:
-                    val = current_config_for_handler.get(key)
-                    if val and str(val).strip():
-                        default_v_to_add = str(val)
-                        logger.debug(f"Model '{model_id}': Found default via '{key}': {default_v_to_add}")
-                        break
-            
-            # Priority 3: Index/ID based defaults
-            if not default_v_to_add:
-                idx_val_embed = current_config_for_handler.get('default_speaker_embedding_index')
-                if idx_val_embed is not None:
-                    default_v_to_add = str(idx_val_embed)
-                    logger.debug(f"Model '{model_id}': Found default via 'default_speaker_embedding_index': {default_v_to_add}")
-                else:
-                    idx_val_speaker = current_config_for_handler.get('default_speaker_id')
-                    if idx_val_speaker is not None:
-                        default_v_to_add = str(idx_val_speaker)
-                        logger.debug(f"Model '{model_id}': Found default via 'default_speaker_id': {default_v_to_add}")
-            
-            # Priority 4: Fallback for Coqui single-speaker models using "default_speaker" placeholder
-            if not default_v_to_add and \
-               model_id.startswith("coqui_") and \
-               current_config_for_handler.get("default_coqui_speaker") is None and \
-               current_config_for_handler.get("available_voices") == ["default_speaker"]:
-                default_v_to_add = "default_speaker"
-                logger.info(f"Coqui single-speaker model '{model_id}': Using placeholder 'default_speaker' for default test run.")
-            
-            if default_v_to_add and str(default_v_to_add).strip():
-                voices_to_test_this_run.append(str(default_v_to_add))
-            elif not voices_to_test_this_run: # Ensure this log is accurate
-                logger.debug(f"Model '{model_id}': No default voice/speaker could be determined for default speaker test mode.")
-        
-        voices_to_test_this_run = [v for v in voices_to_test_this_run if v is not None and str(v).strip()]
-        unique_voices_to_test = list(dict.fromkeys(voices_to_test_this_run)) # Simplified unique preserving order
+            # NEW: Check for explicit zero-shot configuration for default test mode
+            # A model is considered zero-shot for this purpose if its default_voice_id is None
+            # AND it has no specific available_voices listed (indicating it doesn't rely on a predefined voice set)
+            # AND it's not a type of model that inherently requires a speaker/voice even in default (e.g. some Coqui models)
+            is_primarily_zero_shot_type = (
+                current_config_for_handler.get('default_voice_id') is None and
+                not current_config_for_handler.get('available_voices')
+            )
+            # Add specific model IDs here if they are zero-shot but might have other default fields that confuse the logic below
+            # For example, if a model is zero-shot but happens to have a 'default_speaker_id' for some other purpose.
+            if model_id in ["llasa_hybrid_de_zeroshot", "llasa_german_transformers_zeroshot", "llasa_multilingual_hf_zeroshot"]: # Be explicit for known zero-shot LLaSA
+                is_primarily_zero_shot_type = True
 
-        if not unique_voices_to_test:
-            current_model_status = "SKIPPED (No Voice)"
-            logger.info(f"\n>>> Skipping Model: {model_id} (No voices to test configured/found for this mode) <<<")
-            benchmark_results.append({ "model_id": model_id, "voice_id": "N/A", "status": current_model_status, "gen_time_sec": "N/A", "file_size_bytes": "N/A", "audio_duration_sec": "N/A", "output_file": "N/A" })
+
+            if is_primarily_zero_shot_type:
+                logger.info(f"Model '{model_id}': Identified as zero-shot or configured for such a test. Proceeding with 'None' as voice_id for default test.")
+                voices_to_test_this_run.append(None) # Use None to signify zero-shot for the handler
+            else:
+                # Original logic to find a default_v_to_add
+                # Priority 1: Coqui-specific default speaker ID
+                if model_id.startswith("coqui_"):
+                    coqui_default_speaker_id = current_config_for_handler.get('default_coqui_speaker')
+                    if coqui_default_speaker_id and str(coqui_default_speaker_id).strip():
+                        default_v_to_add = str(coqui_default_speaker_id)
+                        logger.debug(f"Model '{model_id}': Using 'default_coqui_speaker': {default_v_to_add} for default test run.")
+                
+                # Priority 2: Standard default voice/path keys
+                if not default_v_to_add:
+                    std_default_keys = ['default_voice_id', 'default_model_path_in_repo']
+                    for key_cfg in std_default_keys: # Renamed key to key_cfg to avoid conflict
+                        val = current_config_for_handler.get(key_cfg)
+                        # Ensure val is not None and, if string, not empty after stripping
+                        if val is not None and (not isinstance(val, str) or str(val).strip()):
+                            default_v_to_add = str(val)
+                            logger.debug(f"Model '{model_id}': Found default via '{key_cfg}': {default_v_to_add}")
+                            break
+                
+                # Priority 3: Index/ID based defaults
+                if not default_v_to_add:
+                    idx_val_embed = current_config_for_handler.get('default_speaker_embedding_index')
+                    if idx_val_embed is not None: # Check for None explicitly for numeric 0
+                        default_v_to_add = str(idx_val_embed)
+                        logger.debug(f"Model '{model_id}': Found default via 'default_speaker_embedding_index': {default_v_to_add}")
+                    else:
+                        idx_val_speaker = current_config_for_handler.get('default_speaker_id')
+                        if idx_val_speaker is not None: # Check for None explicitly for numeric 0
+                            default_v_to_add = str(idx_val_speaker)
+                            logger.debug(f"Model '{model_id}': Found default via 'default_speaker_id': {default_v_to_add}")
+                
+                # Priority 4: Fallback for Coqui single-speaker models using "default_speaker" placeholder
+                if not default_v_to_add and \
+                   model_id.startswith("coqui_") and \
+                   current_config_for_handler.get("default_coqui_speaker") is None and \
+                   current_config_for_handler.get("available_voices") == ["default_speaker"]:
+                    default_v_to_add = "default_speaker" # This specific string might be handled by Coqui handler
+                    logger.info(f"Coqui single-speaker model '{model_id}': Using placeholder 'default_speaker' for default test run.")
+                
+                if default_v_to_add is not None and (not isinstance(default_v_to_add, str) or str(default_v_to_add).strip()):
+                    voices_to_test_this_run.append(str(default_v_to_add))
+                elif not voices_to_test_this_run: # Only log if it's still empty and not identified as zero-shot
+                    logger.debug(f"Model '{model_id}': No default voice/speaker could be determined for default speaker test mode (and not flagged as zero-shot for this test).")
+
+        unique_voices_to_test = list(dict.fromkeys(voices_to_test_this_run)) # Handles [None] correctly
+
+        #voices_to_test_this_run = [v for v in voices_to_test_this_run if v is not None and str(v).strip()]
+        
+        if not unique_voices_to_test: # This will now be false if voices_to_test_this_run contains [None]
+            current_model_status = "SKIPPED (No Voice/Default Identified)" # Clarify message
+            logger.info(f"\n>>> Skipping Model: {model_id} ({current_model_status} for this mode) <<<")
+            benchmark_results.append({
+                "model_id": model_id, "voice_id": "N/A", "status": current_model_status,
+                "gen_time_sec": "N/A", "file_size_bytes": "N/A",
+                "audio_duration_sec": "N/A", "output_file": "N/A"
+            })
             logger.info("------------------------------------")
             continue
         

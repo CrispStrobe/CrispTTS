@@ -342,52 +342,55 @@ GERMAN_TTS_MODELS = {
         "notes": "LLaSA Hybrid (MLX LLM + PyTorch XCodec2). Zero-shot German TTS. 16kHz."
     },
     "llasa_german_transformers_clone": {
-        "handler_function_key": "llasa_hf_transformers", # Updated to new generic handler key
+        "crisptts_model_id": "llasa_german_transformers_clone", # Add this line
+        "handler_function_key": "llasa_hf_transformers",
         "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
-        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID, # Specific tokenizer for the German model
+        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
         "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION,
-        "language": "de", # Hint for German
-        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "language": "de",
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV, # e.g., "./german.wav"
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
         "sample_rate": 16000,
-        "requires_hf_token": False, # Adjust if model needs token
+        "requires_hf_token": False,
         "notes": "LLaSA German (Transformers LLM + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
     },
     "llasa_german_transformers_zeroshot": {
-        "handler_function_key": "llasa_hf_transformers", # Uses the existing generic LLaSA HF handler
+        "crisptts_model_id": "llasa_german_transformers_zeroshot", # Add this line
+        "handler_function_key": "llasa_hf_transformers",
         "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
-        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID, # Or general LLaSA tokenizer
+        "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
-        # "whisper_model_id_for_transcription": None, # Not needed for zero-shot
-        "language": "de", # Important hint for the model if it's multilingual or for text processing
-        "default_voice_id": None, # Explicitly None to indicate zero-shot
-        "available_voices": [],   # No voices to select in zero-shot
+        "language": "de",
+        "default_voice_id": None,
+        "available_voices": [],
         "sample_rate": 16000,
-        "requires_hf_token": False, # Adjust if model access requires token
+        "requires_hf_token": False,
         "notes": "LLaSA German (Transformers LLM + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
     },
     "llasa_multilingual_hf_clone": {
-        "handler_function_key": "llasa_hf_transformers", # Uses the same generic handler
+        "crisptts_model_id": "llasa_multilingual_hf_clone", # Add this line
+        "handler_function_key": "llasa_hf_transformers", 
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
-        "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID, # Tokenizer for the multilingual model
+        "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
         "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION,
-        "language": None, # Multilingual; language inferred from text or reference
-        "default_voice_id": "./my_bark_output.wav", # Example generic reference
-        "available_voices": ["./my_bark_output.wav", "./german.wav"], # List paths to general reference audio files
+        "language": None, 
+        "default_voice_id": "./german.wav", 
+        "available_voices": ["./german.wav"], 
         "sample_rate": 16000,
         "requires_hf_token": False,
         "notes": "LLaSA Multilingual (Transformers LLM + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
     },
-    "llasa_multilingual_hf_zeroshot": { # New entry for zero-shot multilingual
+    "llasa_multilingual_hf_zeroshot": {
+        "crisptts_model_id": "llasa_multilingual_hf_zeroshot", # Add this line
         "handler_function_key": "llasa_hf_transformers",
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
-        "language": None, # Language should be in the input text
-        "default_voice_id": None, # Not used in zero-shot
-        "available_voices": [],   # Not used in zero-shot
+        "language": None,
+        "default_voice_id": None,
+        "available_voices": [],
         "sample_rate": 16000,
         "requires_hf_token": False,
         "notes": "LLaSA Multilingual (Transformers LLM + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
