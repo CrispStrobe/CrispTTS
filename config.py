@@ -342,8 +342,8 @@ GERMAN_TTS_MODELS = {
         "notes": "LLaSA Hybrid (MLX LLM + PyTorch XCodec2). Zero-shot German TTS. 16kHz."
     },
     "llasa_german_transformers_clone": {
-        "crisptts_model_id": "llasa_german_transformers_clone", # Add this line
-        "handler_function_key": "llasa_hf_transformers",
+        "crisptts_model_id": "llasa_german_transformers_clone",
+        "handler_function_key": "llasa_german_transformers",  # NEW: Use German-specific handler
         "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -353,11 +353,11 @@ GERMAN_TTS_MODELS = {
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
         "sample_rate": 16000,
         "requires_hf_token": False,
-        "notes": "LLaSA German (Transformers LLM + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
+        "notes": "LLaSA German (German-specific handler + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
     },
     "llasa_german_transformers_zeroshot": {
-        "crisptts_model_id": "llasa_german_transformers_zeroshot", # Add this line
-        "handler_function_key": "llasa_hf_transformers",
+        "crisptts_model_id": "llasa_german_transformers_zeroshot",
+        "handler_function_key": "llasa_german_transformers",  # NEW: Use German-specific handler
         "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -366,25 +366,24 @@ GERMAN_TTS_MODELS = {
         "available_voices": [],
         "sample_rate": 16000,
         "requires_hf_token": False,
-        "notes": "LLaSA German (Transformers LLM + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
+        "notes": "LLaSA German (German-specific handler + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
     },
     "llasa_multilingual_hf_clone": {
-        "crisptts_model_id": "llasa_multilingual_hf_clone", # Add this line
-        "handler_function_key": "llasa_hf_transformers", 
+        "crisptts_model_id": "llasa_multilingual_hf_clone",
+        "handler_function_key": "llasa_multilingual_transformers",  # NEW: Use Multilingual-specific handler
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
-        "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION,
         "language": None, 
-        "default_voice_id": "./german.wav", 
+        "default_voice_id": "./german.wav",  # Changed from "./my_bark_output.wav"
         "available_voices": ["./german.wav"], 
         "sample_rate": 16000,
         "requires_hf_token": False,
-        "notes": "LLaSA Multilingual (Transformers LLM + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
+        "notes": "LLaSA Multilingual (Multilingual-specific handler + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
     },
     "llasa_multilingual_hf_zeroshot": {
-        "crisptts_model_id": "llasa_multilingual_hf_zeroshot", # Add this line
-        "handler_function_key": "llasa_hf_transformers",
+        "crisptts_model_id": "llasa_multilingual_hf_zeroshot",
+        "handler_function_key": "llasa_multilingual_transformers",  # NEW: Use Multilingual-specific handler
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -393,7 +392,7 @@ GERMAN_TTS_MODELS = {
         "available_voices": [],
         "sample_rate": 16000,
         "requires_hf_token": False,
-        "notes": "LLaSA Multilingual (Transformers LLM + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
+        "notes": "LLaSA Multilingual (Multilingual-specific handler + XCodec2). Zero-shot TTS. Output: 16kHz WAV."
     },
 
     # --- MLX-AUDIO MODEL ENTRIES using "mlx_audio" handler_function_key ---

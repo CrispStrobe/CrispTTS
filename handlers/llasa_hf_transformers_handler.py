@@ -148,6 +148,7 @@ def synthesize_with_llasa_hf_transformers(
     model = None  
     Codec_model = None
     whisper_turbo_pipe = None
+    prompt_wav = None  # Store for audio trimming
 
     try:
         # EXACT blueprint model loading - variable names must match!
@@ -268,6 +269,7 @@ def synthesize_with_llasa_hf_transformers(
                     logger.warning("LLaSA HF: Text is too long; trimming to first 500 characters.")
                     target_text = target_text[:500]
 
+                # EXACT blueprint text combination - both models use same approach
                 input_text = transcription + " " + target_text
                 logger.debug(f"LLaSA HF: Combined input text: '{input_text[:100]}...'")
                 
@@ -307,7 +309,7 @@ def synthesize_with_llasa_hf_transformers(
         
         speech_end_id = tokenizer.convert_tokens_to_ids("<|SPEECH_GENERATION_END|>")
 
-        # EXACT blueprint generation parameters
+        # EXACT blueprint generation parameters with model-specific tuning
         gen_params = {
             "max_length": 2048, 
             "eos_token_id": speech_end_id,
@@ -318,6 +320,13 @@ def synthesize_with_llasa_hf_transformers(
             "attention_mask": attention_mask,
             "pad_token_id": tokenizer.pad_token_id,
         }
+        
+        # Adjust parameters based on model type
+        if "multilingual" in crisptts_model_id_for_log.lower():
+            # Multilingual models may need more aggressive generation settings
+            gen_params["min_new_tokens"] = 50  # Force more generation for multilingual
+            gen_params["max_length"] = 3000    # Allow longer sequences
+            logger.debug("LLaSA HF: Using enhanced generation parameters for multilingual model")
 
         # Override with user parameters if provided
         if model_params_override:
@@ -338,11 +347,27 @@ def synthesize_with_llasa_hf_transformers(
             outputs = model.generate(input_ids, **gen_params)
 
             # EXACT blueprint token extraction - THIS IS CRITICAL!
-            generated_ids = outputs[0][input_ids.shape[1] - len(speech_ids_prefix) : -1]
+            # Different handling for German vs Multilingual models
+            if "german" in crisptts_model_id_for_log.lower():
+                # German model: use exact blueprint extraction
+                generated_ids = outputs[0][input_ids.shape[1] - len(speech_ids_prefix) : -1]
+                logger.debug(f"LLaSA HF: German model extraction - input_ids.shape[1]: {input_ids.shape[1]}, speech_ids_prefix length: {len(speech_ids_prefix)}")
+            else:
+                # Multilingual model: different extraction pattern
+                if is_cloning_mode and speech_ids_prefix:
+                    # For multilingual cloning, don't subtract prefix length
+                    generated_ids = outputs[0][input_ids.shape[1] : -1]
+                    logger.debug(f"LLaSA HF: Multilingual cloning extraction - input_ids.shape[1]: {input_ids.shape[1]}")
+                else:
+                    # For multilingual zero-shot
+                    generated_ids = outputs[0][input_ids.shape[1] : -1]
+                    logger.debug(f"LLaSA HF: Multilingual zero-shot extraction - input_ids.shape[1]: {input_ids.shape[1]}")
+            
             logger.debug(f"LLaSA HF: Extracted generated_ids shape: {generated_ids.shape}")
             
             speech_tokens = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
             logger.debug(f"LLaSA HF: Decoded {len(speech_tokens)} speech token strings")
+            logger.debug(f"LLaSA HF: First 10 speech tokens: {speech_tokens[:10]}")
             
             # EXACT blueprint speech ID extraction
             speech_tokens = extract_speech_ids(speech_tokens)
@@ -350,25 +375,48 @@ def synthesize_with_llasa_hf_transformers(
             
             if not speech_tokens:
                 logger.error(f"LLaSA HF ({crisptts_model_id_for_log}): No speech tokens extracted!")
+                logger.debug(f"LLaSA HF: Raw decoded tokens were: {tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[:20]}")
                 return
             
             # EXACT blueprint tensor conversion and decoding
-            speech_tokens = torch_llasa_hf.tensor(speech_tokens).to(device).unsqueeze(0).unsqueeze(0)
-            gen_wav = Codec_model.decode_code(speech_tokens)
+            speech_tokens_tensor = torch_llasa_hf.tensor(speech_tokens).to(device).unsqueeze(0).unsqueeze(0)
+            gen_wav = Codec_model.decode_code(speech_tokens_tensor)
             
-            # EXACT blueprint audio trimming for cloning mode
-            if is_cloning_mode:
-                gen_wav = gen_wav[:, :, prompt_wav.shape[1] :]
-                logger.info(f"LLaSA HF: Trimmed reference audio portion")
+            # EXACT blueprint audio trimming - FIXED for multilingual
+            if is_cloning_mode and prompt_wav is not None:
+                original_shape = gen_wav.shape
+                ref_samples = prompt_wav.shape[1]
+                
+                # For multilingual models, the generation behavior is different
+                if "german" in crisptts_model_id_for_log.lower():
+                    # German model: trim reference as in blueprint
+                    if gen_wav.shape[2] > ref_samples:
+                        gen_wav = gen_wav[:, :, ref_samples:]
+                        logger.info(f"LLaSA HF: German model trimming - Original: {original_shape}, After trim: {gen_wav.shape}")
+                    else:
+                        logger.warning(f"LLaSA HF: German model - generated audio too short for trimming")
+                else:
+                    # Multilingual model: no trimming needed - it doesn't concatenate reference
+                    logger.info(f"LLaSA HF: Multilingual model - no trimming needed (doesn't include reference in output)")
+            else:
+                logger.debug(f"LLaSA HF: No audio trimming needed (zero-shot mode)")
 
         # Extract final audio
         audio_output_np = gen_wav[0, 0, :].cpu().numpy()
         
+        # Additional quality check
         if audio_output_np.size == 0:
             logger.error(f"LLaSA HF ({crisptts_model_id_for_log}): Generated empty audio!")
             return
+        
+        # Check for silence/very quiet audio which might indicate issues
+        audio_rms = numpy_llasa_hf.sqrt(numpy_llasa_hf.mean(audio_output_np**2))
+        logger.debug(f"LLaSA HF: Audio RMS level: {audio_rms:.6f}")
+        
+        if audio_rms < 0.001:
+            logger.warning(f"LLaSA HF: Generated audio has very low RMS ({audio_rms:.6f}) - may be mostly silence")
 
-        logger.info(f"LLaSA HF: Synthesis successful. Output shape: {audio_output_np.shape}")
+        logger.info(f"LLaSA HF: Synthesis successful. Output shape: {audio_output_np.shape}, Duration: {len(audio_output_np)/16000:.2f}s")
 
         # Save output - EXACT blueprint sample rate
         if output_file_str:

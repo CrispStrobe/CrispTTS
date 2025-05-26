@@ -101,19 +101,46 @@ except ImportError as e_imp_llasa:
 except Exception as e_other_llasa: 
     logger.error(f"An UNEXPECTED error during import of llasa_hybrid_handler.py: {e_other_llasa}", exc_info=True)
 
-synthesize_with_llasa_hf_transformers_func = None
+# NEW: Separate LLaSA handlers for German and Multilingual models
+synthesize_with_llasa_german_transformers_func = None
 try:
-    # Assuming you renamed the file to llasa_hf_transformers_handler.py
+    from .llasa_german_transformers_handler import synthesize_with_llasa_german_transformers
+    synthesize_with_llasa_german_transformers_func = synthesize_with_llasa_german_transformers
+    if synthesize_with_llasa_german_transformers_func:
+        logger.info("LLaSA German Transformers handler imported SUCCESSFULLY.")
+    else:
+        logger.warning("LLaSA German Transformers handler file imported, but function is None.")
+except ImportError as e_imp_llasa_german:
+    logger.warning(f"Could not import LLaSA German Transformers handler due to ImportError: {e_imp_llasa_german}", exc_info=False)
+except Exception as e_other_llasa_german:
+    logger.error(f"An UNEXPECTED error during import of LLaSA German Transformers handler: {e_other_llasa_german}", exc_info=True)
+
+# NEW: Separate LLaSA handlers for German and Multilingual models
+synthesize_with_llasa_hf_transformers = None
+try:
     from .llasa_hf_transformers_handler import synthesize_with_llasa_hf_transformers
-    synthesize_with_llasa_hf_transformers_func = synthesize_with_llasa_hf_transformers
-    if synthesize_with_llasa_hf_transformers_func:
-        logger.info("LLaSA HF Transformers (Generic) handler imported SUCCESSFULLY.")
+    synthesize_with_llasa_hf_transformers = synthesize_with_llasa_hf_transformers
+    if synthesize_with_llasa_hf_transformers:
+        logger.info("LLaSA HF Transformers handler imported SUCCESSFULLY.")
     else:
         logger.warning("LLaSA HF Transformers handler file imported, but function is None.")
-except ImportError as e_imp_llasa_hf:
-    logger.warning(f"Could not import LLaSA HF Transformers handler due to ImportError: {e_imp_llasa_hf}", exc_info=False)
-except Exception as e_other_llasa_hf:
-    logger.error(f"An UNEXPECTED error during import of LLaSA HF Transformers handler: {e_other_llasa_hf}", exc_info=True)
+except ImportError as e_imp_llasa_german:
+    logger.warning(f"Could not import LLaSA HF Transformers handler due to ImportError: {e_imp_llasa_german}", exc_info=False)
+except Exception as e_other_llasa_german:
+    logger.error(f"An UNEXPECTED error during import of LLaSA HF Transformers handler: {e_other_llasa_german}", exc_info=True)
+
+synthesize_with_llasa_multilingual_transformers_func = None
+try:
+    from .llasa_multilingual_transformers_handler import synthesize_with_llasa_multilingual_transformers
+    synthesize_with_llasa_multilingual_transformers_func = synthesize_with_llasa_multilingual_transformers
+    if synthesize_with_llasa_multilingual_transformers_func:
+        logger.info("LLaSA Multilingual Transformers handler imported SUCCESSFULLY.")
+    else:
+        logger.warning("LLaSA Multilingual Transformers handler file imported, but function is None.")
+except ImportError as e_imp_llasa_multi:
+    logger.warning(f"Could not import LLaSA Multilingual Transformers handler due to ImportError: {e_imp_llasa_multi}", exc_info=False)
+except Exception as e_other_llasa_multi:
+    logger.error(f"An UNEXPECTED error during import of LLaSA Multilingual Transformers handler: {e_other_llasa_multi}", exc_info=True)
 
 # --- Standardized Handler Keys ---
 # These keys should be used in config.py's "handler_function_key"
@@ -130,9 +157,12 @@ ALL_HANDLERS = {
     "nemo_fastpitch": synthesize_with_fastpitch_nemo, 
     "coqui_tts": synthesize_with_coqui_tts, # Generic handler for all Coqui TTS API models
     "orpheus_kartoffel": synthesize_with_orpheus_kartoffel,
-    "llasa_hf_transformers": synthesize_with_llasa_hf_transformers_func,
     "llasa_hybrid": synthesize_with_llasa_hybrid_func,
     "mlx_audio": synthesize_with_mlx_audio, # Single key for all mlx-audio handled models
+    # NEW: Separate handlers for different LLaSA architectures
+    "llasa_german_transformers": synthesize_with_llasa_german_transformers_func,
+    "llasa_multilingual_transformers": synthesize_with_llasa_multilingual_transformers_func,
+    "llasa_hf_transformers": synthesize_with_llasa_hf_transformers,
 }
 
 # Remove entries where the handler function is None (due to import failure)
