@@ -142,6 +142,22 @@ except ImportError as e_imp_llasa_multi:
 except Exception as e_other_llasa_multi:
     logger.error(f"An UNEXPECTED error during import of LLaSA Multilingual Transformers handler: {e_other_llasa_multi}", exc_info=True)
 
+# F5-TTS Handler
+synthesize_with_f5_tts = None
+try:
+    from .f5_tts_handler import synthesize_with_f5_tts
+    if synthesize_with_f5_tts:
+        logger.info("F5-TTS handler imported SUCCESSFULLY.")
+    else:
+        logger.warning("F5-TTS handler file imported, but function is None.")
+        synthesize_with_f5_tts = None
+except ImportError as e_imp_f5:
+    logger.warning(f"Could not import F5-TTS handler due to ImportError: {e_imp_f5}", exc_info=False)
+except Exception as e_other_f5:
+    logger.error(f"An UNEXPECTED error during import of f5_tts_handler.py: {e_other_f5}", exc_info=True)
+
+# Add to your ALL_HANDLERS dictionary:
+# "f5_tts": synthesize_with_f5_tts,
 # --- Standardized Handler Keys ---
 # These keys should be used in config.py's "handler_function_key"
 ALL_HANDLERS = {
@@ -159,10 +175,11 @@ ALL_HANDLERS = {
     "orpheus_kartoffel": synthesize_with_orpheus_kartoffel,
     "llasa_hybrid": synthesize_with_llasa_hybrid_func,
     "mlx_audio": synthesize_with_mlx_audio, # Single key for all mlx-audio handled models
-    # NEW: Separate handlers for different LLaSA architectures
+    # Separate handlers for different LLaSA architectures
     "llasa_german_transformers": synthesize_with_llasa_german_transformers_func,
     "llasa_multilingual_transformers": synthesize_with_llasa_multilingual_transformers_func,
     "llasa_hf_transformers": synthesize_with_llasa_hf_transformers,
+    "f5_tts": synthesize_with_f5_tts,
 }
 
 # Remove entries where the handler function is None (due to import failure)

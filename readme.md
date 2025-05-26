@@ -2,7 +2,7 @@
 
 CrispTTS is a versatile command-line Text-to-Speech (TTS) tool designed for synthesizing German speech using a variety of popular local and cloud-based TTS engines. Its modular architecture allows for easy maintenance and straightforward addition of new TTS handlers.
 
-NOTE: This is in very early experimental / work in progress state. Currently these models are BROKEN: dia, llasa per xml, coqui_css10_de_vits, maybe nemo. (It proved a bit difficult to make up a consistent python environment with all libraries at once, and nemo was therefore postponed for now.) They might be fixed later if my time allows...
+NOTE: This is in very early experimental / work in progress state. Currently these models are BROKEN: dia, f5, maybe nemo. (It proved a bit difficult to make up a consistent python environment with all libraries at once, and nemo was therefore postponed for now.) They might be fixed later if my time allows...
 
 ## Features
 
@@ -20,6 +20,7 @@ NOTE: This is in very early experimental / work in progress state. Currently the
     - Bark** (Local, optimized for Apple Silicon, requires `mlx-audio`):
       - Uses MLX-converted models (e.g., from `mlx-community/bark-small`)
       - Voice prompts are fetched from a separate repository (e.g., `suno/bark-small`) via an included monkeypatch, enabling a wide range of voices
+  - llasa
 - **Command-Line Interface**: Easy-to-use CLI for listing models, getting voice info, and performing synthesis
 - **Text Input Flexibility**: Synthesize text directly from the command line or from various file types (`.txt`, `.md`, `.html`, `.pdf`, `.epub`)
 - **Customizable Output**: Save audio to specified files (typically `.wav` or `.mp3`)

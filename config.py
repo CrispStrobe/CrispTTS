@@ -455,15 +455,72 @@ GERMAN_TTS_MODELS = {
         "sample_rate": 24000,
         "notes": "mlx-audio (Bark) with main model from mlx-community/bark-small and voices from suno/bark-small (via patch)."
     },
+    "f5_tts_multilingual": {
+        "handler_function_key": "f5_tts",
+        "model_repo_id": "lucasnewman/f5-tts-mlx",  # Use the main working MLX repo
+        "model_type": "F5-TTS",
+        "vocoder_name": "vocos",
+        "use_mlx": True,  # Enable MLX for this
+        "language": "multilingual",
+        "default_voice_id": "./german.wav",
+        "available_voices": ["./german.wav"],
+        "sample_rate": 24000, 
+        "default_steps": 32,
+        "default_cfg_strength": 2.0,
+        "requires_hf_token": False,
+        "notes": "F5-TTS MLX multilingual model. Works reliably with f5-tts-mlx library."
+    },
+
+    "f5_tts_german_working": {
+        "handler_function_key": "f5_tts",
+        "model_repo_id": "lucasnewman/f5-tts-mlx",  # Use the working repository
+        "use_mlx": True,
+        "language": "de",
+        "default_voice_id": "./german.wav",
+        "available_voices": ["./german.wav"],
+        "sample_rate": 24000,
+        "default_steps": 32,
+        "default_cfg_strength": 2.0,
+        "requires_hf_token": False,
+        "notes": "F5-TTS MLX using the main working repository. Reliable German TTS with voice cloning."
+    },
+    "f5_tts_german_marduk": {
+        "handler_function_key": "f5_tts",
+        "model_repo_id": "marduk-ra/F5-TTS-German",
+        "use_mlx": True,
+        "language": "de",
+        "default_voice_id": "./german.wav",
+        "available_voices": ["./german.wav"],
+        "sample_rate": 24000,
+        "default_steps": 64,
+        "default_cfg_strength": 2.0,
+        "requires_hf_token": False,
+        "notes": "EXPERIMENTAL: F5-TTS German by marduk-ra. May have missing model files."
+    },
+    "f5_tts_german_eamag": {
+        "handler_function_key": "f5_tts",
+        "model_repo_id": "eamag/f5-tts-mlx-german",
+        "use_mlx": True,
+        "language": "de", 
+        "default_voice_id": "./german.wav",
+        "available_voices": ["./german.wav"],
+        "sample_rate": 24000,
+        "default_steps": 32,
+        "default_cfg_strength": 2.0,
+        "requires_hf_token": False,
+        "notes": "EXPERIMENTAL: F5-TTS German MLX by eamag. May have architecture incompatibility."
+    },
     "mlx_audio_dia_clone": {
+        "crisptts_model_id": "mlx_audio_dia_clone", # Add this for better logging
         "handler_function_key": "mlx_audio",
-        "mlx_model_path": MLX_AUDIO_DIA_REPO_ID, # Should be "mlx-community/Dia-1.6B-4bit"
-        "default_voice_id": DEFAULT_GERMAN_REF_WAV, # e.g., "./german.wav"
+        "mlx_model_path": MLX_AUDIO_DIA_REPO_ID,
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
-        "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION, # Use the same Whisper as LLaSA or a specific one
-        "language_for_whisper": "de", # Hint for Whisper when transcribing the default_voice_id
-        "sample_rate": 44100, # Correct for Dia
-        "notes": "mlx-audio (Dia model) for voice cloning. CrispTTS handles ref_audio transcription. Ref WAV & ref_text needed by Dia. Uses Apple Silicon MLX."
+        "whisper_model_id_for_transcription": LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION,
+        "language_for_whisper": "de",
+        "sample_rate": 44100,
+        # "ref_audio_max_duration_ms": 10000, # Optional: to enforce shorter ref for Dia
+        "notes": "mlx-audio (Dia model) for voice cloning..."
     },
     "mlx_audio_orpheus_llama": { # For the Orpheus-like Llama in mlx-audio
         "handler_function_key": "mlx_audio",
