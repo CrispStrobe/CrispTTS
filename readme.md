@@ -21,6 +21,7 @@ NOTE: This is in very early experimental / work in progress state. Currently the
       - Uses MLX-converted models (e.g., from `mlx-community/bark-small`)
       - Voice prompts are fetched from a separate repository (e.g., `suno/bark-small`) via an included monkeypatch, enabling a wide range of voices
   - llasa
+  - F5 (some models, per f5-tts-mlx)
 - **Command-Line Interface**: Easy-to-use CLI for listing models, getting voice info, and performing synthesis
 - **Text Input Flexibility**: Synthesize text directly from the command line or from various file types (`.txt`, `.md`, `.html`, `.pdf`, `.epub`)
 - **Customizable Output**: Save audio to specified files (typically `.wav` or `.mp3`)
