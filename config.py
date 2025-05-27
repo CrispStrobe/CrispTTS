@@ -455,12 +455,11 @@ GERMAN_TTS_MODELS = {
         "sample_rate": 24000,
         "notes": "mlx-audio (Bark) with main model from mlx-community/bark-small and voices from suno/bark-small (via patch)."
     },
+    # --- F5-TTS entries, experimentally including non-standard repos ---
     "f5_tts_multilingual": {
         "handler_function_key": "f5_tts",
-        "model_repo_id": "lucasnewman/f5-tts-mlx",  # Use the main working MLX repo
-        "model_type": "F5-TTS",
-        "vocoder_name": "vocos",
-        "use_mlx": True,  # Enable MLX for this
+        "model_repo_id": "cstr/aihpi_f5_german_mlx_q4",  # lucasnewman/f5-tts-mlx # This is a working MLX model
+        "use_mlx": True,  # This model is compatible with MLX
         "language": "multilingual",
         "default_voice_id": "./german.wav",
         "available_voices": ["./german.wav"],
@@ -470,10 +469,9 @@ GERMAN_TTS_MODELS = {
         "requires_hf_token": False,
         "notes": "F5-TTS MLX multilingual model. Works reliably with f5-tts-mlx library."
     },
-
-    "f5_tts_german_working": {
+    "f5_tts_german": {
         "handler_function_key": "f5_tts",
-        "model_repo_id": "lucasnewman/f5-tts-mlx",  # Use the working repository
+        "model_repo_id": "cstr/aihpi_f5_german_mlx_q4",  # lucasnewman/f5-tts-mlx # Use the working repository
         "use_mlx": True,
         "language": "de",
         "default_voice_id": "./german.wav",
@@ -484,23 +482,40 @@ GERMAN_TTS_MODELS = {
         "requires_hf_token": False,
         "notes": "F5-TTS MLX using the main working repository. Reliable German TTS with voice cloning."
     },
+    "f5_tts_german_hpi": {
+        "handler_function_key": "f5_tts",
+        "model_repo_id": "aihpi/F5-TTS-German",
+        "use_mlx": False,  # Force PyTorch backend
+        "language": "de",
+        # Specify the exact checkpoint file within the repo's subdirectory
+        "checkpoint_filename": "F5TTS_Base/model_420000.safetensors", 
+        "default_voice_id": "./german.wav",
+        "available_voices": ["./german.wav"],
+        "sample_rate": 24000,
+        "default_steps": 32,
+        "default_cfg_strength": 2.0,
+        "requires_hf_token": False,
+        "notes": "F5-TTS German by HPI. Uses PyTorch backend with a specific checkpoint file."
+    },
     "f5_tts_german_marduk": {
         "handler_function_key": "f5_tts",
         "model_repo_id": "marduk-ra/F5-TTS-German",
-        "use_mlx": True,
+        "use_mlx": False, # Force PyTorch backend, as MLX fails
         "language": "de",
+        # Specify the exact checkpoint file at the repo root
+        "checkpoint_filename": "f5_tts_german_1010000.safetensors",
         "default_voice_id": "./german.wav",
         "available_voices": ["./german.wav"],
         "sample_rate": 24000,
         "default_steps": 64,
         "default_cfg_strength": 2.0,
         "requires_hf_token": False,
-        "notes": "EXPERIMENTAL: F5-TTS German by marduk-ra. May have missing model files."
+        "notes": "EXPERIMENTAL: F5-TTS German by marduk-ra. Uses PyTorch backend with a specific checkpoint file."
     },
     "f5_tts_german_eamag": {
         "handler_function_key": "f5_tts",
         "model_repo_id": "eamag/f5-tts-mlx-german",
-        "use_mlx": True,
+        "use_mlx": True, # Let this attempt MLX first, so the fallback can be triggered
         "language": "de", 
         "default_voice_id": "./german.wav",
         "available_voices": ["./german.wav"],
@@ -508,8 +523,18 @@ GERMAN_TTS_MODELS = {
         "default_steps": 32,
         "default_cfg_strength": 2.0,
         "requires_hf_token": False,
-        "notes": "EXPERIMENTAL: F5-TTS German MLX by eamag. May have architecture incompatibility."
+        "notes": "EXPERIMENTAL: F5-TTS German MLX by eamag. Known to have architecture incompatibility. Will attempt MLX and should fall back to PyTorch."
     },
+    # --- mlx audio endpoint test ---
+    "mlx_audio_orpheus_llama": { # For the Orpheus-Llama in mlx-audio
+        "handler_function_key": "mlx_audio",
+        "mlx_model_path": MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID,
+        "default_voice_id": "zac", # Orpheus-style voice name
+        "available_voices": ORPHEUS_AVAILABLE_VOICES_BASE + ORPHEUS_GERMAN_VOICES,
+        "sample_rate": ORPHEUS_SAMPLE_RATE,
+        "notes": "mlx-audio (Orpheus-Llama). Uses string voice names. Uses Apple Silicon MLX."
+    },
+    # --- experimental (not yet working) models ---
     "mlx_audio_dia_clone": {
         "crisptts_model_id": "mlx_audio_dia_clone", # Add this for better logging
         "handler_function_key": "mlx_audio",
@@ -522,12 +547,5 @@ GERMAN_TTS_MODELS = {
         # "ref_audio_max_duration_ms": 10000, # Optional: to enforce shorter ref for Dia
         "notes": "mlx-audio (Dia model) for voice cloning..."
     },
-    "mlx_audio_orpheus_llama": { # For the Orpheus-like Llama in mlx-audio
-        "handler_function_key": "mlx_audio",
-        "mlx_model_path": MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID,
-        "default_voice_id": "zac", # Orpheus-style voice name
-        "available_voices": ORPHEUS_AVAILABLE_VOICES_BASE + ORPHEUS_GERMAN_VOICES,
-        "sample_rate": ORPHEUS_SAMPLE_RATE,
-        "notes": "mlx-audio (Orpheus-like Llama). Uses string voice names. Uses Apple Silicon MLX."
-    }
+    
 }
