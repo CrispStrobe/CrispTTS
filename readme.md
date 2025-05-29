@@ -8,6 +8,7 @@ NOTE: This is in very early experimental / work in progress state. Currently the
 
 - **Multiple TTS Engine Support**:
   - Microsoft Edge TTS (Cloud-based, requires `edge-tts`)
+  - Coqui TTS: Generic handler supporting models like XTTS v2, VITS, and more.
   - Piper (Local, ONNX-based, requires `piper-tts`)
   - Orpheus 
     - GGUF (Local, requires `llama-cpp-python`)
@@ -22,6 +23,8 @@ NOTE: This is in very early experimental / work in progress state. Currently the
       - Voice prompts are fetched from a separate repository (e.g., `suno/bark-small`) via an included monkeypatch, enabling a wide range of voices
   - llasa
   - F5 (some models, per f5-tts-mlx)
+  - kokoro-onnx (lightweight, local ONNX-based engine with multiple voices, no German)
+  - TTS.cpp (local C++ engine using GGUF models, e.g., Parler, Dia, Kokoro)
 - **Command-Line Interface**: Easy-to-use CLI for listing models, getting voice info, and performing synthesis
 - **Text Input Flexibility**: Synthesize text directly from the command line or from various file types (`.txt`, `.md`, `.html`, `.pdf`, `.epub`)
 - **Customizable Output**: Save audio to specified files (typically `.wav` or `.mp3`)
@@ -58,7 +61,9 @@ crisptts_project/
 │   ├── nemo_handler.py         # NeMo FastPitch handler
 │   ├── coqui_tts_handler.py    # Coqui TTS handler (for XTTS, VITS etc.)
 │   ├── kartoffel_handler.py    # Orpheus "Kartoffel" Transformers handler
+│   ├── kokoro_onnx_handler.py  # Kokoro (multilingual but no German) ONNX handler
 │   ├── llasa_hybrid_handler.py # LLaSA Hybrid handler
+│   ├── tts_cpp_handler.py      # TTS.cpp handler supporting GGUF models
 │   └── mlx_audio_handler.py    # Handler for mlx-audio library (e.g., Bark)
 ├── requirements.txt            # Python package dependencies
 └── README.md                   # This documentation file
@@ -70,6 +75,7 @@ crisptts_project/
 
 - Python and `pip` for installing packages
 - For `mlx-audio` based models: Apple Silicon Mac is required for GPU acceleration
+- For `TTS.cpp` a C++ compiler and CMake are required to build the engine
 
 ### Installation Steps
 
@@ -93,7 +99,26 @@ crisptts_project/
    > **Note**: Some libraries like PyTorch, NeMo, LlamaCPP, and `mlx-audio` can have specific installation needs depending on your OS and hardware (e.g., CUDA for Nvidia GPUs, Metal for Apple Silicon). Please refer to their official documentation if you encounter issues.
    > Ensure you have `ffmpeg` installed and available in your system's PATH if you encounter issues with audio file format conversions or direct playback (some underlying libraries might need it).
 
-4. **Environment Variables** (Optional but Recommended):
+4. **Install and Build Engine-Specific Dependencies** (required for certain handlers):
+
+    For TTS.cpp: Clone and build the TTS.cpp project separately.
+    ```bash
+    git clone https://github.com/mmwillet/TTS.cpp.git
+    cd TTS.cpp
+    cmake -B build
+    cmake --build build --config Release
+    cd ..
+    ```
+
+    # Update the `tts_cpp_executable_path` in config.py to point to ./TTS.cpp/build/cli
+    For kokoro-onnx: Install the Python package and download model files.
+    ```bash
+    pip install kokoro-onnx
+    ```
+    # Download the .onnx model and voices.bin from the kokoro-onnx GitHub releases page.
+    # Update the paths in config.py to point to your downloaded files.
+
+5. **Environment Variables** (Optional but Recommended):
    - **`HF_TOKEN`**: If you need to download models from gated or private Hugging Face repositories, set this environment variable with your Hugging Face API token:
      ```bash
      export HF_TOKEN="your_huggingface_token_here"

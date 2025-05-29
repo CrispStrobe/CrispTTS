@@ -477,6 +477,18 @@ def _prepare_oute_speaker_ref(speaker_ref_path_str: str, model_id_for_log: str =
             
     return speaker_ref_path_to_use, temp_trimmed_audio_path_to_delete
 
+def get_huggingface_cache_dir() -> Path:
+    """
+    Determines the Hugging Face Hub cache directory.
+    Prefers HF_HOME, then XDG_CACHE_HOME, then default ~/.cache/huggingface.
+    """
+    if os.getenv("HF_HOME"):
+        return Path(os.environ["HF_HOME"])
+    elif os.getenv("XDG_CACHE_HOME"):
+        return Path(os.environ["XDG_CACHE_HOME"]) / "huggingface"
+    else:
+        return Path.home() / ".cache" / "huggingface"
+
 # --- Informational Functions (to be called from main.py) ---
 def list_available_models(models_config_dict):
     """Prints available TTS models from the provided configuration."""

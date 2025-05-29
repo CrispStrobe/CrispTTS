@@ -98,6 +98,10 @@ KARTORPHEUS_AUDIO_START_MARKER_TOKEN_ID = 128257
 KARTORPHEUS_AUDIO_END_MARKER_TOKEN_ID = 128258
 KARTORPHEUS_AUDIO_TOKEN_OFFSET = 128266
 
+# --- Zonos (Zyphra) Specific Constants ---
+ZONOS_TRANSFORMER_MODEL_ID = "Zyphra/Zonos-v0.1-transformer"
+ZONOS_HYBRID_MODEL_ID = "Zyphra/Zonos-v0.1-hybrid"
+
 # --- LLaSA Specific Configs ---
 LLASA_MLX_LLM_MODEL_ID = "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
 
@@ -127,6 +131,37 @@ MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID = "mlx-community/orpheus-3b-0.1-ft-4bit" # mlx-a
 # This was for your OuteTTS HF ONNX handler, separate from mlx-audio OuteTTS
 OUTETTS_HF_REPO_ID = "OuteAI/Llama-OuteTTS-1.0-1B-ONNX"
 
+# --- TTS.cpp Specific Constants ---
+# Assumes TTS.cpp was cloned and built inside the CrispTTS project directory.
+# Adjust this path to wherever your TTS.cpp 'cli' executable is located.
+TTS_CPP_EXECUTABLE_PATH = "./TTS.cpp/build/cli" 
+
+# Example paths to GGUF models. User must download these separately.
+# See TTS.cpp docs for links to GGUF files for each model.
+TTS_CPP_KOKORO_GGUF_PATH = "./models/tts_cpp/kokoro-82m-f32.gguf"
+TTS_CPP_DIA_GGUF_PATH = "./models/tts_cpp/dia-256-f32.gguf"
+
+# Kokoro has specific voices
+KOKORO_VOICES = [
+    'af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jessica', 'af_kore', 'af_nicole',
+    'af_nova', 'af_river', 'af_sarah', 'af_sky', 'am_adam', 'am_echo', 'am_eric', 'am_fenrir',
+    'am_liam', 'am_michael', 'am_onyx', 'am_puck', 'am_santa', 'bf_alice', 'bf_emma',
+    'bf_isabella', 'bf_lily', 'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis', 'ef_dora',
+    'em_alex', 'em_santa', 'ff_siwis', 'hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi', 'if_sara',
+    'im_nicola', 'jf_alpha', 'jf_gongitsune', 'jf_nezumi', 'jf_tebukuro', 'jm_kumo', 'pf_dora',
+    'pm_alex', 'pm_santa', 'zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi'
+]
+KOKORO_DEFAULT_VOICE = "bf_emma" # British English Female
+
+# --- Kokoro-ONNX Specific Constants ---
+# NOTE: User must manually download these files from the kokoro-onnx GitHub releases page.
+# These paths are placeholders and must be updated.
+KOKORO_ONNX_MODEL_PATH = "./models/kokoro_onnx/kokoro-v0_19.int8.onnx"
+KOKORO_ONNX_VOICES_PATH = "./models/kokoro_onnx/voices-v1.0.bin"
+
+KOKORO_ONNX_VOICES = ["af_sarah", "af_alloy", "bf_emma", "bm_daniel", "jf_gongitsune"] # Example voices
+KOKORO_ONNX_DEFAULT_VOICE = "af_sarah"
+
 # --- OuteTTS Internal Data Structures (Fallback if not directly queryable from library) ---
 # (This section from your config.py is kept as is)
 OUTETTS_INTERNAL_MODEL_INFO_DATA = {}
@@ -151,7 +186,17 @@ OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA = {
 
 # --- Main Model Configuration Dictionary ---
 GERMAN_TTS_MODELS = {
-    # === Your Existing Model Configurations (ensure 'handler_function_key' is present and correct) ===
+    "zonos_transformer_de": {
+        "handler_function_key": "zonos",
+        "model_repo_id": ZONOS_TRANSFORMER_MODEL_ID,
+        # reference audio file for the voice
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
+        "language": "de", # espeak language code for German
+        "sample_rate": 44100, # Zonos native sample rate
+        "requires_hf_token": False,
+        "notes": "Zyphra Zonos v0.1 (Transformer). High-quality, requires PyTorch & espeak-ng. Voice cloning via reference WAV."
+    },
     "edge": {
         "handler_function_key": "edge",
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
@@ -261,6 +306,42 @@ GERMAN_TTS_MODELS = {
         "default_speaker_id": 0,
         "available_voices": [str(i) for i in range(10)],
         "notes": "Local FastPitch (German) via NeMo. Output: WAV."
+    },
+    # --- Kokoro-ONNX Entry ---
+    "kokoro_onnx": {
+        "crisptts_model_id": "kokoro_onnx",
+        "handler_function_key": "kokoro_onnx",
+        "onnx_model_path": KOKORO_ONNX_MODEL_PATH,
+        "voices_bin_path": KOKORO_ONNX_VOICES_PATH,
+        "default_voice_id": KOKORO_ONNX_DEFAULT_VOICE,
+        "available_voices": KOKORO_ONNX_VOICES,
+        "language": "en-us",  # Language must be specified for kokoro-onnx
+        "default_speed": 1.0,
+        "sample_rate": 24000, # This will be overwritten by the sample_rate from the library
+        "notes": "kokoro-onnx. Requires manual download of ONNX model and voices.bin file."
+    },
+    # --- TTS.cpp Model Entries ---
+    "tts_cpp_kokoro": {
+        "crisptts_model_id": "tts_cpp_kokoro",
+        "handler_function_key": "tts_cpp",
+        "tts_cpp_executable_path": TTS_CPP_EXECUTABLE_PATH,
+        "gguf_model_path": TTS_CPP_KOKORO_GGUF_PATH,
+        "default_voice_id": KOKORO_DEFAULT_VOICE,
+        "available_voices": KOKORO_VOICES,
+        "use_metal": True, # Metal acceleration is supported for Kokoro
+        "sample_rate": 24000, # Kokoro sample rate
+        "notes": "TTS.cpp (Kokoro). Uses local GGUF model. Requires building TTS.cpp locally."
+    },
+    "tts_cpp_dia": {
+        "crisptts_model_id": "tts_cpp_dia",
+        "handler_function_key": "tts_cpp",
+        "tts_cpp_executable_path": TTS_CPP_EXECUTABLE_PATH,
+        "gguf_model_path": TTS_CPP_DIA_GGUF_PATH,
+        "default_voice_id": None, # Dia does not use named voices
+        "available_voices": [],
+        "use_metal": True, # Metal acceleration is supported for Dia
+        "sample_rate": 44100, # Dia sample rate
+        "notes": "TTS.cpp (Dia). Uses local GGUF. Recommended params: '{\"temperature\": 1.3, \"topk\": 35}'."
     },
     "coqui_tts_thorsten_ddc": {
         "handler_function_key": "coqui_tts", # Standardized Coqui key

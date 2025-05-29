@@ -66,6 +66,13 @@ except ImportError as e:
 except Exception as e_mlx_other:
     logger.error(f"An unexpected error occurred during import of mlx_audio_handler.py: {e_mlx_other}", exc_info=True)
 
+synthesize_with_zonos = None
+try:
+    from .zonos_handler import synthesize_with_zonos
+    logger.info("Zonos handler imported successfully.")
+except ImportError as e:
+    logger.warning(f"Could not import Zonos handler (zonos_handler.py): {e}. This handler will be unavailable.")
+
 synthesize_with_coqui_tts = None # General handler for all Coqui TTS models
 try:
     from .coqui_tts_handler import synthesize_with_coqui_tts
@@ -156,6 +163,23 @@ except ImportError as e_imp_f5:
 except Exception as e_other_f5:
     logger.error(f"An UNEXPECTED error during import of f5_tts_handler.py: {e_other_f5}", exc_info=True)
 
+synthesize_with_kokoro_onnx = None
+try:
+    from .kokoro_onnx_handler import synthesize_with_kokoro_onnx
+    logger.info("Kokoro ONNX handler imported successfully.")
+except ImportError as e:
+    logger.warning(f"Could not import Kokoro ONNX handler (kokoro_onnx_handler.py): {e}. This handler will be unavailable.")
+
+# tts.cpp handler
+synthesize_with_tts_cpp = None
+try:
+    from .tts_cpp_handler import synthesize_with_tts_cpp
+    logger.info("TTS.cpp handler imported successfully.")
+except ImportError as e:
+    logger.warning(f"Could not import TTS.cpp handler (tts_cpp_handler.py): {e}. This handler will be unavailable.")
+except Exception as e_tts_cpp_other:
+    logger.error(f"An unexpected error occurred during import of tts_cpp_handler.py: {e_tts_cpp_other}", exc_info=True)
+
 # Add to your ALL_HANDLERS dictionary:
 # "f5_tts": synthesize_with_f5_tts,
 # --- Standardized Handler Keys ---
@@ -180,6 +204,9 @@ ALL_HANDLERS = {
     "llasa_multilingual_transformers": synthesize_with_llasa_multilingual_transformers_func,
     "llasa_hf_transformers": synthesize_with_llasa_hf_transformers,
     "f5_tts": synthesize_with_f5_tts,
+    "tts_cpp": synthesize_with_tts_cpp,
+    "kokoro_onnx": synthesize_with_kokoro_onnx,
+    "zonos": synthesize_with_zonos,
 }
 
 # Remove entries where the handler function is None (due to import failure)
