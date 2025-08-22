@@ -132,9 +132,14 @@ MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID = "mlx-community/orpheus-3b-0.1-ft-4bit" # mlx-a
 OUTETTS_HF_REPO_ID = "OuteAI/Llama-OuteTTS-1.0-1B-ONNX"
 
 # --- TTS.cpp Specific Constants ---
-# Assumes TTS.cpp was cloned and built inside the CrispTTS project directory.
+# Assumes TTS.cpp was cloned and built inside the specified project directory. This is done per:
+# git clone https://github.com/mmwillet/TTS.cpp
+# cd TTS.cpp
+# git clone -b support-for-tts https://github.com/mmwillet/ggml.git
+# cmake -B build          
+# cmake --build build --config Release
 # Adjust this path to wherever your TTS.cpp 'cli' executable is located.
-TTS_CPP_EXECUTABLE_PATH = "./TTS.cpp/build/cli" 
+TTS_CPP_EXECUTABLE_PATH = "../TTS.cpp/build/cli" 
 
 # Example paths to GGUF models. User must download these separately.
 # See TTS.cpp docs for links to GGUF files for each model.
