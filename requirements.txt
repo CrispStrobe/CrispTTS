@@ -81,6 +81,10 @@ mlx-audio
 # Update: The `snac` library by GANTSheva is available on PyPI.
 snac
 
+# chatterbox / kartoffelbox:
+chatterbox-tts
+safetensors
+
 # --- Optional but Recommended for Development ---
 # pylint
 # mypy

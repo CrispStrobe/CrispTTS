@@ -180,6 +180,20 @@ except ImportError as e:
 except Exception as e_tts_cpp_other:
     logger.error(f"An unexpected error occurred during import of tts_cpp_handler.py: {e_tts_cpp_other}", exc_info=True)
 
+# Chatterbox Handler (for Kartoffelbox models)
+synthesize_with_chatterbox = None
+try:
+    from .chatterbox_handler import synthesize_with_chatterbox
+    if synthesize_with_chatterbox:
+        logger.info("Chatterbox handler imported SUCCESSFULLY.")
+    else:
+        logger.warning("Chatterbox handler file imported, but function is None.")
+        synthesize_with_chatterbox = None
+except ImportError as e_imp_chatterbox:
+    logger.warning(f"Could not import Chatterbox handler due to ImportError: {e_imp_chatterbox}", exc_info=False)
+except Exception as e_other_chatterbox:
+    logger.error(f"An UNEXPECTED error during import of chatterbox_handler.py: {e_other_chatterbox}", exc_info=True)
+
 # Add to your ALL_HANDLERS dictionary:
 # "f5_tts": synthesize_with_f5_tts,
 # --- Standardized Handler Keys ---
@@ -207,6 +221,7 @@ ALL_HANDLERS = {
     "tts_cpp": synthesize_with_tts_cpp,
     "kokoro_onnx": synthesize_with_kokoro_onnx,
     "zonos": synthesize_with_zonos,
+    "chatterbox": synthesize_with_chatterbox,
 }
 
 # Remove entries where the handler function is None (due to import failure)

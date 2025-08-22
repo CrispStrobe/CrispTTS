@@ -541,6 +541,31 @@ GERMAN_TTS_MODELS = {
         "sample_rate": 24000,
         "notes": "mlx-audio (Bark) with main model from mlx-community/bark-small and voices from suno/bark-small (via patch)."
     },
+    # --- Kartoffelbox (Chatterbox-based) Models ---
+    "kartoffelbox_clone": {
+        "crisptts_model_id": "kartoffelbox_clone",
+        "handler_function_key": "chatterbox",
+        "model_repo_id": "SebastianBodza/Kartoffelbox-v0.1",
+        "t3_checkpoint_file": "t3_cfg.safetensors",
+        "default_voice_id": DEFAULT_GERMAN_REF_WAV,
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
+        "language": "de",
+        "sample_rate": 22050,  # Default Chatterbox sample rate
+        "requires_hf_token": True,  # Model is gated
+        "notes": "Kartoffelbox v0.1 (Chatterbox-based). German TTS with emotion control and voice cloning. Gated model."
+    },
+    "kartoffelbox_zeroshot": {
+        "crisptts_model_id": "kartoffelbox_zeroshot", 
+        "handler_function_key": "chatterbox",
+        "model_repo_id": "SebastianBodza/Kartoffelbox-v0.1",
+        "t3_checkpoint_file": "t3_cfg.safetensors",
+        "default_voice_id": None,  # Zero-shot mode
+        "available_voices": [],
+        "language": "de",
+        "sample_rate": 22050,
+        "requires_hf_token": True,
+        "notes": "Kartoffelbox v0.1 (Chatterbox-based). Zero-shot German TTS with emotion control. Gated model."
+    },
     # --- F5-TTS entries, experimentally including non-standard repos ---
     "f5_tts_multilingual": {
         "handler_function_key": "f5_tts",

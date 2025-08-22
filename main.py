@@ -495,26 +495,44 @@ def run_synthesis(args):
             logger.error(f"For {args.model_id}, Ollama model name not set. Use --ollama-model-name or set in config."); return
     
     effective_voice_id = args.german_voice_id
-    if not effective_voice_id: 
+    
+    # NEW: Check for zero-shot model configuration (same logic as in test_all_models)
+    is_zero_shot_model = (
+        current_config_for_handler.get('default_voice_id') is None and
+        not current_config_for_handler.get('available_voices')
+    )
+    # Add specific model IDs that are zero-shot
+    if args.model_id in ["llasa_hybrid_de_zeroshot", "llasa_german_transformers_zeroshot", 
+                         "llasa_multilingual_hf_zeroshot", "kartoffelbox_zeroshot"]:
+        is_zero_shot_model = True
+    
+    if not effective_voice_id and not is_zero_shot_model: 
         default_v = current_config_for_handler.get('default_voice_id') or \
                     current_config_for_handler.get('default_model_path_in_repo') or \
                     str(current_config_for_handler.get('default_speaker_embedding_index', '')) or \
                     str(current_config_for_handler.get('default_speaker_id', ''))
         effective_voice_id = default_v if (isinstance(default_v, Path) or (isinstance(default_v, str) and default_v.strip())) else None
-    if not effective_voice_id and not (args.model_id.startswith("coqui_tts") and current_config_for_handler.get("default_coqui_speaker") is None):
+    
+    # Updated condition to allow None for zero-shot models
+    if not effective_voice_id and not is_zero_shot_model and not (args.model_id.startswith("coqui_tts") and current_config_for_handler.get("default_coqui_speaker") is None):
         logger.error(f"No voice ID specified and no default could be determined for model {args.model_id}."); return
+
+    # For zero-shot models, effective_voice_id can be None
+    if is_zero_shot_model and not effective_voice_id:
+        logger.info(f"Zero-shot model '{args.model_id}': proceeding without voice ID (zero-shot synthesis)")
+        effective_voice_id = None
 
     handler_key = current_config_for_handler.get("handler_function_key", args.model_id)
     handler_func = current_all_handlers.get(handler_key)
 
     if handler_func:
         try:
-            handler_func(current_config_for_handler, text_to_synthesize, str(effective_voice_id) if effective_voice_id is not None else None, args.model_params, args.output_file, args.play_direct)
+            handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params, args.output_file, args.play_direct)
         except Exception as e_synth:
             logger.error(f"Synthesis failed for model {args.model_id}: {e_synth}", exc_info=True)
     else:
         logger.error(f"No synthesis handler function found for model ID: {args.model_id} (handler key: {handler_key})")
-
+        
 def main_cli_entrypoint():
     parser = argparse.ArgumentParser(description="CrispTTS: Modular German Text-to-Speech Synthesizer", formatter_class=argparse.RawTextHelpFormatter)
     action_group = parser.add_argument_group(title="Primary Actions")
