@@ -1,105 +1,62 @@
-# requirements.txt
+# CrispTTS Requirements - Tested Working Configuration
+# Based on successful Kartoffelbox synthesis (August 2025)
 
-# --- Core Utilities ---
-numpy
-requests # For API-based handlers (Orpheus LM Studio/Ollama)
+# Core Dependencies
+numpy>=1.26.0,<2.0.0  # Compromise: works with most packages, avoids 2.x conflicts
+requests>=2.25.0
 
-# --- Text Extraction (from utils.py) ---
-# Optional if you don't need to extract text from all these file types
-beautifulsoup4 >=4.9.0   # For HTML and Markdown parsing
-Markdown >=3.0           # For .md file processing
-# Markdown-WikiLinks # This is often an extension, e.g. pip install markdown-wikilinks
-pypdfium2                # For .pdf file processing
-EbookLib >=0.17          # For .epub file processing
+# PyTorch Ecosystem - Stable versions that work together
+torch>=2.6.0,<2.8.0
+torchaudio>=2.6.0,<2.8.0
+# Note: torchvision intentionally omitted to avoid conflicts
 
-# --- Audio Processing & Playback (from utils.py) ---
-# Optional if you only save files and don't use direct playback or some conversions
-pydub >=0.25             # For audio manipulation and playback
-sounddevice >=0.4        # For raw PCM audio playback (used by some handlers)
-soundfile >=0.10         # For reading/writing WAV files (used by SpeechT5, NeMo, and some utils)
+# Transformers & HuggingFace
+transformers>=4.46.0,<4.52.0  # Compromise version
+tokenizers>=0.20.0,<0.22.0
+huggingface_hub>=0.20.0
+safetensors>=0.4.0
 
-# --- TTS Engine Specific Libraries ---
+# Audio Processing
+soundfile>=0.12.0
+pydub>=0.25.0
+librosa>=0.10.0,<0.11.0  # Avoid 0.11.0 which conflicts with chatterbox
 
-# EdgeTTS (for handlers/edge_handler.py)
-edge-tts >=6.0
+# Text Processing
+beautifulsoup4>=4.9.0
+Markdown>=3.0
+pypdfium2
+EbookLib>=0.17
 
-# Piper TTS (for handlers/piper_handler.py)
-# The exact package might be 'piper-tts' or specific components.
-# 'piper-voice' is often mentioned, but 'piper-tts' seems to be the installable package.
-# better manually piper-tts --nodeps
-# because piper-phonemize is not available on all platforms but piper-phonemize-cross is
+# TTS Engines - Core Working Set
+edge-tts>=6.0
+chatterbox-tts==0.1.2
+diffusers>=0.29.0
+resemble-perth>=1.0.0
 
-# LlamaCPP (for handlers/orpheus_gguf_handler.py and OuteTTS LlamaCPP backend)
-# Installation might require CMAKE_ARGS for specific hardware acceleration (e.g., Metal on Mac)
-# Refer to llama-cpp-python documentation for platform-specific installation.
-llama-cpp-python
+# MLX for Apple Silicon (conditional install recommended)
+mlx>=0.20.0; platform_machine == "arm64"
+mlx-audio>=0.2.0; platform_machine == "arm64"
 
-# PyTorch (Core dependency for OuteTTS, SpeechT5, NeMo, SNAC in decoder.py, MLX-Audio often used with it)
-# Install a version compatible with your hardware (CPU, CUDA, MPS)
-# e.g., torch torchvision torchaudio
-torch >=1.13 # A reasonably modern version
-torchaudio >=0.13 # Usually installed with torch or separately
+# OuteTTS (may have conflicts but core CrispTTS works without it)
+# outetts>=0.4.0  # Comment out if conflicts arise
 
-# OuteTTS (for handlers/outetts_handler.py)
-# May have protobuf version sensitivities.
-outetts
-
-# Hugging Face Libraries (Used by many handlers for model downloads, tokenizers, etc.)
-huggingface_hub >=0.14
-transformers >=4.25.0
-datasets >=2.0.0
-sentencepiece # Often a dependency for transformers tokenizers
-
-# NeMo (for handlers/nemo_handler.py)
-# nemo_toolkit[all] is large; nemo_toolkit[tts] might be more focused.
-# Check official NeMo installation instructions for best results.
-nemo_toolkit[tts] >=1.18.0
-# Ensure 'Cython' and 'wget' are installed if building NeMo from source or some dependencies need it.
-
-# MLX Audio (for handlers/mlx_audio_handler.py)
-# This will install 'mlx' as a dependency. Optimized for Apple Silicon.
-mlx-audio
-
-# SNAC (for your custom decoder.py)
-# This is from "hubertsiuzdak/snac_24khz".
-# If it's a pip installable package, add its name here, e.g., 'snac-codec' or similar.
-# If it's installed directly from a repo, this line is a placeholder.
-# Assuming a pip package name 'snac', replace if different.
-# From a quick search, it seems 'snac-codec' might be the pip package for a similar vocoder.
-# If 'from snac import SNAC' works after pip installing 'snac-codec', use that.
-# Otherwise, you might need to install it from its source if it's not on PyPI.
-# For now, I'll put a placeholder:
-# snac # Placeholder - verify actual package name for pip install if available
-# If "snac" is not on pip, you'll need to handle its installation manually (e.g. git clone and install)
-# Based on common practice with such research projects, it might be:
-# pip install encodec # (EnCodec is related, SNAC builds upon similar ideas, but SNAC itself might be direct source install)
-# For the specific "hubertsiuzdak/snac_24khz", it uses EnCodec's vocoder part.
-# The 'snac' library from the `decoder.py` implies a package.
-# A quick search suggests `pip install snac-codec` might be for a related vocoder.
-# The actual SNAC from the paper might require cloning its repo.
-# For now, assuming the user can install `snac` that makes `from snac import SNAC` work.
-# Update: The `snac` library by GANTSheva is available on PyPI.
+# SNAC for audio decoding
 snac
 
-# chatterbox / kartoffelbox:
-chatterbox-tts
-safetensors
+# Optional TTS engines (install selectively based on needs)
+# llama-cpp-python  # For GGUF models, install with specific CMAKE_ARGS
+# nemo_toolkit[tts]>=1.18.0  # Large install, only if using NeMo
+# TTS>=0.20.0  # Coqui TTS, has pandas version conflicts
 
-# --- Optional but Recommended for Development ---
-# pylint
-# mypy
-# black
-# isort
+# Development (optional)
+scipy>=1.6.0
+scikit-learn>=1.0.0
+datasets>=2.0.0
 
-# --- Notes ---
-# Protobuf: Some libraries (like outetts, tensorboard which is a dep of NeMo) can be sensitive
-# to the version of the 'protobuf' library. If you encounter 'AttributeError' related to
-# 'MessageFactory' or similar, you might need to adjust your protobuf version, e.g.:
-# pip uninstall protobuf -y
-# pip install protobuf==3.20.3 # (or another compatible 3.x version, or latest 4.x if libraries support it)
-# Then reinstall any affected packages like tensorboard or outetts.
-
-# Espeak-ng: For Coqui TTS and potentially other phonemizers on Linux, you might need to install
-# espeak-ng system-wide:
-# sudo apt-get update && sudo apt-get install espeak-ng
-# On macOS: brew install espeak
+# Notes:
+# 1. This configuration prioritizes TTS functionality over compatibility with
+#    research packages (vllm, kraken, etc.) that have stricter version requirements
+# 2. Some packages like f5-tts, xcodec2 may not work due to numpy/torch conflicts
+# 3. For Apple Silicon, MLX packages provide better performance than PyTorch alternatives
+# 4. Install order matters: install PyTorch first, then audio packages, then TTS engines
+# 5. If you need packages commented out, create separate environments for them
