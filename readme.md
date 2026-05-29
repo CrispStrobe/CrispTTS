@@ -278,6 +278,33 @@ def convert_to_audio(multiframe_tokens: list[int], total_token_count: int) -> by
 
 If this file or function is missing, Orpheus models will not produce audible output, and a placeholder will be used.
 
+## Voice & model licensing
+
+CrispTTS is a synthesis **tool** — it does **not** bundle or redistribute
+any voice/model weights. Each model is downloaded at runtime from its
+upstream repository into a local cache (Piper voices from
+[`rhasspy/piper-voices`](https://huggingface.co/rhasspy/piper-voices),
+Coqui models via the `TTS` library, etc.). You obtain the weights directly
+from the source, under that source's terms.
+
+**You are responsible for honouring each voice's license** for whatever
+you produce. Licenses vary per voice and are *not* uniform across
+`rhasspy/piper-voices` — check the upstream `MODEL_CARD` (and, where it
+only says "See URL", the underlying dataset), because the card fields are
+self-reported. Notable cases among the German Piper voices CrispTTS lists:
+
+- **thorsten**, **kerstin** — CC0 (public domain).
+- **eva_k**, **karlsson**, **ramona** — [M-AILABS](https://github.com/i-celeste-aurora/m-ailabs-dataset),
+  BSD-style (commercial OK; retain the copyright notice).
+- **mls** — CC-BY 4.0 (attribution required).
+- **pavoque** — **CC BY-NC-SA 4.0 (non-commercial)** — do not use the
+  output commercially.
+
+For a redistributable, pre-curated **permissive-only** GGUF set (the same
+voices minus the non-commercial/restricted ones, converted for the
+CrispASR/CrisperWeaver native runtime), see
+[`cstr/piper-voices-GGUF`](https://huggingface.co/cstr/piper-voices-GGUF).
+
 ## Troubleshooting & Notes
 
 **Missing Libraries**: If a specific TTS engine fails, ensure you have installed all its required libraries via `pip install -r requirements.txt` and any extra steps mentioned in their documentation.
