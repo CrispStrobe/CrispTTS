@@ -32,7 +32,7 @@ try:
                 snac_device = "cpu"
 
             snac_loaded_model = _snac_model_instance.to(snac_device)
-            logger_decoder_init.info(f"SNAC model 'hubertsiuzdak/snac_24khz' loaded successfully to device: {snac_device}")
+            logger_decoder_init.info(f"SNAC model 'hubertsiuzdak/snac_24khz' loaded successfully to device: {snac_device}")  # noqa: E501
         except Exception as e:
             logger_decoder_init.error(f"Failed to load SNAC model 'hubertsiuzdak/snac_24khz': {e}", exc_info=True)
             SNAC_AVAILABLE = False # Mark as unavailable if model load fails
@@ -137,7 +137,7 @@ def convert_to_audio(multiframe_tokens: list[int], total_token_count: int) -> by
         if audio_hat.ndim == 3 and audio_hat.shape[2] >= 4096:
             audio_slice = audio_hat[:, :, 2048:4096]
         elif audio_hat.ndim == 3 and audio_hat.shape[2] > 0 : # If output is shorter, take what's available
-            logger.warning(f"SNAC output shorter than expected for slicing. Output shape: {audio_hat.shape}. Using available audio.")
+            logger.warning(f"SNAC output shorter than expected for slicing. Output shape: {audio_hat.shape}. Using available audio.")  # noqa: E501
             audio_slice = audio_hat
         else:
             logger.error(f"SNAC output has unexpected shape: {audio_hat.shape}. Cannot process.")
@@ -151,7 +151,7 @@ def convert_to_audio(multiframe_tokens: list[int], total_token_count: int) -> by
         audio_numpy_int16 = (np.clip(audio_numpy_float32, -1.0, 1.0) * 32767).astype(np.int16)
 
         audio_bytes = audio_numpy_int16.tobytes()
-        # logger.debug(f"Decoder: Successfully decoded {len(multiframe_tokens)} tokens into {len(audio_bytes)} audio bytes.")
+        # logger.debug(f"Decoder: Successfully decoded {len(multiframe_tokens)} tokens into {len(audio_bytes)} audio bytes.")  # noqa: E501
         return audio_bytes
 
     except Exception as e:
@@ -228,6 +228,6 @@ if __name__ == "__main__":
             except Exception as e:
                 logger.error(f"Could not save dummy audio: {e}")
         else:
-            logger.warning("convert_to_audio returned no bytes with dummy tokens (as expected if values out of range or other issue).")
+            logger.warning("convert_to_audio returned no bytes with dummy tokens (as expected if values out of range or other issue).")  # noqa: E501
     else:
         logger.error("SNAC model not available for standalone test.")

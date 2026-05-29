@@ -5,7 +5,6 @@ import collections  # For defaultdict fix
 import gc
 import json
 import logging
-import os
 import pickle
 from pathlib import Path
 
@@ -31,7 +30,7 @@ try:
     if hasattr(torch_coqui.backends, "mps") and torch_coqui.backends.mps.is_available():
         IS_MPS_IN_HANDLER_COQUI = True
 
-    import torch.serialization
+    import torch.serialization  # noqa: F401
     TORCH_SERIALIZATION_AVAILABLE = True
 
     try:
@@ -40,7 +39,7 @@ try:
         RADAM_IMPORTED_SUCCESSFULLY = True
         logger_init.info("Successfully imported TTS.utils.radam.RAdam for Coqui model fix.")
     except ImportError:
-        logger_init.info("TTS.utils.radam.RAdam not found. Fix for older Coqui models (like DCA) may not apply if needed.")
+        logger_init.info("TTS.utils.radam.RAdam not found. Fix for older Coqui models (like DCA) may not apply if needed.")  # noqa: E501
 
 except ImportError:
     logger_init.info(
@@ -48,7 +47,7 @@ except ImportError:
     )
 
 try:
-    import TTS  # For accessing submodules like TTS.config
+    import TTS  # noqa: F401 — accessing submodules like TTS.config
     from TTS.config.shared_configs import BaseDatasetConfig
     from TTS.tts.configs.xtts_config import XttsConfig
     from TTS.tts.models.xtts import (  # <-- Ensure XttsArgs is imported
@@ -58,7 +57,7 @@ try:
     # If more errors appear for other TTS.* classes, import and add them too.
     CLASSES_FOR_XTTS_UNPICKLING = [XttsConfig, XttsAudioConfig, BaseDatasetConfig, XttsArgs] # <-- Add XttsArgs here
 except ImportError as e_xtts_imp:
-    logger_init.warning(f"Coqui TTS Init: Could not import one or more XTTS-specific classes for unpickling: {e_xtts_imp}. XTTS loading might fail.")
+    logger_init.warning(f"Coqui TTS Init: Could not import one or more XTTS-specific classes for unpickling: {e_xtts_imp}. XTTS loading might fail.")  # noqa: E501
     CLASSES_FOR_XTTS_UNPICKLING = [] # Fallback
 
 if TORCH_AVAILABLE_IN_HANDLER:
@@ -77,7 +76,7 @@ if TORCH_AVAILABLE_IN_HANDLER:
             exc_info=True
         )
 
-from utils import SuppressOutput, play_audio, save_audio
+from utils import SuppressOutput, play_audio, save_audio  # noqa: E402
 
 logger = logging.getLogger("CrispTTS.handlers.coqui_tts")
 
@@ -87,7 +86,8 @@ MODELS_REQUIRING_UNPICKLE_FIXES = [
     # Add other older model IDs here if they show similar unpickling errors for basic types
 ]
 
-def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     crisptts_model_id_for_log = model_config.get('crisptts_model_id', 'coqui_tts_unknown')
 
     if not COQUI_TTS_AVAILABLE or not CoquiTTS_API_CLASS:
@@ -106,7 +106,7 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
     is_single_speaker_model_type = model_config.get("default_coqui_speaker") is None
 
     if is_single_speaker_model_type and effective_voice_input == "default_speaker":
-        logger.info(f"Coqui TTS ({coqui_model_name}): Single-speaker model. Placeholder '{effective_voice_input}' -> using intrinsic speaker.")
+        logger.info(f"Coqui TTS ({coqui_model_name}): Single-speaker model. Placeholder '{effective_voice_input}' -> using intrinsic speaker.")  # noqa: E501
         effective_voice_input = None
 
     speaker_arg_for_tts = effective_voice_input or model_config.get("default_coqui_speaker")
@@ -130,14 +130,15 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
     elif speaker_arg_for_tts:
         logger.info(f"Coqui TTS ({coqui_model_name}): Using speaker ID/name: {speaker_arg_for_tts}")
     else:
-        logger.info(f"Coqui TTS ({coqui_model_name}): No specific speaker parameter; using model's intrinsic/default speaker.")
+        logger.info(f"Coqui TTS ({coqui_model_name}): No specific speaker parameter; using model's intrinsic/default speaker.")  # noqa: E501
 
     config_lang = model_config.get("language")
     cli_lang = None
     if model_params_override:
         try:
             cli_params = json.loads(model_params_override)
-            if "language" in cli_params: cli_lang = cli_params["language"]
+            if "language" in cli_params:
+                cli_lang = cli_params["language"]
         except json.JSONDecodeError:
             logger.warning(f"Coqui TTS ({coqui_model_name}): Could not parse --model-params: {model_params_override}")
 
@@ -146,7 +147,7 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
     coqui_vocoder_name = model_config.get("coqui_vocoder_name")
     tts_constructor_kwargs = {}
 
-    logger.debug(f"Coqui TTS ({coqui_model_name}) - Params before TTS init: Speaker ID='{speaker_arg_for_tts}', Speaker WAV='{speaker_wav_arg_for_tts}', Language (intended if multi)='{language_to_use_if_multilingual}'")
+    logger.debug(f"Coqui TTS ({coqui_model_name}) - Params before TTS init: Speaker ID='{speaker_arg_for_tts}', Speaker WAV='{speaker_wav_arg_for_tts}', Language (intended if multi)='{language_to_use_if_multilingual}'")  # noqa: E501
 
     tts_instance = None
     try:
@@ -163,26 +164,29 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
                 try:
                     torch_coqui.serialization.add_safe_globals(globals_to_add_for_pickle)
                     added_names = [c.__name__ if hasattr(c, '__name__') else str(c) for c in globals_to_add_for_pickle]
-                    logger.info(f"Coqui TTS: Added {len(globals_to_add_for_pickle)} item(s) ({added_names}) to torch safe globals for {coqui_model_name}.")
+                    logger.info(f"Coqui TTS: Added {len(globals_to_add_for_pickle)} item(s) ({added_names}) to torch safe globals for {coqui_model_name}.")  # noqa: E501
                 except Exception as e_safe_global:
-                    logger.warning(f"Coqui TTS: Failed to add items to torch safe globals for {coqui_model_name}: {e_safe_global}. Model loading might still fail.", exc_info=True)
+                    logger.warning(f"Coqui TTS: Failed to add items to torch safe globals for {coqui_model_name}: {e_safe_global}. Model loading might still fail.", exc_info=True)  # noqa: E501
             elif coqui_model_name in MODELS_REQUIRING_UNPICKLE_FIXES:
-                 logger.warning(f"Coqui TTS: Model {coqui_model_name} may require unpickle fixes, but not all needed classes could be prepared or torch.serialization unavailable.")
+                 logger.warning(f"Coqui TTS: Model {coqui_model_name} may require unpickle fixes, but not all needed classes could be prepared or torch.serialization unavailable.")  # noqa: E501
 
         target_device = "cpu"
-        if torch_coqui.cuda.is_available(): target_device = "cuda"
-        elif IS_MPS_IN_HANDLER_COQUI: target_device = "mps"
+        if torch_coqui.cuda.is_available():
+            target_device = "cuda"
+        elif IS_MPS_IN_HANDLER_COQUI:
+            target_device = "mps"
 
         logger.info(f"Coqui TTS: Target device: {target_device} for '{coqui_model_name}'.")
 
         tts_constructor_kwargs['model_name'] = coqui_model_name
-        if coqui_vocoder_name: tts_constructor_kwargs['vocoder_name'] = coqui_vocoder_name
+        if coqui_vocoder_name:
+            tts_constructor_kwargs['vocoder_name'] = coqui_vocoder_name
 
         force_cpu_init = (target_device == "mps") # Always init on CPU if target is MPS for older TTS lib
         constructor_gpu_param = not force_cpu_init if target_device != "cpu" else False
 
         if force_cpu_init and target_device == "mps":
-            logger.info(f"Coqui TTS ({coqui_model_name}): Target MPS. Using CPU init (gpu=False) strategy to avoid CUDA asserts, then will attempt move to MPS.")
+            logger.info(f"Coqui TTS ({coqui_model_name}): Target MPS. Using CPU init (gpu=False) strategy to avoid CUDA asserts, then will attempt move to MPS.")  # noqa: E501
 
         if coqui_model_name == "tts_models/multilingual/multi-dataset/xtts_v2":
             if TORCH_SERIALIZATION_AVAILABLE and hasattr(torch_coqui, 'serialization') and CLASSES_FOR_XTTS_UNPICKLING:
@@ -194,32 +198,37 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
                         added_names_str = ", ".join([cls.__name__ for cls in new_globals_to_add])
                         logger.info(f"Coqui TTS: Added {added_names_str} to torch safe globals for {coqui_model_name}.")
                     else:
-                        logger.debug(f"Coqui TTS: Required XTTS classes for unpickling already in torch safe globals for {coqui_model_name}.")
+                        logger.debug(f"Coqui TTS: Required XTTS classes for unpickling already in torch safe globals for {coqui_model_name}.")  # noqa: E501
                 except Exception as e_safe_global_xtts:
-                    logger.warning(f"Coqui TTS: Failed to add classes to torch safe globals for {coqui_model_name}: {e_safe_global_xtts}", exc_info=True)
+                    logger.warning(f"Coqui TTS: Failed to add classes to torch safe globals for {coqui_model_name}: {e_safe_global_xtts}", exc_info=True)  # noqa: E501
             elif not CLASSES_FOR_XTTS_UNPICKLING:
-                logger.warning(f"Coqui TTS: CLASSES_FOR_XTTS_UNPICKLING list is empty, cannot apply unpickling fix for {coqui_model_name}.")
+                logger.warning(f"Coqui TTS: CLASSES_FOR_XTTS_UNPICKLING list is empty, cannot apply unpickling fix for {coqui_model_name}.")  # noqa: E501
             elif not TORCH_SERIALIZATION_AVAILABLE:
-                logger.warning(f"Coqui TTS: torch.serialization not available, cannot apply unpickling fix for {coqui_model_name}.")
+                logger.warning(f"Coqui TTS: torch.serialization not available, cannot apply unpickling fix for {coqui_model_name}.")  # noqa: E501
 
 
-        with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), suppress_stderr=not logger.isEnabledFor(logging.DEBUG)):
+        with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG),
+            suppress_stderr=not logger.isEnabledFor(logging.DEBUG)):
             tts_instance = CoquiTTS_API_CLASS(gpu=constructor_gpu_param, **tts_constructor_kwargs, progress_bar=False)
 
             if constructor_gpu_param is False and target_device != "cpu" and hasattr(tts_instance, 'to'):
-                logger.info(f"Coqui TTS: Attempting to move model {coqui_model_name} from CPU to {target_device} post-init.")
+                logger.info(f"Coqui TTS: Attempting to move model {coqui_model_name} from CPU to {target_device} post-init.")  # noqa: E501
                 tts_instance.to(target_device)
-            elif constructor_gpu_param and hasattr(tts_instance, 'to') and hasattr(tts_instance, 'device') and str(tts_instance.device) != target_device:
+            elif constructor_gpu_param and hasattr(tts_instance, 'to') and hasattr(tts_instance,
+                'device') and str(tts_instance.device) != target_device:
                  if target_device != "cpu" or (target_device == "cpu" and str(tts_instance.device) != "cpu"):
-                    logger.info(f"Coqui TTS: Model loaded on {tts_instance.device}, ensuring it's on target {target_device}.")
+                    logger.info(f"Coqui TTS: Model loaded on {tts_instance.device}, ensuring it's on target {target_device}.")  # noqa: E501
                     tts_instance.to(target_device)
 
-        current_device_str = str(tts_instance.device) if hasattr(tts_instance, 'device') else 'device attribute not found'
+        current_device_str = str(tts_instance.device) if hasattr(tts_instance,
+            'device') else 'device attribute not found'
         logger.info(f"Coqui TTS: Model '{coqui_model_name}' loaded. Effective device: {current_device_str}")
 
         synthesis_args = {"text": text}
-        if speaker_arg_for_tts: synthesis_args["speaker"] = speaker_arg_for_tts
-        if speaker_wav_arg_for_tts: synthesis_args["speaker_wav"] = speaker_wav_arg_for_tts
+        if speaker_arg_for_tts:
+            synthesis_args["speaker"] = speaker_arg_for_tts
+        if speaker_wav_arg_for_tts:
+            synthesis_args["speaker_wav"] = speaker_wav_arg_for_tts
 
         model_is_multilingual = hasattr(tts_instance, 'is_multi_lingual') and tts_instance.is_multi_lingual
 
@@ -228,24 +237,27 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
                 model_languages = getattr(tts_instance, 'languages', [])
                 if language_to_use_if_multilingual in model_languages:
                     synthesis_args["language"] = language_to_use_if_multilingual
-                    logger.debug(f"Coqui TTS ({coqui_model_name}): Passing language '{language_to_use_if_multilingual}'.")
+                    logger.debug(f"Coqui TTS ({coqui_model_name}): Passing language '{language_to_use_if_multilingual}'.")  # noqa: E501
                 else:
-                    logger.warning(f"Coqui TTS ({coqui_model_name}): Language '{language_to_use_if_multilingual}' not in model languages: {model_languages}. Omitting 'language' from .tts() call.")
+                    logger.warning(f"Coqui TTS ({coqui_model_name}): Language '{language_to_use_if_multilingual}' not in model languages: {model_languages}. Omitting 'language' from .tts() call.")  # noqa: E501
             else:
-                logger.debug(f"Coqui TTS ({coqui_model_name}): Model is not multilingual. Not passing 'language' argument (specified: '{language_to_use_if_multilingual}').")
+                logger.debug(f"Coqui TTS ({coqui_model_name}): Model is not multilingual. Not passing 'language' argument (specified: '{language_to_use_if_multilingual}').")  # noqa: E501
         else:
             logger.debug(f"Coqui TTS ({coqui_model_name}): No language specified for synthesis.")
 
         logger.info(f"Coqui TTS: Synthesizing speech with args: {synthesis_args}")
-        with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), suppress_stderr=not logger.isEnabledFor(logging.DEBUG)):
+        with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG),
+            suppress_stderr=not logger.isEnabledFor(logging.DEBUG)):
             wav_output = tts_instance.tts(**synthesis_args)
 
         if wav_output is None or (isinstance(wav_output, (list, np.ndarray)) and not np.asarray(wav_output).size):
             logger.error(f"Coqui TTS ({coqui_model_name}): Synthesis returned no audio data or empty data.")
             return
 
-        if isinstance(wav_output, list): audio_numpy = np.array(wav_output, dtype=np.float32)
-        elif isinstance(wav_output, np.ndarray): audio_numpy = wav_output.astype(np.float32)
+        if isinstance(wav_output, list):
+            audio_numpy = np.array(wav_output, dtype=np.float32)
+        elif isinstance(wav_output, np.ndarray):
+            audio_numpy = wav_output.astype(np.float32)
         else:
             logger.error(f"Coqui TTS ({coqui_model_name}): Synthesis returned unexpected data type: {type(wav_output)}")
             return
@@ -263,37 +275,42 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
         current_sample_rate = model_config.get("sample_rate", 22050)
         try:
             sr_from_model = None
-            if hasattr(tts_instance, 'synthesizer') and tts_instance.synthesizer and hasattr(tts_instance.synthesizer, 'output_sample_rate') and tts_instance.synthesizer.output_sample_rate:
+            if hasattr(tts_instance, 'synthesizer') and tts_instance.synthesizer and hasattr(tts_instance.synthesizer,
+                'output_sample_rate') and tts_instance.synthesizer.output_sample_rate:
                 sr_from_model = tts_instance.synthesizer.output_sample_rate
-            elif hasattr(tts_instance, 'config') and tts_instance.config and hasattr(tts_instance.config, 'audio') and isinstance(tts_instance.config.audio, dict) and 'sample_rate' in tts_instance.config.audio and tts_instance.config.audio['sample_rate']:
+            elif hasattr(tts_instance, 'config') and tts_instance.config and hasattr(tts_instance.config,
+                'audio') and isinstance(tts_instance.config.audio,
+                dict) and 'sample_rate' in tts_instance.config.audio and tts_instance.config.audio['sample_rate']:
                 sr_from_model = tts_instance.config.audio['sample_rate']
 
             if sr_from_model and isinstance(sr_from_model, int) and sr_from_model > 0:
                 current_sample_rate = sr_from_model
             logger.info(f"Coqui TTS: Using sample rate: {current_sample_rate}Hz")
         except Exception as e_sr:
-            logger.warning(f"Coqui TTS: Could not get SR from model, using config fallback {current_sample_rate}Hz. Error: {e_sr}")
+            logger.warning(f"Coqui TTS: Could not get SR from model, using config fallback {current_sample_rate}Hz. Error: {e_sr}")  # noqa: E501
 
         logger.info(f"Coqui TTS ({coqui_model_name}): Synthesis successful, {len(audio_bytes)} bytes generated.")
         if output_file_str:
             effective_output_file_wav = Path(output_file_str).with_suffix(".wav")
-            save_audio(audio_bytes, str(effective_output_file_wav), source_is_path=False, input_format="pcm_s16le", sample_rate=current_sample_rate)
+            save_audio(audio_bytes, str(effective_output_file_wav), source_is_path=False, input_format="pcm_s16le",
+                sample_rate=current_sample_rate)
         if play_direct:
             play_audio(audio_bytes, is_path=False, input_format="pcm_s16le", sample_rate=current_sample_rate)
 
     except AssertionError as e_assert:
         if "CUDA is not availabe on this machine" in str(e_assert):
-            logger.error(f"Coqui TTS ({coqui_model_name}): Failed due to CUDA assertion by the TTS library. Error: {e_assert}", exc_info=True)
+            logger.error(f"Coqui TTS ({coqui_model_name}): Failed due to CUDA assertion by the TTS library. Error: {e_assert}", exc_info=True)  # noqa: E501
         else:
             logger.error(f"Coqui TTS ({coqui_model_name}): Assertion error: {e_assert}", exc_info=True)
     except pickle.UnpicklingError as e_pickle: # Use the imported pickle module
-        logger.error(f"Coqui TTS ({coqui_model_name}): Unpickling error during model loading. This often happens with older models and newer PyTorch versions. Error: {e_pickle}", exc_info=True)
+        logger.error(f"Coqui TTS ({coqui_model_name}): Unpickling error during model loading. This often happens with older models and newer PyTorch versions. Error: {e_pickle}", exc_info=True)  # noqa: E501
         # You might also want to add the advice from the PyTorch 2.6 error message here if applicable
         if "TTS.tts.configs.xtts_config.XttsConfig" in str(e_pickle) and hasattr(torch_coqui, 'serialization'):
-             logger.warning("This might be resolved by adding TTS.tts.configs.xtts_config.XttsConfig to torch.serialization.add_safe_globals(). The handler attempts some common fixes but might miss specific ones for XTTS.")
+             logger.warning("This might be resolved by adding TTS.tts.configs.xtts_config.XttsConfig to torch.serialization.add_safe_globals(). The handler attempts some common fixes but might miss specific ones for XTTS.")  # noqa: E501
     except RuntimeError as e_runtime:
         device_for_log = "unknown"
-        if 'target_device' in locals() and target_device: device_for_log = target_device
+        if 'target_device' in locals() and target_device:
+            device_for_log = target_device
         if "Attempting to deserialize object on a CUDA device" in str(e_runtime) and device_for_log == "mps":
             logger.error(f"Coqui TTS ({coqui_model_name}): MPS loading error: {e_runtime}", exc_info=True)
         else:
@@ -303,14 +320,19 @@ def synthesize_with_coqui_tts(model_config, text, voice_id_override, model_param
     finally:
         if 'tts_instance' in locals() and tts_instance is not None:
             if hasattr(tts_instance, 'model') and tts_instance.model and hasattr(tts_instance.model, 'cpu'):
-                try: tts_instance.model.cpu()
-                except Exception as e_cpu: logger.debug(f"Coqui TTS: Error moving model to CPU for cleanup: {e_cpu}")
+                try:
+                    tts_instance.model.cpu()
+                except Exception as e_cpu:
+                    logger.debug(f"Coqui TTS: Error moving model to CPU for cleanup: {e_cpu}")
             del tts_instance
             tts_instance = None
 
         if TORCH_AVAILABLE_IN_HANDLER and torch_coqui:
-            if torch_coqui.cuda.is_available(): torch_coqui.cuda.empty_cache()
+            if torch_coqui.cuda.is_available():
+                torch_coqui.cuda.empty_cache()
             if IS_MPS_IN_HANDLER_COQUI and hasattr(torch_coqui.mps, "empty_cache"):
-                try: torch_coqui.mps.empty_cache()
-                except Exception as e_mps_clear: logger.debug(f"Coqui TTS: Error clearing MPS cache: {e_mps_clear}")
+                try:
+                    torch_coqui.mps.empty_cache()
+                except Exception as e_mps_clear:
+                    logger.debug(f"Coqui TTS: Error clearing MPS cache: {e_mps_clear}")
         gc.collect()

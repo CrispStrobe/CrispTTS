@@ -5,10 +5,8 @@ Helps manage F5-TTS models, test compatibility, and convert to MLX format
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 # Test configurations for different F5-TTS models
 F5_TEST_MODELS = {
@@ -70,20 +68,20 @@ def test_model_availability():
 
     # Test MLX
     try:
-        import mlx.core
+        import mlx.core  # noqa: F401
         results["mlx"] = {"available": True, "version": "available"}
     except ImportError:
         results["mlx"] = {"available": False, "error": "Not installed (macOS Apple Silicon only)"}
 
     # Test F5-TTS libraries
     try:
-        from f5_tts.model import CFM, DiT, UNetT
+        from f5_tts.model import CFM, DiT, UNetT  # noqa: F401
         results["f5_tts_standard"] = {"available": True, "models": ["DiT", "UNetT", "CFM"]}
     except ImportError as e:
         results["f5_tts_standard"] = {"available": False, "error": str(e)}
 
     try:
-        from f5_tts_mlx.generate import generate
+        from f5_tts_mlx.generate import generate  # noqa: F401
         results["f5_tts_mlx"] = {"available": True, "function": "generate"}
     except ImportError as e:
         results["f5_tts_mlx"] = {"available": False, "error": str(e)}
@@ -91,19 +89,19 @@ def test_model_availability():
     # Test Whisper options
     whisper_options = []
     try:
-        import whisper
+        import whisper  # noqa: F401
         whisper_options.append("openai-whisper")
     except ImportError:
         pass
 
     try:
-        from faster_whisper import WhisperModel
+        from faster_whisper import WhisperModel  # noqa: F401
         whisper_options.append("faster-whisper")
     except ImportError:
         pass
 
     try:
-        from transformers import pipeline
+        from transformers import pipeline  # noqa: F401
         whisper_options.append("transformers")
     except ImportError:
         pass
@@ -124,7 +122,7 @@ def print_availability_report():
     for lib, info in results.items():
         if lib in ["pytorch", "torchaudio", "soundfile", "numpy", "mlx"]:
             status = "✅" if info["available"] else "❌"
-            version_info = f" (v{info.get('version', 'unknown')})" if info["available"] else f" - {info.get('error', 'Unknown error')}"
+            version_info = f" (v{info.get('version', 'unknown')})" if info["available"] else f" - {info.get('error', 'Unknown error')}"  # noqa: E501
             print(f"  {status} {lib.capitalize()}{version_info}")
 
     # F5-TTS libraries
@@ -178,7 +176,6 @@ def print_availability_report():
 def test_model_download(model_id: str):
     """Test if a model can be downloaded and accessed"""
     try:
-        from huggingface_hub import snapshot_download
         print(f"🔄 Testing download for {model_id}...")
 
         # Try to get model info without downloading

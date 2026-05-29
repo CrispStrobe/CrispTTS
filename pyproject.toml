@@ -45,23 +45,10 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "S"]
-ignore = [
-    "E501",   # line-too-long — handled per-file
-    "E701",   # multiple-statements-on-one-line — existing style
-    "E702",   # multiple-statements-on-one-line-semicolon — existing style
-    "S110",   # try-except-pass — intentional in handler imports
-    "S603",   # subprocess-without-shell-equals-true — by design
-    "S310",   # suspicious-url-open-usage — intentional downloads
-    "S101",   # assert — used in tests
-    "E402",   # module-import-not-at-top — required for conditional imports
-]
+ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-"handlers/*.py" = ["E722"]  # bare-except in legacy handlers
-"main.py" = ["E402"]  # imports after monkey-patching block
-"config.py" = ["F401"]  # os/Path imported for use in model path definitions
-"f5_debug.py" = ["E722", "F841"]
-"f5-test.py" = ["E722", "F841"]
+"tests/*.py" = ["S101", "S108"]  # assert + /tmp paths are fine in tests
 
 [tool.bandit]
 skips = ["B101"]  # assert used in tests

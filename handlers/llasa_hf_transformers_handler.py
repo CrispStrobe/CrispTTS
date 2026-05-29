@@ -4,8 +4,6 @@ import gc
 import json
 import logging
 import os
-import re
-import tempfile
 from pathlib import Path
 
 # Conditional imports (same as your last provided version)
@@ -31,46 +29,60 @@ logger_init = logging.getLogger("CrispTTS.handlers.llasa_hf_transformers.init")
 
 try:
     import torch
-    torch_llasa_hf = torch; TORCH_AVAILABLE = True
+    torch_llasa_hf = torch
+    TORCH_AVAILABLE = True
     if hasattr(torch_llasa_hf.backends, "mps") and torch_llasa_hf.backends.mps.is_available():
         IS_MPS_LLASA_HF = True
     if torch_llasa_hf.cuda.is_available():
         IS_CUDA_LLASA_HF = True
     logger_init.info("PyTorch loaded for LLaSA HF.")
-except ImportError: logger_init.warning("PyTorch not found for LLaSA HF.")
+except ImportError:
+    logger_init.warning("PyTorch not found for LLaSA HF.")
 if TORCH_AVAILABLE:
     try:
         import torchaudio
-        torchaudio_llasa_hf = torchaudio; TORCHAUDIO_AVAILABLE = True
+        torchaudio_llasa_hf = torchaudio
+        TORCHAUDIO_AVAILABLE = True
         logger_init.info("Torchaudio loaded for LLaSA HF.")
-    except ImportError: logger_init.warning("Torchaudio not found for LLaSA HF.")
+    except ImportError:
+        logger_init.warning("Torchaudio not found for LLaSA HF.")
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-        AutoTokenizer_llasa_hf, AutoModelForCausalLM_llasa_hf, pipeline_llasa_hf = AutoTokenizer, AutoModelForCausalLM, pipeline
-        TRANSFORMERS_AVAILABLE = True; logger_init.info("Transformers loaded for LLaSA HF.")
-    except ImportError: logger_init.warning("Transformers not found for LLaSA HF.")
+        AutoTokenizer_llasa_hf, AutoModelForCausalLM_llasa_hf, pipeline_llasa_hf = AutoTokenizer, AutoModelForCausalLM, pipeline  # noqa: E501
+        TRANSFORMERS_AVAILABLE = True
+        logger_init.info("Transformers loaded for LLaSA HF.")
+    except ImportError:
+        logger_init.warning("Transformers not found for LLaSA HF.")
     try:
         from xcodec2.modeling_xcodec2 import XCodec2Model
-        XCodec2Model_llasa_hf = XCodec2Model; XCODEC2_AVAILABLE = True
+        XCodec2Model_llasa_hf = XCodec2Model
+        XCODEC2_AVAILABLE = True
         logger_init.info("XCodec2 loaded for LLaSA HF.")
-    except ImportError: logger_init.warning("XCodec2 not found for LLaSA HF.")
+    except ImportError:
+        logger_init.warning("XCodec2 not found for LLaSA HF.")
 try:
     from pydub import AudioSegment as PydubAudioSegment_llasa_imp
     from pydub.utils import mediainfo as pydub_mediainfo_llasa_imp
     AudioSegment_pydub_handler, pydub_mediainfo_func_handler = PydubAudioSegment_llasa_imp, pydub_mediainfo_llasa_imp
-    PYDUB_FOR_HANDLER_AVAILABLE = True; logger_init.info("pydub imported for LLaSA HF.")
-except ImportError: logger_init.info("pydub not found for LLaSA HF.")
+    PYDUB_FOR_HANDLER_AVAILABLE = True
+    logger_init.info("pydub imported for LLaSA HF.")
+except ImportError:
+    logger_init.info("pydub not found for LLaSA HF.")
 try:
     import soundfile as sf
-    sf_llasa_hf = sf; SOUNDFILE_AVAILABLE = True
+    sf_llasa_hf = sf
+    SOUNDFILE_AVAILABLE = True
     logger_init.info("SoundFile loaded for LLaSA HF.")
-except ImportError: logger_init.warning("SoundFile not found for LLaSA HF.")
+except ImportError:
+    logger_init.warning("SoundFile not found for LLaSA HF.")
 try:
     import numpy as np
-    numpy_llasa_hf = np; NUMPY_AVAILABLE = True
-except ImportError: logger_init.warning("NumPy not found for LLaSA HF.")
+    numpy_llasa_hf = np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    logger_init.warning("NumPy not found for LLaSA HF.")
 
-from utils import SuppressOutput, play_audio, save_audio
+from utils import play_audio  # noqa: E402
 
 logger = logging.getLogger("CrispTTS.handlers.llasa_hf_transformers")
 
@@ -135,7 +147,7 @@ def synthesize_with_llasa_hf_transformers(
         logger.error(f"LLaSA HF ({crisptts_model_id_for_log}): Core model IDs not fully configured. Skipping.")
         return
 
-    hf_token = os.getenv("HF_TOKEN") if model_config.get("requires_hf_token") else None
+    _hf_token = os.getenv("HF_TOKEN") if model_config.get("requires_hf_token") else None
 
     # Use the device detection with proper MPS support
     device = _get_optimal_device()
@@ -193,12 +205,13 @@ def synthesize_with_llasa_hf_transformers(
             resolved_ref_path = p_input if p_input.is_absolute() else (Path.cwd() / p_input).resolve()
 
             logger.info(f"LLaSA HF: Attempting to use reference audio at resolved path: {resolved_ref_path}")
-            if resolved_ref_path.exists() and resolved_ref_path.is_file() and os.access(str(resolved_ref_path), os.R_OK):
+            if resolved_ref_path.exists() and resolved_ref_path.is_file() and os.access(str(resolved_ref_path),
+                os.R_OK):
                 is_cloning_mode = True
-                logger.info(f"LLaSA HF ({crisptts_model_id_for_log}): Cloning mode activated. Reference audio: {resolved_ref_path}")
+                logger.info(f"LLaSA HF ({crisptts_model_id_for_log}): Cloning mode activated. Reference audio: {resolved_ref_path}")  # noqa: E501
 
                 if not TORCHAUDIO_AVAILABLE:
-                    logger.error("LLaSA HF: Torchaudio not available, cannot process reference audio for cloning. Aborting.")
+                    logger.error("LLaSA HF: Torchaudio not available, cannot process reference audio for cloning. Aborting.")  # noqa: E501
                     return
 
                 # EXACT blueprint audio processing
@@ -212,13 +225,13 @@ def synthesize_with_llasa_hf_transformers(
                         sample_audio_text = parsed_params.get("reference_text")
                         if sample_audio_text:
                             logger.info(f"LLaSA HF: Using provided reference text: '{sample_audio_text[:100]}...'")
-                    except:
+                    except Exception:  # noqa: S110
                         pass
 
                 # EXACT blueprint audio loading and processing
                 waveform, sample_rate = torchaudio_llasa_hf.load(sample_audio_path)
 
-                max_secs = 15
+                _max_secs = 15
                 if len(waveform[0]) / sample_rate > 15:
                     logger.warning("LLaSA HF: Reference audio longer than 15.0s. Trimming to first 15.0s.")
                     waveform = waveform[:, : sample_rate * 15]
@@ -235,7 +248,8 @@ def synthesize_with_llasa_hf_transformers(
                     transcription = None
 
                     try:
-                        whisper_model_id = model_config.get("whisper_model_id_for_transcription", "openai/whisper-large-v3-turbo")
+                        whisper_model_id = model_config.get("whisper_model_id_for_transcription",
+                            "openai/whisper-large-v3-turbo")
 
                         # Try to create Whisper pipeline with error handling
                         whisper_turbo_pipe = pipeline_llasa_hf(
@@ -284,14 +298,14 @@ def synthesize_with_llasa_hf_transformers(
                 is_cloning_mode = False
                 input_text = target_text
                 if "clone" in crisptts_model_id_for_log.lower():
-                    logger.error(f"LLaSA HF ({crisptts_model_id_for_log}): Configured for cloning, but ref audio not found. Aborting.")
+                    logger.error(f"LLaSA HF ({crisptts_model_id_for_log}): Configured for cloning, but ref audio not found. Aborting.")  # noqa: E501
                     return
-                logger.warning(f"LLaSA HF ({crisptts_model_id_for_log}): Ref audio not found. Operating in zero-shot mode.")
+                logger.warning(f"LLaSA HF ({crisptts_model_id_for_log}): Ref audio not found. Operating in zero-shot mode.")  # noqa: E501
         else:
             is_cloning_mode = False
             input_text = target_text
             speech_ids_prefix = []
-            logger.info(f"LLaSA HF ({crisptts_model_id_for_log}): No reference audio provided. Operating in zero-shot mode.")
+            logger.info(f"LLaSA HF ({crisptts_model_id_for_log}): No reference audio provided. Operating in zero-shot mode.")  # noqa: E501
 
         # EXACT blueprint text formatting and generation
         formatted_text = f"<|TEXT_UNDERSTANDING_START|>{input_text}<|TEXT_UNDERSTANDING_END|>"
@@ -338,8 +352,8 @@ def synthesize_with_llasa_hf_transformers(
                     if k in valid_hf_keys:
                         gen_params[k] = v_param
                         logger.debug(f"LLaSA HF: Overriding {k} = {v_param}")
-            except:
-                logger.warning(f"LLaSA HF ({crisptts_model_id_for_log}): Could not parse --model-params for generation.")
+            except Exception:
+                logger.warning(f"LLaSA HF ({crisptts_model_id_for_log}): Could not parse --model-params for generation.")  # noqa: E501
 
         logger.info("LLaSA HF: Generating speech tokens...")
 
@@ -351,17 +365,17 @@ def synthesize_with_llasa_hf_transformers(
             if "german" in crisptts_model_id_for_log.lower():
                 # German model: use exact blueprint extraction
                 generated_ids = outputs[0][input_ids.shape[1] - len(speech_ids_prefix) : -1]
-                logger.debug(f"LLaSA HF: German model extraction - input_ids.shape[1]: {input_ids.shape[1]}, speech_ids_prefix length: {len(speech_ids_prefix)}")
+                logger.debug(f"LLaSA HF: German model extraction - input_ids.shape[1]: {input_ids.shape[1]}, speech_ids_prefix length: {len(speech_ids_prefix)}")  # noqa: E501
             else:
                 # Multilingual model: different extraction pattern
                 if is_cloning_mode and speech_ids_prefix:
                     # For multilingual cloning, don't subtract prefix length
                     generated_ids = outputs[0][input_ids.shape[1] : -1]
-                    logger.debug(f"LLaSA HF: Multilingual cloning extraction - input_ids.shape[1]: {input_ids.shape[1]}")
+                    logger.debug(f"LLaSA HF: Multilingual cloning extraction - input_ids.shape[1]: {input_ids.shape[1]}")  # noqa: E501
                 else:
                     # For multilingual zero-shot
                     generated_ids = outputs[0][input_ids.shape[1] : -1]
-                    logger.debug(f"LLaSA HF: Multilingual zero-shot extraction - input_ids.shape[1]: {input_ids.shape[1]}")
+                    logger.debug(f"LLaSA HF: Multilingual zero-shot extraction - input_ids.shape[1]: {input_ids.shape[1]}")  # noqa: E501
 
             logger.debug(f"LLaSA HF: Extracted generated_ids shape: {generated_ids.shape}")
 
@@ -375,7 +389,7 @@ def synthesize_with_llasa_hf_transformers(
 
             if not speech_tokens:
                 logger.error(f"LLaSA HF ({crisptts_model_id_for_log}): No speech tokens extracted!")
-                logger.debug(f"LLaSA HF: Raw decoded tokens were: {tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[:20]}")
+                logger.debug(f"LLaSA HF: Raw decoded tokens were: {tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[:20]}")  # noqa: E501
                 return
 
             # EXACT blueprint tensor conversion and decoding
@@ -392,12 +406,12 @@ def synthesize_with_llasa_hf_transformers(
                     # German model: trim reference as in blueprint
                     if gen_wav.shape[2] > ref_samples:
                         gen_wav = gen_wav[:, :, ref_samples:]
-                        logger.info(f"LLaSA HF: German model trimming - Original: {original_shape}, After trim: {gen_wav.shape}")
+                        logger.info(f"LLaSA HF: German model trimming - Original: {original_shape}, After trim: {gen_wav.shape}")  # noqa: E501
                     else:
                         logger.warning("LLaSA HF: German model - generated audio too short for trimming")
                 else:
                     # Multilingual model: no trimming needed - it doesn't concatenate reference
-                    logger.info("LLaSA HF: Multilingual model - no trimming needed (doesn't include reference in output)")
+                    logger.info("LLaSA HF: Multilingual model - no trimming needed (doesn't include reference in output)")  # noqa: E501
             else:
                 logger.debug("LLaSA HF: No audio trimming needed (zero-shot mode)")
 
@@ -416,7 +430,7 @@ def synthesize_with_llasa_hf_transformers(
         if audio_rms < 0.001:
             logger.warning(f"LLaSA HF: Generated audio has very low RMS ({audio_rms:.6f}) - may be mostly silence")
 
-        logger.info(f"LLaSA HF: Synthesis successful. Output shape: {audio_output_np.shape}, Duration: {len(audio_output_np)/16000:.2f}s")
+        logger.info(f"LLaSA HF: Synthesis successful. Output shape: {audio_output_np.shape}, Duration: {len(audio_output_np)/16000:.2f}s")  # noqa: E501
 
         # Save output - EXACT blueprint sample rate
         if output_file_str:
@@ -441,26 +455,26 @@ def synthesize_with_llasa_hf_transformers(
             try:
                 model.cpu()
                 del model
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         if Codec_model is not None:
             try:
                 Codec_model.cpu()
                 del Codec_model
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         if tokenizer is not None:
             try:
                 del tokenizer
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         if whisper_turbo_pipe is not None:
             try:
                 del whisper_turbo_pipe
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         # Clear device caches
@@ -484,7 +498,7 @@ def clear_llasa_hf_cache():
         if hasattr(torch_llasa_hf.backends, "mps") and torch_llasa_hf.backends.mps.is_available():
             try:
                 torch_llasa_hf.mps.empty_cache()
-            except:
+            except Exception:  # noqa: S110
                 pass
     gc.collect()
     logger.info("LLaSA HF: Caches cleared.")

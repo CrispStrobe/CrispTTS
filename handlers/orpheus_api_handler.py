@@ -26,16 +26,20 @@ from utils import (
 
 logger = logging.getLogger("CrispTTS.handlers.orpheus_api")
 
-def synthesize_with_orpheus_lm_studio(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_orpheus_lm_studio(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     voice = voice_id_override or model_config.get('default_voice_id', ORPHEUS_DEFAULT_VOICE)
     logger.debug(f"Orpheus LM Studio - Text: '{text[:50]}...', Voice: {voice}")
 
     # Get available voices from model_config or fallback to combined list from config.py
-    available_voices = model_config.get('available_voices', ORPHEUS_GERMAN_VOICES + SAUERKRAUT_VOICES + ORPHEUS_AVAILABLE_VOICES_BASE)
-    api_url = model_config.get("api_url", LM_STUDIO_API_URL_DEFAULT) # Use specific from GERMAN_TTS_MODELS if set, else default
+    available_voices = model_config.get('available_voices',
+        ORPHEUS_GERMAN_VOICES + SAUERKRAUT_VOICES + ORPHEUS_AVAILABLE_VOICES_BASE)
+    api_url = model_config.get("api_url",
+        LM_STUDIO_API_URL_DEFAULT) # Use specific from GERMAN_TTS_MODELS if set, else default
 
     cli_params = json.loads(model_params_override) if model_params_override else {}
-    model_name_in_api = cli_params.get("gguf_model_name_in_api", model_config.get("gguf_model_name_in_api", "SauerkrautTTS-Preview-0.1"))
+    model_name_in_api = cli_params.get("gguf_model_name_in_api", model_config.get("gguf_model_name_in_api",
+        "SauerkrautTTS-Preview-0.1"))
 
     # Use ORPHEUS_DEFAULT_VOICE from config.py as the ultimate fallback for formatting
     formatted_prompt = orpheus_format_prompt(text, voice, available_voices) # Util from utils.py
@@ -76,7 +80,7 @@ def synthesize_with_orpheus_lm_studio(model_config, text, voice_id_override, mod
                                     yield token_text_chunk
                         except json.JSONDecodeError:
                             logger.warning(f"Orpheus LM Studio - Could not decode JSON line: {data_str}")
-            logger.debug(f"Orpheus LM Studio - Full raw API output (first 200 chars): '{full_raw_output_for_debug[:200]}{'...' if len(full_raw_output_for_debug)>200 else ''}'")
+            logger.debug(f"Orpheus LM Studio - Full raw API output (first 200 chars): '{full_raw_output_for_debug[:200]}{'...' if len(full_raw_output_for_debug)>200 else ''}'")  # noqa: E501
         except requests.exceptions.RequestException as e_req:
             logger.error(f"Orpheus LM Studio - API connection/request failed: {e_req}")
             # yield "" # Ensure generator terminates if error occurs before any yield
@@ -101,15 +105,18 @@ def synthesize_with_orpheus_lm_studio(model_config, text, voice_id_override, mod
     gc.collect()
 
 
-def synthesize_with_orpheus_ollama(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_orpheus_ollama(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     voice = voice_id_override or model_config.get('default_voice_id', ORPHEUS_DEFAULT_VOICE)
     logger.debug(f"Orpheus Ollama - Text: '{text[:50]}...', Voice: {voice}")
 
-    available_voices = model_config.get('available_voices', ORPHEUS_GERMAN_VOICES + SAUERKRAUT_VOICES + ORPHEUS_AVAILABLE_VOICES_BASE)
+    available_voices = model_config.get('available_voices',
+        ORPHEUS_GERMAN_VOICES + SAUERKRAUT_VOICES + ORPHEUS_AVAILABLE_VOICES_BASE)
     formatted_prompt = orpheus_format_prompt(text, voice, available_voices) # Util from utils.py
 
     cli_params = json.loads(model_params_override) if model_params_override else {}
-    ollama_model_name = cli_params.get("ollama_model_name", model_config.get("ollama_model_name", "orpheus-german-tts:latest"))
+    ollama_model_name = cli_params.get("ollama_model_name", model_config.get("ollama_model_name",
+        "orpheus-german-tts:latest"))
     ollama_api_url = cli_params.get("ollama_api_url", model_config.get("api_url", OLLAMA_API_URL_DEFAULT))
 
     if "USER MUST SET" in ollama_model_name or not ollama_model_name: # Check from config.py
@@ -139,24 +146,29 @@ def synthesize_with_orpheus_ollama(model_config, text, voice_id_override, model_
                     try:
                         line_str = line.decode('utf-8')
                         data = json.loads(line_str)
-                        if data.get("error"): logger.error(f"Orpheus Ollama - API error: {data['error']}"); break
+                        if data.get("error"):
+                            logger.error(f"Orpheus Ollama - API error: {data['error']}")
+                            break
                         token_text_chunk = data.get('response', '') # Ollama uses 'response'
                         full_raw_output_for_debug += token_text_chunk
-                        if token_text_chunk: yield token_text_chunk
+                        if token_text_chunk:
+                            yield token_text_chunk
                         if data.get("done", False) and data.get("done") is True: # Explicitly check for True
                             logger.debug("Orpheus Ollama - Ollama API stream 'done'.")
                             break
-                    except json.JSONDecodeError: logger.warning(f"Orpheus Ollama - Could not decode JSON line: {line_str}")
-            logger.debug(f"Orpheus Ollama - Full raw API output (first 200 chars): '{full_raw_output_for_debug[:200]}{'...' if len(full_raw_output_for_debug)>200 else ''}'")
+                    except json.JSONDecodeError:
+                        logger.warning(f"Orpheus Ollama - Could not decode JSON line: {line_str}")
+            logger.debug(f"Orpheus Ollama - Full raw API output (first 200 chars): '{full_raw_output_for_debug[:200]}{'...' if len(full_raw_output_for_debug)>200 else ''}'")  # noqa: E501
         except requests.exceptions.RequestException as e_req:
             logger.error(f"Orpheus Ollama - API connection/request failed: {e_req}")
             if hasattr(e_req, 'response') and e_req.response is not None:
-                 logger.error(f"Ollama Response status: {e_req.response.status_code}, Text: {e_req.response.text[:500]}")
+                 logger.error(f"Ollama Response status: {e_req.response.status_code}, Text: {e_req.response.text[:500]}")  # noqa: E501
             # yield "" # Ensure generator terminates
         except Exception as e_stream:
             logger.error(f"Orpheus Ollama - Error processing stream: {e_stream}", exc_info=True)
         finally:
-            if response: response.close()
+            if response:
+                response.close()
             logger.debug("Orpheus Ollama - API stream processing finished or errored.")
 
     effective_output_file_wav_str = str(Path(output_file_str).with_suffix(".wav")) if output_file_str else None
@@ -166,7 +178,8 @@ def synthesize_with_orpheus_ollama(model_config, text, voice_id_override, model_
     )
 
     if audio_bytes:
-        if play_direct: play_audio(audio_bytes, is_path=False, input_format="pcm_s16le", sample_rate=ORPHEUS_SAMPLE_RATE)
+        if play_direct:
+            play_audio(audio_bytes, is_path=False, input_format="pcm_s16le", sample_rate=ORPHEUS_SAMPLE_RATE)
     else:
         logger.warning("Orpheus Ollama - No audio bytes generated from API stream.")
     gc.collect()

@@ -34,7 +34,8 @@ if HF_HUB_AVAILABLE_IN_HANDLER:
         logger.info("'piper-tts' not installed. Piper handler will not be functional.")
 
 
-def synthesize_with_piper_local(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_piper_local(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     if not PIPER_TTS_AVAILABLE_IN_HANDLER or not PiperVoice_h:
         logger.error("Piper-tts library not available. Skipping Piper local synthesis.")
         return
@@ -54,7 +55,7 @@ def synthesize_with_piper_local(model_config, text, voice_id_override, model_par
                 config_path_in_repo = override_details.get("config")
                 logger.debug("Piper - Using dictionary voice override.")
             except json.JSONDecodeError:
-                logger.warning(f"Piper - Failed to parse JSON voice ID '{voice_id_override}'. Treating as direct model path.")
+                logger.warning(f"Piper - Failed to parse JSON voice ID '{voice_id_override}'. Treating as direct model path.")  # noqa: E501
                 model_path_in_repo = voice_id_override
         elif isinstance(voice_id_override, str): # Assuming direct path or repo relative path
             model_path_in_repo = voice_id_override
@@ -75,7 +76,7 @@ def synthesize_with_piper_local(model_config, text, voice_id_override, model_par
 
     piper_voice_repo_id = model_config.get("piper_voice_repo_id", "rhasspy/piper-voices")
     if not model_path_in_repo or not config_path_in_repo:
-        logger.error(f"Piper - Cannot determine model/config paths. Model: '{model_path_in_repo}', Config: '{config_path_in_repo}'.")
+        logger.error(f"Piper - Cannot determine model/config paths. Model: '{model_path_in_repo}', Config: '{config_path_in_repo}'.")  # noqa: E501
         return
 
     # Use a unique cache directory for piper models within the project's cache
@@ -135,7 +136,8 @@ def synthesize_with_piper_local(model_config, text, voice_id_override, model_par
             current_sample_rate = getattr(getattr(voice_obj, 'config', None), 'sample_rate', 22050)
 
             if effective_output_file_wav:
-                save_audio(audio_data, str(effective_output_file_wav), source_is_path=False, input_format="wav", sample_rate=current_sample_rate)
+                save_audio(audio_data, str(effective_output_file_wav), source_is_path=False, input_format="wav",
+                    sample_rate=current_sample_rate)
             if play_direct:
                 play_audio(audio_data, is_path=False, input_format="wav", sample_rate=current_sample_rate)
         else:

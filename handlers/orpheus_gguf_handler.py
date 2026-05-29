@@ -38,7 +38,7 @@ except ImportError:
 
 if HF_HUB_AVAILABLE_IN_HANDLER: # LlamaCPP is useful only if models can be fetched
     try:
-        import llama_cpp as llama_cpp_module
+        import llama_cpp  # noqa: F401 — availability check
         from llama_cpp import Llama as Llama_imp
         LlamaForHandler = Llama_imp
         LLAMA_CPP_AVAILABLE_IN_HANDLER = True # Corrected
@@ -51,7 +51,8 @@ if HF_HUB_AVAILABLE_IN_HANDLER: # LlamaCPP is useful only if models can be fetch
         logger.info("llama-cpp-python not installed. Orpheus GGUF handler will not be functional.")
 
 
-def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     if not LLAMA_CPP_AVAILABLE_IN_HANDLER or not LlamaForHandler: # Corrected
         logger.error("llama-cpp-python not available. Skipping Orpheus GGUF local synthesis.")
         return
@@ -93,7 +94,7 @@ def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, mo
         repetition_penalty = cli_params.get("repetition_penalty", 1.1)
         n_gpu_layers = cli_params.get("n_gpu_layers", -1 if IS_MPS_FOR_HANDLER_GGUF else 0)
 
-        logger.info("Orpheus GGUF - Loading GGUF model (C-level output suppressed by global handler and verbose=False)...")
+        logger.info("Orpheus GGUF - Loading GGUF model (C-level output suppressed by global handler and verbose=False)...")  # noqa: E501
         with SuppressOutput(suppress_stdout=True, suppress_stderr=True):
             llm = LlamaForHandler(
                 model_path=str(local_model_path),
@@ -116,7 +117,7 @@ def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, mo
                 token_text = output_chunk['choices'][0]['text']
                 full_raw_output_for_debug += token_text
                 yield token_text
-            logger.debug(f"Orpheus GGUF Local - Full raw output (first 200): '{full_raw_output_for_debug[:200]}{'...' if len(full_raw_output_for_debug)>200 else ''}'")
+            logger.debug(f"Orpheus GGUF Local - Full raw output (first 200): '{full_raw_output_for_debug[:200]}{'...' if len(full_raw_output_for_debug)>200 else ''}'")  # noqa: E501
             logger.debug("Orpheus GGUF Local - llama-cpp-python stream finished.")
 
         effective_output_file_wav_str = str(Path(output_file_str).with_suffix(".wav")) if output_file_str else None

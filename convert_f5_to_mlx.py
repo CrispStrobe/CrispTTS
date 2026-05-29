@@ -1,6 +1,5 @@
 # convert_f5_to_mlx_monkeypatched_v4_debug.py
 import argparse
-import json
 import os
 import shutil
 
@@ -31,7 +30,7 @@ def _patched_fetch_from_hub_impl_v4(hf_repo_or_path: str, quantization_bits: Opt
         print(f"DDD: Monkeypatched fetch_from_hub: Detected local directory: {local_path_candidate}")
         return local_path_candidate
 
-    print(f"DDD: Monkeypatched fetch_from_hub: Assuming '{hf_repo_or_path}' is an HF Repo ID. Proceeding to download...")
+    print(f"DDD: Monkeypatched fetch_from_hub: Assuming '{hf_repo_or_path}' is an HF Repo ID. Proceeding to download...")  # noqa: E501
     allow_patterns = ["model_v1*.safetensors", "vocab.txt", "duration_v*.safetensors", "*.json"]
     try:
         downloaded_path_dir = Path(
@@ -55,10 +54,10 @@ try:
     # Attempt to patch cfm's direct reference if it has one (speculative)
     import f5_tts_mlx.cfm
     if hasattr(f5_tts_mlx.cfm, 'fetch_from_hub') and \
-       callable(getattr(f5_tts_mlx.cfm, 'fetch_from_hub')) and \
-       getattr(f5_tts_mlx.cfm, 'fetch_from_hub').__module__ == 'f5_tts_mlx.utils':
+       callable(f5_tts_mlx.cfm.fetch_from_hub) and \
+       f5_tts_mlx.cfm.fetch_from_hub.__module__ == 'f5_tts_mlx.utils':
         f5_tts_mlx.cfm.fetch_from_hub = _patched_fetch_from_hub_impl_v4
-        print("--- Monkeypatch also applied to 'fetch_from_hub' directly in 'f5_tts_mlx.cfm' module namespace (if found). ---")
+        print("--- Monkeypatch also applied to 'fetch_from_hub' directly in 'f5_tts_mlx.cfm' module namespace (if found). ---")  # noqa: E501
 
 except ModuleNotFoundError:
     print("CRITICAL ERROR: Could not find 'f5_tts_mlx.utils' or 'f5_tts_mlx.cfm' for monkeypatching.")
@@ -68,13 +67,13 @@ except Exception as e:
     exit(1)
 
 # --- Standard Imports (should now use patched util if they import f5_tts_mlx.utils) ---
-import re
+import re  # noqa: E402
 
-import mlx.core as mx
-import mlx.nn as nn
-import numpy as np
-import soundfile as sf
-from mlx.utils import tree_flatten
+import mlx.core as mx  # noqa: E402
+import mlx.nn as nn  # noqa: E402
+import numpy as np  # noqa: E402
+import soundfile as sf  # noqa: E402
+from mlx.utils import tree_flatten  # noqa: E402
 
 try:
     from f5_tts_mlx.cfm import F5TTS
@@ -129,7 +128,8 @@ def convert_and_quantize_f5_model(
         if quantization_bits:
             print(f"Applying {quantization_bits}-bit quantization...")
             # Using the library-consistent predicate (from cfm.py)
-            predicate = lambda p, m: (isinstance(m, nn.Linear) and hasattr(m, 'weight') and m.weight.shape[1] % 64 == 0)
+            def predicate(p, m):
+                return (isinstance(m, nn.Linear) and hasattr(m, 'weight') and m.weight.shape[1] % 64 == 0)
             nn.quantize(
                 mlx_model_converted,
                 bits=quantization_bits,
@@ -200,7 +200,7 @@ def perform_mlx_inference(
     MAX_REF_AUDIO_DURATION_SEC = 15
     max_ref_samples = int(MAX_REF_AUDIO_DURATION_SEC * SAMPLE_RATE)
     if len(audio_data) > max_ref_samples:
-        print(f"Reference audio is longer than {MAX_REF_AUDIO_DURATION_SEC}s ({len(audio_data)/SAMPLE_RATE:.2f}s). Truncating to {MAX_REF_AUDIO_DURATION_SEC}s.")
+        print(f"Reference audio is longer than {MAX_REF_AUDIO_DURATION_SEC}s ({len(audio_data)/SAMPLE_RATE:.2f}s). Truncating to {MAX_REF_AUDIO_DURATION_SEC}s.")  # noqa: E501
         audio_data = audio_data[:max_ref_samples]
         print(f"DEBUG: Reference audio shape after truncation: {audio_data.shape}")
 
@@ -220,7 +220,8 @@ def perform_mlx_inference(
     ref_audio_len_frames = ref_audio_mx.shape[0] // HOP_LENGTH
     ref_text_len_bytes = len(ref_text.encode('utf-8')) + 3 * len(re.findall(r"[。，、；：？！.,]", ref_text))
     gen_text_len_bytes = len(gen_text.encode('utf-8')) + 3 * len(re.findall(r"[。，、；：？！.,]", gen_text))
-    if ref_text_len_bytes == 0: ref_text_len_bytes = 1
+    if ref_text_len_bytes == 0:
+        ref_text_len_bytes = 1
     estimated_gen_frames = int(ref_audio_len_frames / ref_text_len_bytes * gen_text_len_bytes / 1.0)
     duration_frames = ref_audio_len_frames + max(10, estimated_gen_frames)
     print(f"Reference audio frames (after potential truncation): {ref_audio_len_frames}")
@@ -279,7 +280,7 @@ def perform_mlx_inference(
             print(f"DEBUG: Raw mels output shape from sample (with vocoder bypass): {raw_mels_batched.shape}")
 
             if raw_mels_batched.ndim != 3 or raw_mels_batched.shape[0] != 1:
-                raise ValueError(f"Bypassed vocoder but did not get expected raw mels [1, frames, mels]. Shape: {raw_mels_batched.shape}")
+                raise ValueError(f"Bypassed vocoder but did not get expected raw mels [1, frames, mels]. Shape: {raw_mels_batched.shape}")  # noqa: E501
 
             generated_mels_full_frames = raw_mels_batched[0] # Shape: [frames, mels]
             generated_mels_trimmed_frames = generated_mels_full_frames[ref_audio_len_frames:, :]
@@ -292,7 +293,7 @@ def perform_mlx_inference(
             # Vocos lucasnewman/vocos-mel-24khz expects (batch, frames, mels) as per your test_vocos_mlx.py
             mels_for_script_vocoder = mx.expand_dims(generated_mels_trimmed_frames, axis=0) # [1, gen_frames, mels]
             mels_for_script_vocoder = mels_for_script_vocoder.astype(mx.float32)
-            print(f"DEBUG: Shape of mels_for_script_vocoder for external vocoder: {mels_for_script_vocoder.shape}, Dtype: {mels_for_script_vocoder.dtype}")
+            print(f"DEBUG: Shape of mels_for_script_vocoder for external vocoder: {mels_for_script_vocoder.shape}, Dtype: {mels_for_script_vocoder.dtype}")  # noqa: E501
 
             generated_wave_batched_external = script_vocoder.decode(mels_for_script_vocoder)
             mx.eval(generated_wave_batched_external)
@@ -303,7 +304,7 @@ def perform_mlx_inference(
             elif generated_wave_batched_external.ndim == 2 and generated_wave_batched_external.shape[0] == 1:
                  generated_wave_full = generated_wave_batched_external[0]
             else:
-                 raise ValueError(f"External vocoding failed to produce 1D or [1,L] audio. Shape: {generated_wave_batched_external.shape}")
+                 raise ValueError(f"External vocoding failed to produce 1D or [1,L] audio. Shape: {generated_wave_batched_external.shape}")  # noqa: E501
 
             # This generated_wave_full is already the generated part (mels were trimmed before vocoding)
             generated_wave_trimmed = generated_wave_full
@@ -312,8 +313,8 @@ def perform_mlx_inference(
             # Re-raise the original error that triggered the bypass, plus the bypass error
             original_trigger_error_msg = (f"f5_model_infer.sample() returned an unexpected output. "
                                           f"Expected a batched audio array [1, audio_samples], "
-                                          f"but got shape {generated_wave_batched.shape} and type {type(generated_wave_batched)}.")
-            raise ValueError(f"Both direct sample() output and vocoder bypass failed. Original trigger: {original_trigger_error_msg}") from e_bypass
+                                          f"but got shape {generated_wave_batched.shape} and type {type(generated_wave_batched)}.")  # noqa: E501
+            raise ValueError(f"Both direct sample() output and vocoder bypass failed. Original trigger: {original_trigger_error_msg}") from e_bypass  # noqa: E501
 
     # If generated_wave_full is still None here, it means direct path also failed critically
     if generated_wave_full is None:
@@ -323,11 +324,11 @@ def perform_mlx_inference(
     if not vocoder_bypass_used: # If bypass was used, generated_wave_trimmed is already set correctly
         print(f"DEBUG: Shape of generated_wave_full (after batch index, before trim): {generated_wave_full.shape}")
         if generated_wave_full.ndim == 0:
-            raise ValueError(f"generated_wave_full is scalar before trimming. Original batched shape: {generated_wave_batched.shape}")
+            raise ValueError(f"generated_wave_full is scalar before trimming. Original batched shape: {generated_wave_batched.shape}")  # noqa: E501
 
         ref_len_samples = ref_audio_mx.shape[0]
         if ref_len_samples >= generated_wave_full.shape[0]:
-            print(f"WARNING: Reference audio length ({ref_len_samples}) is >= generated full audio length ({generated_wave_full.shape[0]}). Generated part might be empty or very short.")
+            print(f"WARNING: Reference audio length ({ref_len_samples}) is >= generated full audio length ({generated_wave_full.shape[0]}). Generated part might be empty or very short.")  # noqa: E501
             actual_gen_start_index = min(ref_len_samples, generated_wave_full.shape[0] -1)
             actual_gen_start_index = max(0, actual_gen_start_index) # Ensure not negative
             generated_wave_trimmed = generated_wave_full[actual_gen_start_index:]
@@ -374,16 +375,25 @@ def upload_to_hf_hub(
 
 def main():
     parser = argparse.ArgumentParser(description="Convert PyTorch F5 TTS model to MLX, quantize, test, and upload.")
-    parser.add_argument("--hf_repo_id_pytorch", type=str, required=True, help="HF Repo ID for the source PyTorch F5 model.")
-    parser.add_argument("--pytorch_model_filename", type=str, required=True, help="Filename of the .safetensors PyTorch model in the repo.")
-    parser.add_argument("--source_vocab_filename", type=str, default="vocab.txt", help="Filename of the vocab.txt in the PyTorch model repo (or separate if hf_vocab_repo_id is set).")
-    parser.add_argument("--hf_vocab_repo_id", type=str, default=None, help="Optional: HF Repo ID for vocab.txt if it's separate from the model repo.")
-    parser.add_argument("--output_dir", type=str, default="converted_f5_mlx_model", help="Directory to save the converted MLX model and vocab.")
-    parser.add_argument("--quantization_bits", type=int, default=4, choices=[0, 4, 8], help="Bits for quantization (4 or 8). 0 for no quantization.")
+    parser.add_argument("--hf_repo_id_pytorch", type=str, required=True,
+        help="HF Repo ID for the source PyTorch F5 model.")
+    parser.add_argument("--pytorch_model_filename", type=str, required=True,
+        help="Filename of the .safetensors PyTorch model in the repo.")
+    parser.add_argument("--source_vocab_filename", type=str, default="vocab.txt",
+        help="Filename of the vocab.txt in the PyTorch model repo (or separate if hf_vocab_repo_id is set).")
+    parser.add_argument("--hf_vocab_repo_id", type=str, default=None,
+        help="Optional: HF Repo ID for vocab.txt if it's separate from the model repo.")
+    parser.add_argument("--output_dir", type=str, default="converted_f5_mlx_model",
+        help="Directory to save the converted MLX model and vocab.")
+    parser.add_argument("--quantization_bits", type=int, default=4, choices=[0, 4, 8],
+        help="Bits for quantization (4 or 8). 0 for no quantization.")
     parser.add_argument("--skip_inference", action="store_true", help="Skip the inference test step.")
-    parser.add_argument("--ref_audio_for_test", type=str, default="test_ref_audio.wav", help="Path to reference audio for the inference test. Will be created as dummy if not found.")
-    parser.add_argument("--hf_upload_repo_id", type=str, default=None, help="Optional: HF Repo ID to upload the converted MLX model and vocab to.")
-    parser.add_argument("--hf_token", type=str, default=os.getenv("HF_TOKEN"), help="Hugging Face API token (or set HF_TOKEN env var).")
+    parser.add_argument("--ref_audio_for_test", type=str, default="test_ref_audio.wav",
+        help="Path to reference audio for the inference test. Will be created as dummy if not found.")
+    parser.add_argument("--hf_upload_repo_id", type=str, default=None,
+        help="Optional: HF Repo ID to upload the converted MLX model and vocab to.")
+    parser.add_argument("--hf_token", type=str, default=os.getenv("HF_TOKEN"),
+        help="Hugging Face API token (or set HF_TOKEN env var).")
     args = parser.parse_args()
 
     target_output_mlx_dir = Path(args.output_dir)
@@ -438,7 +448,7 @@ def main():
             local_folder=target_output_mlx_dir,
             hf_repo_id=args.hf_upload_repo_id,
             hf_token=args.hf_token,
-            commit_message_prefix=f"Add F5-TTS MLX model (q={q_bits}bit)" if q_bits else "Add F5-TTS MLX model (unquantized)"
+            commit_message_prefix=f"Add F5-TTS MLX model (q={q_bits}bit)" if q_bits else "Add F5-TTS MLX model (unquantized)"  # noqa: E501
         )
     else:
         print("Skipping upload to Hugging Face Hub.")

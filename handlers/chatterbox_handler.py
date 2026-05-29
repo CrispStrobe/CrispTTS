@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 # Conditional imports
@@ -65,7 +64,7 @@ except ImportError as e:
     logger_init.info("safetensors library not found.")
 
 try:
-    from utils import SuppressOutput, _prepare_oute_speaker_ref, play_audio, save_audio
+    from utils import SuppressOutput, _prepare_oute_speaker_ref, play_audio
     UTILS_AVAILABLE = True
 except ImportError as e:
     print(f"Chatterbox Handler CRITICAL INIT ERROR: Failed to import from 'utils': {e}", file=sys.stderr)
@@ -73,7 +72,8 @@ except ImportError as e:
 
 logger = logging.getLogger("CrispTTS.handlers.chatterbox")
 
-def synthesize_with_chatterbox(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_chatterbox(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     crisptts_model_id_for_log = model_config.get('crisptts_model_id', 'kartoffelbox_unknown')
 
     # Check dependencies
@@ -91,7 +91,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
     # Get model configuration
     model_repo_id = model_config.get("model_repo_id")
     t3_checkpoint_file = model_config.get("t3_checkpoint_file", "t3_cfg.safetensors")
-    sample_rate = model_config.get("sample_rate", 22050)
+    _sample_rate = model_config.get("sample_rate", 22050)
 
     if not model_repo_id:
         logger.error(f"Chatterbox ({crisptts_model_id_for_log}): Missing model_repo_id in config.")
@@ -124,7 +124,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
             cli_params = json.loads(model_params_override)
             generation_params.update(cli_params)
         except json.JSONDecodeError:
-            logger.warning(f"Chatterbox ({crisptts_model_id_for_log}): Could not parse --model-params: {model_params_override}")
+            logger.warning(f"Chatterbox ({crisptts_model_id_for_log}): Could not parse --model-params: {model_params_override}")  # noqa: E501
 
     logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Synthesizing with model '{model_repo_id}'")
 
@@ -169,7 +169,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
             if processed_ref_path:
                 reference_audio_path = str(processed_ref_path)
             else:
-                logger.warning(f"Chatterbox ({crisptts_model_id_for_log}): Failed to process reference audio, proceeding without it.")
+                logger.warning(f"Chatterbox ({crisptts_model_id_for_log}): Failed to process reference audio, proceeding without it.")  # noqa: E501
                 reference_audio_path = None
 
         # Generate speech
@@ -211,7 +211,8 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
                 sf_chatterbox.write(str(output_path), audio_numpy, samplerate=chatterbox_model.sr)
                 logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Audio saved to {output_path}")
             except Exception as e_save:
-                logger.error(f"Chatterbox ({crisptts_model_id_for_log}): Failed to save to {output_path}: {e_save}", exc_info=True)
+                logger.error(f"Chatterbox ({crisptts_model_id_for_log}): Failed to save to {output_path}: {e_save}",
+                    exc_info=True)
 
         # Play if requested
         if play_direct and audio_numpy.size > 0:
@@ -234,10 +235,12 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
         if TORCH_AVAILABLE_IN_HANDLER and torch_chatterbox:
             if torch_chatterbox.cuda.is_available():
                 torch_chatterbox.cuda.empty_cache()
-            if hasattr(torch_chatterbox.backends, "mps") and torch_chatterbox.backends.mps.is_available() and hasattr(torch_chatterbox.mps, "empty_cache"):
+            if hasattr(torch_chatterbox.backends,
+                "mps") and torch_chatterbox.backends.mps.is_available() and hasattr(torch_chatterbox.mps,
+                "empty_cache"):
                 try:
                     torch_chatterbox.mps.empty_cache()
-                except Exception:
+                except Exception:  # noqa: S110
                     pass
         gc.collect()
 

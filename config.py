@@ -1,8 +1,6 @@
 # config.py
 
 import logging  # Use logging for config-level warnings if needed
-import os
-from pathlib import Path
 
 logger_cfg = logging.getLogger("CrispTTS.config")
 
@@ -38,7 +36,7 @@ if TORCH_AVAILABLE_FOR_CONFIG: # OuteTTS depends on PyTorch
     except ImportError:
         logger_cfg.info("OuteTTS library not found during config load. OuteTTS enums will be placeholders.")
     except AttributeError: # Catches error if protobufs for OuteTTS are not compiled
-        logger_cfg.warning("OuteTTS import has AttributeError (likely protobuf issue). OuteTTS enums will be placeholders.")
+        logger_cfg.warning("OuteTTS import has AttributeError (likely protobuf issue). OuteTTS enums will be placeholders.")  # noqa: E501
 
 
 # --- Global TTS Constants ---
@@ -171,20 +169,25 @@ OUTETTS_INTERNAL_MODEL_INFO_DATA = {}
 if OUTETTS_AVAILABLE_FOR_CONFIG and OuteTTSModels_Enum and OuteTTSInterfaceVersion_Enum:
     try:
         OUTETTS_INTERNAL_MODEL_INFO_DATA = {
-            OuteTTSModels_Enum.VERSION_0_1_SIZE_350M: {"max_seq_length": 4096, "interface_version": OuteTTSInterfaceVersion_Enum.V1},
-            OuteTTSModels_Enum.VERSION_0_2_SIZE_500M: {"max_seq_length": 4096, "interface_version": OuteTTSInterfaceVersion_Enum.V2},
-            OuteTTSModels_Enum.VERSION_0_3_SIZE_500M: {"max_seq_length": 4096, "interface_version": OuteTTSInterfaceVersion_Enum.V2},
-            OuteTTSModels_Enum.VERSION_0_3_SIZE_1B: {"max_seq_length": 4096, "interface_version": OuteTTSInterfaceVersion_Enum.V2},
-            OuteTTSModels_Enum.VERSION_1_0_SIZE_1B: {"max_seq_length": 8192, "interface_version": OuteTTSInterfaceVersion_Enum.V3},
+            OuteTTSModels_Enum.VERSION_0_1_SIZE_350M: {"max_seq_length": 4096,
+                "interface_version": OuteTTSInterfaceVersion_Enum.V1},
+            OuteTTSModels_Enum.VERSION_0_2_SIZE_500M: {"max_seq_length": 4096,
+                "interface_version": OuteTTSInterfaceVersion_Enum.V2},
+            OuteTTSModels_Enum.VERSION_0_3_SIZE_500M: {"max_seq_length": 4096,
+                "interface_version": OuteTTSInterfaceVersion_Enum.V2},
+            OuteTTSModels_Enum.VERSION_0_3_SIZE_1B: {"max_seq_length": 4096,
+                "interface_version": OuteTTSInterfaceVersion_Enum.V2},
+            OuteTTSModels_Enum.VERSION_1_0_SIZE_1B: {"max_seq_length": 8192,
+                "interface_version": OuteTTSInterfaceVersion_Enum.V3},
         }
     except AttributeError:
         logger_cfg.warning("Could not fully populate OUTETTS_INTERNAL_MODEL_INFO_DATA due to OuteTTS enum mismatch.")
 
 OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA = {
-    "0.1": {"max_seq_length": 4096, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V1 if OuteTTSInterfaceVersion_Enum else "V1_STR_FALLBACK"},
-    "0.2": {"max_seq_length": 4096, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V2 if OuteTTSInterfaceVersion_Enum else "V2_STR_FALLBACK"},
-    "0.3": {"max_seq_length": 4096, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V2 if OuteTTSInterfaceVersion_Enum else "V2_STR_FALLBACK"},
-    "1.0": {"max_seq_length": 8192, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V3 if OuteTTSInterfaceVersion_Enum else "V3_STR_FALLBACK"},
+    "0.1": {"max_seq_length": 4096, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V1 if OuteTTSInterfaceVersion_Enum else "V1_STR_FALLBACK"},  # noqa: E501
+    "0.2": {"max_seq_length": 4096, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V2 if OuteTTSInterfaceVersion_Enum else "V2_STR_FALLBACK"},  # noqa: E501
+    "0.3": {"max_seq_length": 4096, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V2 if OuteTTSInterfaceVersion_Enum else "V2_STR_FALLBACK"},  # noqa: E501
+    "1.0": {"max_seq_length": 8192, "interface_version_enum_val": OuteTTSInterfaceVersion_Enum.V3 if OuteTTSInterfaceVersion_Enum else "V3_STR_FALLBACK"},  # noqa: E501
 }
 
 # --- Main Model Configuration Dictionary ---
@@ -198,7 +201,7 @@ GERMAN_TTS_MODELS = {
         "language": "de", # espeak language code for German
         "sample_rate": 44100, # Zonos native sample rate
         "requires_hf_token": False,
-        "notes": "Zyphra Zonos v0.1 (Transformer). High-quality, requires PyTorch & espeak-ng. Voice cloning via reference WAV."
+        "notes": "Zyphra Zonos v0.1 (Transformer). High-quality, requires PyTorch & espeak-ng. Voice cloning via reference WAV."  # noqa: E501
     },
     "edge": {
         "handler_function_key": "edge",
@@ -268,9 +271,9 @@ GERMAN_TTS_MODELS = {
     },
     "oute_llamacpp": {
         "handler_function_key": "outetts", # Standardized key for OuteTTS
-        "outetts_model_enum": OuteTTSModels_Enum.VERSION_1_0_SIZE_1B if OUTETTS_AVAILABLE_FOR_CONFIG else "VERSION_1_0_SIZE_1B_STR_FALLBACK",
+        "outetts_model_enum": OuteTTSModels_Enum.VERSION_1_0_SIZE_1B if OUTETTS_AVAILABLE_FOR_CONFIG else "VERSION_1_0_SIZE_1B_STR_FALLBACK",  # noqa: E501
         "backend_to_use": OuteTTSBackend_Enum.LLAMACPP if OUTETTS_AVAILABLE_FOR_CONFIG else "LLAMACPP_STR_FALLBACK",
-        "quantization_to_use": OuteTTSLlamaCppQuantization_Enum.FP16 if OUTETTS_AVAILABLE_FOR_CONFIG else "FP16_STR_FALLBACK",
+        "quantization_to_use": OuteTTSLlamaCppQuantization_Enum.FP16 if OUTETTS_AVAILABLE_FOR_CONFIG else "FP16_STR_FALLBACK",  # noqa: E501
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
         "test_default_speakers": ["EN-FEMALE-1-NEUTRAL"],
@@ -283,7 +286,7 @@ GERMAN_TTS_MODELS = {
         "tokenizer_path": "OuteAI/Llama-OuteTTS-1.0-1B",
         "onnx_filename_options": ["onnx/model_int8.onnx"],
         "wavtokenizer_model_path": "onnx-community/WavTokenizer-large-speech-75token_decode",
-        "interface_version_enum": OuteTTSInterfaceVersion_Enum.V3 if OUTETTS_AVAILABLE_FOR_CONFIG else "V3_STR_FALLBACK",
+        "interface_version_enum": OuteTTSInterfaceVersion_Enum.V3 if OUTETTS_AVAILABLE_FOR_CONFIG else "V3_STR_FALLBACK",  # noqa: E501
         "backend_to_use": OuteTTSBackend_Enum.HF if OUTETTS_AVAILABLE_FOR_CONFIG else "HF_STR_FALLBACK",
         "language": "de",
         "torch_dtype_for_hf_wrapper": torch.float16 if TORCH_AVAILABLE_FOR_CONFIG else "torch.float16_STR_FALLBACK",
@@ -463,7 +466,7 @@ GERMAN_TTS_MODELS = {
         "available_voices": ["./german.wav"],
         "sample_rate": 16000,
         "requires_hf_token": False,
-        "notes": "LLaSA Multilingual (Multilingual-specific handler + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
+        "notes": "LLaSA Multilingual (Multilingual-specific handler + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."  # noqa: E501
     },
     "llasa_multilingual_hf_zeroshot": {
         "crisptts_model_id": "llasa_multilingual_hf_zeroshot",
@@ -537,7 +540,7 @@ GERMAN_TTS_MODELS = {
         ],
         "lang_code": "de",
         "sample_rate": 24000,
-        "notes": "mlx-audio (Bark) with main model from mlx-community/bark-small and voices from suno/bark-small (via patch)."
+        "notes": "mlx-audio (Bark) with main model from mlx-community/bark-small and voices from suno/bark-small (via patch)."  # noqa: E501
     },
     # --- Kartoffelbox (Chatterbox-based) Models ---
     "kartoffelbox_clone": {
@@ -632,7 +635,7 @@ GERMAN_TTS_MODELS = {
         "default_steps": 32,
         "default_cfg_strength": 2.0,
         "requires_hf_token": False,
-        "notes": "EXPERIMENTAL: F5-TTS German MLX by eamag. Known to have architecture incompatibility. Will attempt MLX and should fall back to PyTorch."
+        "notes": "EXPERIMENTAL: F5-TTS German MLX by eamag. Known to have architecture incompatibility. Will attempt MLX and should fall back to PyTorch."  # noqa: E501
     },
     # --- mlx audio endpoint test ---
     "mlx_audio_orpheus_llama": { # For the Orpheus-Llama in mlx-audio

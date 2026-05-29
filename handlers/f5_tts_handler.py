@@ -8,8 +8,6 @@ import shutil
 import tempfile
 from pathlib import Path
 
-import numpy as np
-
 # Conditional Imports
 TORCH_FOR_F5_HANDLER = False
 torch_f5 = None
@@ -71,7 +69,7 @@ if TORCH_FOR_F5_HANDLER:
         TRANSFORMERS_PIPELINE_F5_AVAILABLE = True
         logger_init.info("Transformers pipeline imported (for Whisper).")
     except ImportError:
-        logger_init.warning("Transformers pipeline not found. Transcription for F5-TTS reference audio will not be available.")
+        logger_init.warning("Transformers pipeline not found. Transcription for F5-TTS reference audio will not be available.")  # noqa: E501
 
     try:
         import torchaudio as ta_imp
@@ -104,7 +102,7 @@ except ImportError: #
     logger_init.warning("pydub not found. Reference audio trimming/conversion for F5-TTS will be limited.") #
 
 
-from utils import SuppressOutput, get_huggingface_cache_dir, play_audio, save_audio
+from utils import SuppressOutput, get_huggingface_cache_dir, play_audio  # noqa: E402
 
 logger = logging.getLogger("CrispTTS.handlers.f5_tts")
 HF_CACHE_DIR = get_huggingface_cache_dir()
@@ -112,9 +110,10 @@ HF_CACHE_DIR = get_huggingface_cache_dir()
 _transcription_cache = {}
 
 
-def _prepare_ref_audio_for_f5(ref_audio_path: Path, target_dir: Path, max_duration_s: int = 28, target_sr: int = 24000) -> tuple[Path | None, bool]: #
+def _prepare_ref_audio_for_f5(ref_audio_path: Path, target_dir: Path, max_duration_s: int = 28,
+    target_sr: int = 24000) -> tuple[Path | None, bool]: #
     if not PYDUB_FOR_F5_HANDLER or not AudioSegment_pydub_f5: #
-        logger.warning("F5-TTS: Pydub not available for reference audio preparation. Using original file (might fail if not WAV/suitable).")
+        logger.warning("F5-TTS: Pydub not available for reference audio preparation. Using original file (might fail if not WAV/suitable).")  # noqa: E501
         if ref_audio_path.suffix.lower() != ".wav":
              logger.error("F5-TTS: Pydub is unavailable, and reference audio is not WAV. Processing will likely fail.")
              return None, False
@@ -197,10 +196,13 @@ def _transcribe_ref_audio_with_whisper(audio_path_str: str, whisper_model_id_cfg
     finally: #
         del whisper_pipeline_instance #
         if TORCH_FOR_F5_HANDLER: #
-            if torch_f5.cuda.is_available(): torch_f5.cuda.empty_cache() #
+            if torch_f5.cuda.is_available():
+                torch_f5.cuda.empty_cache() #
             if IS_MPS_FOR_F5_HANDLER and hasattr(torch_f5.mps, "empty_cache"): #
-                try: torch_f5.mps.empty_cache() #
-                except Exception: pass #
+                try:
+                    torch_f5.mps.empty_cache() #
+                except Exception:  # noqa: S110
+                    pass
         gc.collect() #
 
     if transcribed_text and not err_msg: #
@@ -230,7 +232,7 @@ def synthesize_with_f5_tts(
     effective_ref_audio_path = Path(effective_ref_audio_path_str).resolve() #
 
     if not effective_ref_audio_path.exists(): #
-        logger.error(f"F5-TTS ({display_model_id}): Reference audio path not found: {effective_ref_audio_path}. Skipping.") #
+        logger.error(f"F5-TTS ({display_model_id}): Reference audio path not found: {effective_ref_audio_path}. Skipping.") #  # noqa: E501
         return #
 
     language_code = crisptts_model_config.get("language", "de") #
@@ -238,8 +240,10 @@ def synthesize_with_f5_tts(
 
     cli_params = {} #
     if model_params_override: #
-        try: cli_params = json.loads(model_params_override) #
-        except json.JSONDecodeError: logger.warning(f"F5-TTS ({display_model_id}): Could not parse --model-params: {model_params_override}") #
+        try:
+            cli_params = json.loads(model_params_override) #
+        except json.JSONDecodeError:
+            logger.warning(f"F5-TTS ({display_model_id}): Could not parse --model-params: {model_params_override}") #
 
     effective_output_path_for_handler = Path(output_file_str).with_suffix(".wav") if output_file_str else None #
 
@@ -252,7 +256,7 @@ def synthesize_with_f5_tts(
         if use_mlx_preferred: #
             logger.info(f"F5-TTS ({display_model_id}): Selected MLX backend as preferred.") #
             if not generate_mlx_func: #
-                logger.error(f"F5-TTS ({display_model_id}): MLX generate function not available. Skipping MLX attempt.") #
+                logger.error(f"F5-TTS ({display_model_id}): MLX generate function not available. Skipping MLX attempt.") #  # noqa: E501
             else: #
                 logger.info(f"F5-TTS ({display_model_id}): Attempting synthesis with MLX backend.") #
 
@@ -264,7 +268,7 @@ def synthesize_with_f5_tts(
                 )
 
                 if not prepared_ref_audio_path_mlx or not prepared_ref_audio_path_mlx.exists(): #
-                    logger.error(f"F5-TTS ({display_model_id}): MLX - Reference audio preparation failed for {effective_ref_audio_path}.") #
+                    logger.error(f"F5-TTS ({display_model_id}): MLX - Reference audio preparation failed for {effective_ref_audio_path}.") #  # noqa: E501
                     return #
 
                 ref_audio_text, trans_err = _transcribe_ref_audio_with_whisper( #
@@ -275,7 +279,7 @@ def synthesize_with_f5_tts(
                     hf_token=os.getenv("HF_TOKEN") #
                 )
                 if trans_err: #
-                    logger.warning(f"F5-TTS ({display_model_id}): MLX - Whisper transcription failed: {trans_err}. Using placeholder.") #
+                    logger.warning(f"F5-TTS ({display_model_id}): MLX - Whisper transcription failed: {trans_err}. Using placeholder.") #  # noqa: E501
                     ref_audio_text = ref_audio_text or "Reference audio transcription failed." #
 
                 mlx_args = { #
@@ -283,9 +287,10 @@ def synthesize_with_f5_tts(
                     "model_name": model_repo_id, #
                     "ref_audio_path": str(prepared_ref_audio_path_mlx), #
                     "ref_audio_text": ref_audio_text, #
-                    "output_path": str(effective_output_path_for_handler) if effective_output_path_for_handler else "f5_mlx_output.wav", #
+                    "output_path": str(effective_output_path_for_handler) if effective_output_path_for_handler else "f5_mlx_output.wav", #  # noqa: E501
                     "steps": int(cli_params.get("steps", crisptts_model_config.get("default_steps", 32))), #
-                    "cfg_strength": float(cli_params.get("cfg_strength", crisptts_model_config.get("default_cfg_strength", 2.0))), #
+                    "cfg_strength": float(cli_params.get("cfg_strength",
+                        crisptts_model_config.get("default_cfg_strength", 2.0))), #
                     "sway_sampling_coef": float(cli_params.get("sway", -1.0)), #
                     "speed": float(cli_params.get("speed", 1.0)), #
                     "estimate_duration": cli_params.get("estimate_duration", True), #
@@ -303,20 +308,23 @@ def synthesize_with_f5_tts(
                     # we need to copy it to where the main function expects it if output_file_str was given.
                     # However, current logic sets mlx_args["output_path"] based on effective_output_path_for_handler.
                     # So if effective_output_path_for_handler is None, the file is "f5_mlx_output.wav"
-                    if not effective_output_path_for_handler and output_file_str: # This case should not happen if output_file_str is given
-                         logger.warning("F5-TTS MLX: Output was generated to default, but output_file_str was provided. This is unexpected.")
+                    if (not effective_output_path_for_handler
+                            and output_file_str):  # should not happen if output_file_str is given
+                         logger.warning("F5-TTS MLX: Output was generated to default, but output_file_str was provided. This is unexpected.")  # noqa: E501
                     elif not effective_output_path_for_handler:
                          logger.info(f"F5-TTS MLX output saved to default path: {output_path_to_check.resolve()}")
 
         if not synthesis_successful: #
-            if use_mlx_preferred: logger.warning(f"F5-TTS ({display_model_id}): MLX backend failed or produced no output. Attempting PyTorch Standard backend.") #
-            else: logger.info(f"F5-TTS ({display_model_id}): Selected PyTorch Standard backend.") #
+            if use_mlx_preferred:
+                logger.warning(f"F5-TTS ({display_model_id}): MLX backend failed or produced no output. Attempting PyTorch Standard backend.") #  # noqa: E501
+            else:
+                logger.info(f"F5-TTS ({display_model_id}): Selected PyTorch Standard backend.") #
 
             if not F5_TTS_STANDARD_API_AVAILABLE or not F5TTSStandardAPIClass: #
-                logger.error(f"F5-TTS ({display_model_id}): Standard F5TTS API class not available. Cannot use PyTorch backend. Skipping.") #
+                logger.error(f"F5-TTS ({display_model_id}): Standard F5TTS API class not available. Cannot use PyTorch backend. Skipping.") #  # noqa: E501
                 return #
             if not OMEGACONF_F5_AVAILABLE: #
-                logger.error(f"F5-TTS ({display_model_id}): OmegaConf not available. Cannot load configs for PyTorch backend. Skipping.") #
+                logger.error(f"F5-TTS ({display_model_id}): OmegaConf not available. Cannot load configs for PyTorch backend. Skipping.") #  # noqa: E501
                 return #
 
             logger.info(f"F5-TTS ({display_model_id}): Executing synthesis with PyTorch Standard backend.") #
@@ -329,7 +337,7 @@ def synthesize_with_f5_tts(
                 target_sr=24000 #
             )
             if not prepared_ref_audio_path_pytorch or not prepared_ref_audio_path_pytorch.exists(): #
-                logger.error(f"F5-TTS ({display_model_id}): PyTorch - Reference audio preparation failed for {effective_ref_audio_path}.") #
+                logger.error(f"F5-TTS ({display_model_id}): PyTorch - Reference audio preparation failed for {effective_ref_audio_path}.") #  # noqa: E501
                 return #
 
             transcribed_ref_text, trans_err = _transcribe_ref_audio_with_whisper( #
@@ -340,7 +348,7 @@ def synthesize_with_f5_tts(
                 hf_token=os.getenv("HF_TOKEN") #
             )
             if trans_err: #
-                logger.warning(f"F5-TTS ({display_model_id}): PyTorch - Whisper transcription failed: {trans_err}. Using placeholder.") #
+                logger.warning(f"F5-TTS ({display_model_id}): PyTorch - Whisper transcription failed: {trans_err}. Using placeholder.") #  # noqa: E501
                 transcribed_ref_text = transcribed_ref_text or "Reference audio transcription failed." #
 
             f5_standard_model_instance = None #
@@ -362,7 +370,7 @@ def synthesize_with_f5_tts(
                     from huggingface_hub import hf_hub_download  # Local import #
                     chkpt_path_obj = Path(checkpoint_filename) #
                     if not chkpt_path_obj.is_file(): #
-                        logger.info(f"F5-TTS ({display_model_id}): Downloading specific checkpoint: {checkpoint_filename}") #
+                        logger.info(f"F5-TTS ({display_model_id}): Downloading specific checkpoint: {checkpoint_filename}") #  # noqa: E501
                         checkpoint_to_load = hf_hub_download( #
                             repo_id=model_repo_id, #
                             filename=checkpoint_filename, #
@@ -371,14 +379,16 @@ def synthesize_with_f5_tts(
                     else: #
                         checkpoint_to_load = str(chkpt_path_obj) #
 
-                    logger.info(f"F5-TTS ({display_model_id}): Loading state_dict from checkpoint: {checkpoint_to_load}") #
-                    f5_standard_model_instance.model.load_state_dict(torch_f5.load(checkpoint_to_load, map_location=pytorch_device)["state_dict"]) #
+                    logger.info(f"F5-TTS ({display_model_id}): Loading state_dict from checkpoint: {checkpoint_to_load}") #  # noqa: E501
+                    f5_standard_model_instance.model.load_state_dict(torch_f5.load(checkpoint_to_load,
+                        map_location=pytorch_device)["state_dict"]) #
 
                 f5_standard_model_instance.model.eval() #
 
                 f5_generation_params = { #
                     "steps": int(cli_params.get("steps", crisptts_model_config.get("default_steps", 32))), #
-                    "cfg_strength": float(cli_params.get("cfg_strength", crisptts_model_config.get("default_cfg_strength", 2.0))), #
+                    "cfg_strength": float(cli_params.get("cfg_strength",
+                        crisptts_model_config.get("default_cfg_strength", 2.0))), #
                     "temperature": float(cli_params.get("temperature", 1.0)), #
                 }
                 logger.debug(f"F5-TTS ({display_model_id}): PyTorch generate args: {f5_generation_params}") #
@@ -392,31 +402,38 @@ def synthesize_with_f5_tts(
 
                 if effective_output_path_for_handler: #
                     audio_numpy = audio_out_tensor.squeeze().cpu().numpy() #
-                    soundfile_f5.write(str(effective_output_path_for_handler), audio_numpy, samplerate=f5_standard_model_instance.sr) #
+                    soundfile_f5.write(str(effective_output_path_for_handler), audio_numpy,
+                        samplerate=f5_standard_model_instance.sr) #
 
-                if effective_output_path_for_handler and effective_output_path_for_handler.exists() and effective_output_path_for_handler.stat().st_size > 100: #
+                if (effective_output_path_for_handler
+                        and effective_output_path_for_handler.exists()
+                        and effective_output_path_for_handler.stat().st_size > 100):
                     synthesis_successful = True #
             finally: #
                 del f5_standard_model_instance #
 
         if synthesis_successful: #
-            logger.info(f"F5-TTS ({display_model_id}): Synthesis successful. Output at: {effective_output_path_for_handler}") #
+            logger.info(f"F5-TTS ({display_model_id}): Synthesis successful. Output at: {effective_output_path_for_handler}") #  # noqa: E501
             if play_direct and effective_output_path_for_handler: #
                 play_audio(str(effective_output_path_for_handler), is_path=True) #
         else: #
-            logger.error(f"F5-TTS ({display_model_id}): Synthesis failed with all attempted backends or output was empty.") #
+            logger.error(f"F5-TTS ({display_model_id}): Synthesis failed with all attempted backends or output was empty.") #  # noqa: E501
 
     except Exception as e_main: #
-        logger.error(f"F5-TTS ({display_model_id}): An unhandled error occurred during synthesis: {e_main}", exc_info=True) #
+        logger.error(f"F5-TTS ({display_model_id}): An unhandled error occurred during synthesis: {e_main}",
+            exc_info=True) #
     finally: #
         if temp_ref_audio_dir_obj and temp_ref_audio_dir_obj.exists(): #
             shutil.rmtree(temp_ref_audio_dir_obj, ignore_errors=True) #
-            logger.debug(f"F5-TTS ({display_model_id}): Cleaned up temp ref audio directory: {temp_ref_audio_dir_obj}") #
+            logger.debug(f"F5-TTS ({display_model_id}): Cleaned up temp ref audio directory: {temp_ref_audio_dir_obj}") #  # noqa: E501
 
         if TORCH_FOR_F5_HANDLER: #
-            if torch_f5.cuda.is_available(): torch_f5.cuda.empty_cache() #
+            if torch_f5.cuda.is_available():
+                torch_f5.cuda.empty_cache() #
             if IS_MPS_FOR_F5_HANDLER and hasattr(torch_f5.mps, "empty_cache"): #
-                try: torch_f5.mps.empty_cache() #
-                except Exception: pass #
+                try:
+                    torch_f5.mps.empty_cache() #
+                except Exception:  # noqa: S110
+                    pass
         gc.collect() #
         logger.info(f"F5-TTS ({display_model_id}): Handler finished.") #

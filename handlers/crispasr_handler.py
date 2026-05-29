@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import time
 
-from utils import play_audio, save_audio
+from utils import play_audio
 
 logger = logging.getLogger("CrispTTS.handlers.crispasr")
 
@@ -96,7 +96,7 @@ def _download_crispasr():
     logger.info("Downloading CrispASR from %s", url)
 
     try:
-        urllib.request.urlretrieve(url, archive_path)
+        urllib.request.urlretrieve(url, archive_path)  # noqa: S310
     except Exception as e:
         logger.warning("Failed to download CrispASR: %s", e)
         return None
@@ -110,7 +110,7 @@ def _download_crispasr():
                 for member in zf.namelist():
                     if os.path.isabs(member) or ".." in member.split("/"):
                         raise ValueError(f"Unsafe zip member: {member}")
-                zf.extractall(_CACHE_DIR)
+                zf.extractall(_CACHE_DIR)  # noqa: S202
     except Exception as e:
         logger.warning("Failed to extract CrispASR: %s", e)
         return None
@@ -123,7 +123,7 @@ def _download_crispasr():
             if f == exe_name:
                 path = os.path.join(root, f)
                 if system != "windows":
-                    os.chmod(path, 0o755)
+                    os.chmod(path, 0o755)  # noqa: S103
                 return path
 
     return None
@@ -231,7 +231,7 @@ def synthesize_with_crispasr(
 
     t0 = time.time()
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             cmd, capture_output=True, text=True, timeout=300,
         )
 
@@ -289,7 +289,7 @@ def verify_tts_with_asr(
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)  # noqa: S603
         if result.returncode != 0:
             return {"error": f"ASR failed (code {result.returncode})"}
 
@@ -353,7 +353,7 @@ def translate_text_with_crispasr(
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)  # noqa: S603
         if result.returncode == 0 and result.stdout.strip():
             translated = result.stdout.strip()
             logger.info("Translation (%s→%s): '%s' → '%s'", source_lang, target_lang, text[:50], translated[:50])

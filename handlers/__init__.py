@@ -26,7 +26,7 @@ try:
     from .orpheus_gguf_handler import synthesize_with_orpheus_gguf_local
     logger.debug("Orpheus GGUF handler imported.")
 except ImportError as e:
-    logger.warning(f"Could not import Orpheus GGUF handler (orpheus_gguf_handler.py): {e}. This handler will be unavailable.")
+    logger.warning(f"Could not import Orpheus GGUF handler (orpheus_gguf_handler.py): {e}. This handler will be unavailable.")  # noqa: E501
 
 synthesize_with_orpheus_lm_studio = None
 synthesize_with_orpheus_ollama = None
@@ -37,7 +37,7 @@ try:
     )
     logger.debug("Orpheus API handlers (LM Studio, Ollama) imported.")
 except ImportError as e:
-    logger.warning(f"Could not import Orpheus API handlers (orpheus_api_handler.py): {e}. These handlers will be unavailable.")
+    logger.warning(f"Could not import Orpheus API handlers (orpheus_api_handler.py): {e}. These handlers will be unavailable.")  # noqa: E501
 
 synthesize_with_outetts_local = None
 try:
@@ -91,10 +91,11 @@ try:
     if synthesize_with_orpheus_kartoffel:
         logger.info("Orpheus Kartoffel (Transformers) handler imported SUCCESSFULLY.")
     else: # This case should ideally not happen if the import itself was successful
-        logger.warning("Orpheus Kartoffel handler file imported, BUT 'synthesize_with_orpheus_kartoffel' function is None (unexpected).")
+        logger.warning("Orpheus Kartoffel handler file imported, BUT 'synthesize_with_orpheus_kartoffel' function is None (unexpected).")  # noqa: E501
         synthesize_with_orpheus_kartoffel = None
 except ImportError as e_imp_kartoffel:
-    logger.warning(f"Could not import Orpheus Kartoffel handler (kartoffel.py) due to ImportError: {e_imp_kartoffel}", exc_info=False) # Reduced log level for common missing optional deps
+    logger.warning(f"Could not import Orpheus Kartoffel handler (kartoffel.py) due to ImportError: {e_imp_kartoffel}",
+        exc_info=False) # Reduced log level for common missing optional deps
 except Exception as e_other_kartoffel:
     logger.error(f"An UNEXPECTED error occurred during import of kartoffel.py: {e_other_kartoffel}", exc_info=True)
 
@@ -107,7 +108,8 @@ try:
     else: # This case should ideally not happen
         logger.warning("LLaSA Hybrid handler file imported, but function is None (unexpected).")
 except ImportError as e_imp_llasa:
-    logger.warning(f"Could not import LLaSA Hybrid handler (llasa_hybrid_handler.py) due to ImportError: {e_imp_llasa}", exc_info=False)
+    logger.warning(f"Could not import LLaSA Hybrid handler (llasa_hybrid_handler.py) due to ImportError: {e_imp_llasa}",
+        exc_info=False)
 except Exception as e_other_llasa:
     logger.error(f"An UNEXPECTED error during import of llasa_hybrid_handler.py: {e_other_llasa}", exc_info=True)
 
@@ -123,9 +125,11 @@ try:
     else:
         logger.warning("LLaSA German Transformers handler file imported, but function is None.")
 except ImportError as e_imp_llasa_german:
-    logger.warning(f"Could not import LLaSA German Transformers handler due to ImportError: {e_imp_llasa_german}", exc_info=False)
+    logger.warning(f"Could not import LLaSA German Transformers handler due to ImportError: {e_imp_llasa_german}",
+        exc_info=False)
 except Exception as e_other_llasa_german:
-    logger.error(f"An UNEXPECTED error during import of LLaSA German Transformers handler: {e_other_llasa_german}", exc_info=True)
+    logger.error(f"An UNEXPECTED error during import of LLaSA German Transformers handler: {e_other_llasa_german}",
+        exc_info=True)
 
 # NEW: Separate LLaSA handlers for German and Multilingual models
 synthesize_with_llasa_hf_transformers = None
@@ -137,9 +141,11 @@ try:
     else:
         logger.warning("LLaSA HF Transformers handler file imported, but function is None.")
 except ImportError as e_imp_llasa_german:
-    logger.warning(f"Could not import LLaSA HF Transformers handler due to ImportError: {e_imp_llasa_german}", exc_info=False)
+    logger.warning(f"Could not import LLaSA HF Transformers handler due to ImportError: {e_imp_llasa_german}",
+        exc_info=False)
 except Exception as e_other_llasa_german:
-    logger.error(f"An UNEXPECTED error during import of LLaSA HF Transformers handler: {e_other_llasa_german}", exc_info=True)
+    logger.error(f"An UNEXPECTED error during import of LLaSA HF Transformers handler: {e_other_llasa_german}",
+        exc_info=True)
 
 synthesize_with_llasa_multilingual_transformers_func = None
 try:
@@ -152,9 +158,11 @@ try:
     else:
         logger.warning("LLaSA Multilingual Transformers handler file imported, but function is None.")
 except ImportError as e_imp_llasa_multi:
-    logger.warning(f"Could not import LLaSA Multilingual Transformers handler due to ImportError: {e_imp_llasa_multi}", exc_info=False)
+    logger.warning(f"Could not import LLaSA Multilingual Transformers handler due to ImportError: {e_imp_llasa_multi}",
+        exc_info=False)
 except Exception as e_other_llasa_multi:
-    logger.error(f"An UNEXPECTED error during import of LLaSA Multilingual Transformers handler: {e_other_llasa_multi}", exc_info=True)
+    logger.error(f"An UNEXPECTED error during import of LLaSA Multilingual Transformers handler: {e_other_llasa_multi}",
+        exc_info=True)
 
 # F5-TTS Handler
 synthesize_with_f5_tts = None
@@ -175,7 +183,7 @@ try:
     from .kokoro_onnx_handler import synthesize_with_kokoro_onnx
     logger.info("Kokoro ONNX handler imported successfully.")
 except ImportError as e:
-    logger.warning(f"Could not import Kokoro ONNX handler (kokoro_onnx_handler.py): {e}. This handler will be unavailable.")
+    logger.warning(f"Could not import Kokoro ONNX handler (kokoro_onnx_handler.py): {e}. This handler will be unavailable.")  # noqa: E501
 
 # tts.cpp handler
 synthesize_with_tts_cpp = None

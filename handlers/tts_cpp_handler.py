@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 # CrispTTS utils
-from utils import play_audio
 
 logger = logging.getLogger("CrispTTS.handlers.tts_cpp")
 
@@ -32,7 +31,7 @@ def synthesize_with_tts_cpp(
     # --- 1. Get Path to TTS.cpp Executable ---
     cli_executable_path_str = crisptts_model_config.get("tts_cpp_executable_path")
     if not cli_executable_path_str:
-        logger.error(f"TTS.cpp ({crisptts_specific_model_id}): 'tts_cpp_executable_path' not defined in config. Skipping.")
+        logger.error(f"TTS.cpp ({crisptts_specific_model_id}): 'tts_cpp_executable_path' not defined in config. Skipping.")  # noqa: E501
         return
 
     cli_executable_path = Path(cli_executable_path_str).resolve()
@@ -43,8 +42,8 @@ def synthesize_with_tts_cpp(
             cli_executable_path = Path(found_path)
             logger.info(f"TTS.cpp: Found executable '{cli_executable_path.name}' in PATH at: {cli_executable_path}")
         else:
-            logger.error(f"TTS.cpp ({crisptts_specific_model_id}): Executable not found at '{cli_executable_path}'. Make sure TTS.cpp is compiled and the path is correct in config.py.")
-            logger.error("Build TTS.cpp by running 'cmake -B build' and 'cmake --build build --config Release' in its directory.")
+            logger.error(f"TTS.cpp ({crisptts_specific_model_id}): Executable not found at '{cli_executable_path}'. Make sure TTS.cpp is compiled and the path is correct in config.py.")  # noqa: E501
+            logger.error("Build TTS.cpp by running 'cmake -B build' and 'cmake --build build --config Release' in its directory.")  # noqa: E501
             return
 
     # --- 2. Get GGUF Model Path ---
@@ -77,7 +76,7 @@ def synthesize_with_tts_cpp(
         # Default behavior if no output is specified: save to TTS.cpp.wav in the current directory
         default_save_path = Path.cwd() / "TTS.cpp.wav"
         command.extend(["--save-path", str(default_save_path)])
-        logger.warning(f"TTS.cpp: No --output-file specified and --play-direct is false. Saving to default file: {default_save_path}")
+        logger.warning(f"TTS.cpp: No --output-file specified and --play-direct is false. Saving to default file: {default_save_path}")  # noqa: E501
 
 
     # Handle voice override (for Kokoro, etc.)
@@ -95,9 +94,11 @@ def synthesize_with_tts_cpp(
 
     # Set Dia-specific defaults if applicable and not overridden
     if "dia" in crisptts_specific_model_id.lower():
-        if "temperature" not in cli_params: cli_params["temperature"] = 1.3
-        if "topk" not in cli_params: cli_params["topk"] = 35
-        logger.info(f"TTS.cpp: Applying Dia-specific defaults: temp={cli_params['temperature']}, topk={cli_params['topk']}")
+        if "temperature" not in cli_params:
+            cli_params["temperature"] = 1.3
+        if "topk" not in cli_params:
+            cli_params["topk"] = 35
+        logger.info(f"TTS.cpp: Applying Dia-specific defaults: temp={cli_params['temperature']}, topk={cli_params['topk']}")  # noqa: E501
 
     # Map parameters to TTS.cpp CLI arguments
     param_map = {
@@ -124,7 +125,7 @@ def synthesize_with_tts_cpp(
     logger.debug(f"TTS.cpp: Executing command: {' '.join(command)}")
 
     try:
-        process = subprocess.run(
+        process = subprocess.run(  # noqa: S603
             command,
             check=True,        # Raise an exception for non-zero exit codes
             capture_output=True, # Capture stdout and stderr

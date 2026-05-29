@@ -5,7 +5,6 @@ import gc
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 
 # Conditional imports
@@ -28,42 +27,54 @@ logger_init = logging.getLogger("CrispTTS.handlers.llasa_german_transformers.ini
 
 try:
     import torch
-    torch_llasa_german = torch; TORCH_AVAILABLE = True
+    torch_llasa_german = torch
+    TORCH_AVAILABLE = True
     if hasattr(torch_llasa_german.backends, "mps") and torch_llasa_german.backends.mps.is_available():
         IS_MPS_LLASA_HF = True
     if torch_llasa_german.cuda.is_available():
         IS_CUDA_LLASA_HF = True
     logger_init.info("PyTorch loaded for LLaSA German.")
-except ImportError: logger_init.warning("PyTorch not found for LLaSA German.")
+except ImportError:
+    logger_init.warning("PyTorch not found for LLaSA German.")
 
 if TORCH_AVAILABLE:
     try:
         import torchaudio
-        torchaudio_llasa_german = torchaudio; TORCHAUDIO_AVAILABLE = True
+        torchaudio_llasa_german = torchaudio
+        TORCHAUDIO_AVAILABLE = True
         logger_init.info("Torchaudio loaded for LLaSA German.")
-    except ImportError: logger_init.warning("Torchaudio not found for LLaSA German.")
+    except ImportError:
+        logger_init.warning("Torchaudio not found for LLaSA German.")
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-        AutoTokenizer_llasa_german, AutoModelForCausalLM_llasa_german, pipeline_llasa_german = AutoTokenizer, AutoModelForCausalLM, pipeline
-        TRANSFORMERS_AVAILABLE = True; logger_init.info("Transformers loaded for LLaSA German.")
-    except ImportError: logger_init.warning("Transformers not found for LLaSA German.")
+        AutoTokenizer_llasa_german, AutoModelForCausalLM_llasa_german, pipeline_llasa_german = AutoTokenizer, AutoModelForCausalLM, pipeline  # noqa: E501
+        TRANSFORMERS_AVAILABLE = True
+        logger_init.info("Transformers loaded for LLaSA German.")
+    except ImportError:
+        logger_init.warning("Transformers not found for LLaSA German.")
     try:
         from xcodec2.modeling_xcodec2 import XCodec2Model
-        XCodec2Model_llasa_german = XCodec2Model; XCODEC2_AVAILABLE = True
+        XCodec2Model_llasa_german = XCodec2Model
+        XCODEC2_AVAILABLE = True
         logger_init.info("XCodec2 loaded for LLaSA German.")
-    except ImportError: logger_init.warning("XCodec2 not found for LLaSA German.")
+    except ImportError:
+        logger_init.warning("XCodec2 not found for LLaSA German.")
 
 try:
     import soundfile as sf
-    sf_llasa_german = sf; SOUNDFILE_AVAILABLE = True
+    sf_llasa_german = sf
+    SOUNDFILE_AVAILABLE = True
     logger_init.info("SoundFile loaded for LLaSA German.")
-except ImportError: logger_init.warning("SoundFile not found for LLaSA German.")
+except ImportError:
+    logger_init.warning("SoundFile not found for LLaSA German.")
 try:
     import numpy as np
-    numpy_llasa_german = np; NUMPY_AVAILABLE = True
-except ImportError: logger_init.warning("NumPy not found for LLaSA German.")
+    numpy_llasa_german = np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    logger_init.warning("NumPy not found for LLaSA German.")
 
-from utils import SuppressOutput, play_audio, save_audio
+from utils import play_audio  # noqa: E402
 
 logger = logging.getLogger("CrispTTS.handlers.llasa_german_transformers")
 
@@ -110,7 +121,7 @@ def synthesize_with_llasa_german_transformers(
         logger.error(f"LLaSA German ({crisptts_model_id_for_log}): Core model IDs not fully configured. Skipping.")
         return
 
-    hf_token = os.getenv("HF_TOKEN") if model_config.get("requires_hf_token") else None
+    _hf_token = os.getenv("HF_TOKEN") if model_config.get("requires_hf_token") else None
 
     # Device selection
     if torch_llasa_german.cuda.is_available():
@@ -154,14 +165,14 @@ def synthesize_with_llasa_german_transformers(
         # Handle zero-shot case
         if isinstance(sample_audio_path, str) and sample_audio_path.lower() == 'none':
             sample_audio_path = None
-            logger.debug("LLaSA German: Voice ID override was string 'None', converted to Python None for zero-shot mode")
+            logger.debug("LLaSA German: Voice ID override was string 'None', converted to Python None for zero-shot mode")  # noqa: E501
 
         if sample_audio_path and sample_audio_path.lower() != 'none':
             resolved_ref_path = Path(sample_audio_path).resolve()
 
             if resolved_ref_path.exists() and resolved_ref_path.is_file():
                 is_cloning_mode = True
-                logger.info(f"LLaSA German ({crisptts_model_id_for_log}): Cloning mode activated. Reference audio: {resolved_ref_path}")
+                logger.info(f"LLaSA German ({crisptts_model_id_for_log}): Cloning mode activated. Reference audio: {resolved_ref_path}")  # noqa: E501
 
                 # Check for custom reference text
                 if model_params_override:
@@ -170,22 +181,24 @@ def synthesize_with_llasa_german_transformers(
                         sample_audio_text = parsed_params.get("reference_text")
                         if sample_audio_text:
                             logger.info(f"LLaSA German: Using provided reference text: '{sample_audio_text[:100]}...'")
-                    except:
+                    except Exception:  # noqa: S110
                         pass
 
                 # EXACT blueprint audio loading and processing
                 waveform, sample_rate = torchaudio_llasa_german.load(sample_audio_path)
 
-                max_secs = 15
+                _max_secs = 15
                 if len(waveform[0]) / sample_rate > 15:
                     logger.warning("LLaSA German: Reference audio longer than 15.0s. Trimming to first 15.0s.")
                     waveform = waveform[:, : sample_rate * 15]
-                    waveform = torch_llasa_german.nn.functional.pad(waveform, (0, int(sample_rate * 0.5)), "constant", 0)
+                    waveform = torch_llasa_german.nn.functional.pad(waveform, (0, int(sample_rate * 0.5)), "constant",
+                        0)
 
                 if waveform.size(0) > 1:
                     waveform = torch_llasa_german.mean(waveform, dim=0, keepdim=True)
 
-                prompt_wav = torchaudio_llasa_german.transforms.Resample(orig_freq=sample_rate, new_freq=16000)(waveform)
+                prompt_wav = torchaudio_llasa_german.transforms.Resample(orig_freq=sample_rate,
+                    new_freq=16000)(waveform)
 
                 # EXACT blueprint transcription handling
                 if sample_audio_text is None:
@@ -193,7 +206,8 @@ def synthesize_with_llasa_german_transformers(
                     transcription = None
 
                     try:
-                        whisper_model_id = model_config.get("whisper_model_id_for_transcription", "openai/whisper-large-v3-turbo")
+                        whisper_model_id = model_config.get("whisper_model_id_for_transcription",
+                            "openai/whisper-large-v3-turbo")
 
                         whisper_turbo_pipe = pipeline_llasa_german(
                             "automatic-speech-recognition",
@@ -238,13 +252,13 @@ def synthesize_with_llasa_german_transformers(
                     speech_ids_prefix = ids_to_speech_tokens(vq_code_prompt.tolist())
                     logger.debug(f"LLaSA German: Encoded {len(speech_ids_prefix)} reference speech tokens")
             else:
-                logger.error(f"LLaSA German ({crisptts_model_id_for_log}): Configured for cloning, but ref audio not found. Aborting.")
+                logger.error(f"LLaSA German ({crisptts_model_id_for_log}): Configured for cloning, but ref audio not found. Aborting.")  # noqa: E501
                 return
         else:
             # Zero-shot mode
             input_text = target_text
             speech_ids_prefix = []
-            logger.info(f"LLaSA German ({crisptts_model_id_for_log}): No reference audio provided. Operating in zero-shot mode.")
+            logger.info(f"LLaSA German ({crisptts_model_id_for_log}): No reference audio provided. Operating in zero-shot mode.")  # noqa: E501
 
         # EXACT blueprint text formatting and generation
         formatted_text = f"<|TEXT_UNDERSTANDING_START|>{input_text}<|TEXT_UNDERSTANDING_END|>"
@@ -277,8 +291,8 @@ def synthesize_with_llasa_german_transformers(
                 for k, v_param in cli_gen_params.items():
                     if k in valid_hf_keys:
                         gen_params[k] = v_param
-            except:
-                logger.warning(f"LLaSA German ({crisptts_model_id_for_log}): Could not parse --model-params for generation.")
+            except Exception:
+                logger.warning(f"LLaSA German ({crisptts_model_id_for_log}): Could not parse --model-params for generation.")  # noqa: E501
 
         logger.info("LLaSA German: Generating speech tokens...")
 
@@ -287,7 +301,7 @@ def synthesize_with_llasa_german_transformers(
 
             # EXACT blueprint token extraction for German models
             generated_ids = outputs[0][input_ids.shape[1] - len(speech_ids_prefix) : -1]
-            logger.debug(f"LLaSA German: German model extraction - input_ids.shape[1]: {input_ids.shape[1]}, speech_ids_prefix length: {len(speech_ids_prefix)}")
+            logger.debug(f"LLaSA German: German model extraction - input_ids.shape[1]: {input_ids.shape[1]}, speech_ids_prefix length: {len(speech_ids_prefix)}")  # noqa: E501
             logger.debug(f"LLaSA German: Extracted generated_ids shape: {generated_ids.shape}")
 
             speech_tokens = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
@@ -341,26 +355,26 @@ def synthesize_with_llasa_german_transformers(
             try:
                 model.cpu()
                 del model
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         if Codec_model is not None:
             try:
                 Codec_model.cpu()
                 del Codec_model
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         if tokenizer is not None:
             try:
                 del tokenizer
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         if whisper_turbo_pipe is not None:
             try:
                 del whisper_turbo_pipe
-            except:
+            except Exception:  # noqa: S110
                 pass
 
         # Clear device caches
@@ -370,7 +384,7 @@ def synthesize_with_llasa_german_transformers(
             elif device == "mps" and hasattr(torch_llasa_german.mps, "empty_cache"):
                 try:
                     torch_llasa_german.mps.empty_cache()
-                except:
+                except Exception:  # noqa: S110
                     pass
 
         gc.collect()

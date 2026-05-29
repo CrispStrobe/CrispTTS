@@ -3,7 +3,6 @@
 import asyncio
 import gc
 import logging
-import os
 import tempfile
 from pathlib import Path
 
@@ -35,7 +34,8 @@ async def _synthesize_with_edge_tts_async_helper(text, voice_id, output_file_pat
         logger.error(f"EdgeTTS async synthesis error: {e}", exc_info=True)
         return None
 
-def synthesize_with_edge_tts(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_edge_tts(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     if not EDGE_TTS_AVAILABLE_IN_HANDLER or not edge_tts:
         logger.error("EdgeTTS handler called, but edge-tts library is not available. Skipping.")
         return

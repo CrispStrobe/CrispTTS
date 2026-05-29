@@ -5,6 +5,8 @@ import logging
 import os
 from pathlib import Path
 
+import numpy as np
+
 # Conditional imports
 TORCH_AVAILABLE_IN_HANDLER = False
 torch_nemo = None
@@ -18,13 +20,15 @@ try:
     import torch as torch_imp
     torch_nemo = torch_imp
     TORCH_AVAILABLE_IN_HANDLER = True
-except ImportError: pass
+except ImportError:
+    pass
 
 try:
     from huggingface_hub import hf_hub_download
     HF_HUB_AVAILABLE_IN_HANDLER = True
     hf_hub_download_h = hf_hub_download
-except ImportError: pass
+except ImportError:
+    pass
 
 
 if TORCH_AVAILABLE_IN_HANDLER and HF_HUB_AVAILABLE_IN_HANDLER:
@@ -38,11 +42,12 @@ if TORCH_AVAILABLE_IN_HANDLER and HF_HUB_AVAILABLE_IN_HANDLER:
         pass # Fail silently, checked in handler
 
 # Use relative imports for project modules
-from utils import play_audio, save_audio  # Assuming these are in utils.py
+from utils import play_audio  # Assuming these are in utils.py  # noqa: E402
 
 logger = logging.getLogger("CrispTTS.handlers.nemo")
 
-def synthesize_with_fastpitch_nemo(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
+def synthesize_with_fastpitch_nemo(model_config, text, voice_id_override, model_params_override, output_file_str,
+    play_direct):
     if not NEMO_TTS_AVAILABLE_IN_HANDLER or not nemo_tts_models_h or not torchaudio_module_h:
         logger.error("NeMo Toolkit or torchaudio not available. Skipping FastPitch synthesis.")
         return
@@ -67,7 +72,7 @@ def synthesize_with_fastpitch_nemo(model_config, text, voice_id_override, model_
 
     try:
         if not local_spectrogram_model_path.exists():
-            logger.info(f"FastPitch (NeMo) - Downloading spectrogram model {spectrogram_file} from {spectrogram_repo}...")
+            logger.info(f"FastPitch (NeMo) - Downloading spectrogram model {spectrogram_file} from {spectrogram_repo}...")  # noqa: E501
             hf_hub_download_h(
                 repo_id=spectrogram_repo, filename=spectrogram_file,
                 local_dir=str(model_cache_dir), local_dir_use_symlinks=False, # NeMo restore needs actual files
@@ -84,10 +89,15 @@ def synthesize_with_fastpitch_nemo(model_config, text, voice_id_override, model_
         # NeMo models might need specific parsing/tokenization
         parsed_text = spec_generator.parse(text)
 
-        speaker_id_to_use = int(voice_id_override) if voice_id_override and voice_id_override.isdigit() else model_config.get("default_speaker_id", 0)
+        speaker_id_to_use = (
+            int(voice_id_override)
+            if voice_id_override and voice_id_override.isdigit()
+            else model_config.get("default_speaker_id", 0)
+        )
         logger.info(f"FastPitch (NeMo) - Using speaker ID: {speaker_id_to_use}")
 
-        device = "cuda" if torch_nemo.cuda.is_available() else ("mps" if (hasattr(torch_nemo.backends, "mps") and torch_nemo.backends.mps.is_available()) else "cpu")
+        device = "cuda" if torch_nemo.cuda.is_available() else ("mps" if (hasattr(torch_nemo.backends,
+            "mps") and torch_nemo.backends.mps.is_available()) else "cpu")
         logger.info(f"FastPitch (NeMo) - Using device: {device}")
         spec_generator.to(device)
         vocoder.to(device)

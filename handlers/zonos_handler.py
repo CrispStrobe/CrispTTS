@@ -3,7 +3,6 @@
 import gc
 import json
 import logging
-import platform  # Add this import
 from pathlib import Path
 
 # --- Conditional Imports ---
@@ -35,9 +34,9 @@ if TORCH_AVAILABLE:
         ZONOS_AVAILABLE = True
         logger_init.info("Zonos TTS library imported successfully.")
     except ImportError:
-        logger_init.warning("'zonos-tts' library not found. Zonos handler will be non-functional. Install with: (see Zonos repo for instructions)") # Updated install advice
+        logger_init.warning("'zonos-tts' library not found. Zonos handler will be non-functional. Install with: (see Zonos repo for instructions)") # Updated install advice  # noqa: E501
 
-from utils import play_audio, save_audio
+from utils import play_audio  # noqa: E402
 
 logger = logging.getLogger("CrispTTS.handlers.zonos")
 
@@ -70,15 +69,18 @@ def synthesize_with_zonos(
         return
 
     try:
-        device = "cuda" if torch_zonos.cuda.is_available() else ("mps" if hasattr(torch_zonos.backends, "mps") and torch_zonos.backends.mps.is_available() else "cpu")
+        device = "cuda" if torch_zonos.cuda.is_available() else ("mps" if hasattr(torch_zonos.backends,
+            "mps") and torch_zonos.backends.mps.is_available() else "cpu")
 
         if CACHED_MODEL_ID != model_repo_id or CACHED_ZONOS_MODEL is None:
             logger.info(f"Zonos: Loading model '{model_repo_id}' to device '{device}'. This may take a moment...")
             if CACHED_ZONOS_MODEL is not None:
                 del CACHED_ZONOS_MODEL # Try to free memory before loading new model
                 gc.collect()
-                if device == "cuda": torch_zonos.cuda.empty_cache()
-                elif device == "mps" and hasattr(torch_zonos.mps, "empty_cache"): torch_zonos.mps.empty_cache()
+                if device == "cuda":
+                    torch_zonos.cuda.empty_cache()
+                elif device == "mps" and hasattr(torch_zonos.mps, "empty_cache"):
+                    torch_zonos.mps.empty_cache()
 
 
             CACHED_ZONOS_MODEL = Zonos_class.from_pretrained(model_repo_id, device=device)
@@ -90,8 +92,10 @@ def synthesize_with_zonos(
             if str(CACHED_ZONOS_MODEL.device) != device: # Ensure cached model is on the correct current device
                 logger.info(f"Zonos: Moving cached model from {CACHED_ZONOS_MODEL.device} to {device}.")
                 CACHED_ZONOS_MODEL.to(device)
-                if device == "cuda": torch_zonos.cuda.empty_cache() # Clean old device memory if possible
-                elif device == "mps" and hasattr(torch_zonos.mps, "empty_cache"): torch_zonos.mps.empty_cache()
+                if device == "cuda":
+                    torch_zonos.cuda.empty_cache() # Clean old device memory if possible
+                elif device == "mps" and hasattr(torch_zonos.mps, "empty_cache"):
+                    torch_zonos.mps.empty_cache()
 
 
         ref_audio_path_str = voice_id_override or crisptts_model_config.get("default_voice_id")
@@ -110,10 +114,11 @@ def synthesize_with_zonos(
             CACHED_SPEAKER_EMBEDDING = CACHED_ZONOS_MODEL.make_speaker_embedding(wav, sr)
             # Zonos example uses bfloat16 for speaker embedding if available, otherwise float32.
             # Using float32 for broader compatibility, adjust if bfloat16 is preferred and available.
-            target_speaker_dtype = torch_zonos.bfloat16 if hasattr(torch_zonos, 'bfloat16') and device != 'cpu' else torch_zonos.float32
+            target_speaker_dtype = torch_zonos.bfloat16 if hasattr(torch_zonos,
+                'bfloat16') and device != 'cpu' else torch_zonos.float32
             CACHED_SPEAKER_EMBEDDING = CACHED_SPEAKER_EMBEDDING.to(device, dtype=target_speaker_dtype)
             CACHED_SPEAKER_PATH = str(ref_audio_path)
-            logger.info(f"Zonos: Speaker embedding created on {CACHED_SPEAKER_EMBEDDING.device} with dtype {CACHED_SPEAKER_EMBEDDING.dtype}.")
+            logger.info(f"Zonos: Speaker embedding created on {CACHED_SPEAKER_EMBEDDING.device} with dtype {CACHED_SPEAKER_EMBEDDING.dtype}.")  # noqa: E501
         else:
             logger.info(f"Zonos: Using cached speaker embedding from '{ref_audio_path.name}'.")
             if str(CACHED_SPEAKER_EMBEDDING.device) != device:
@@ -139,13 +144,16 @@ def synthesize_with_zonos(
         # Apply defaults first, then CLI overrides
         for key, val in default_conditioning_params.items():
             if key not in cond_dict_args: # Only if not already set by required args
-                if isinstance(val, list): cond_dict_args[key] = torch_zonos.tensor(val, device=device)
-                else: cond_dict_args[key] = val
+                if isinstance(val, list):
+                    cond_dict_args[key] = torch_zonos.tensor(val, device=device)
+                else:
+                    cond_dict_args[key] = val
 
         if model_params_override:
             try:
                 cli_params = json.loads(model_params_override)
-                allowed_params = list(default_conditioning_params.keys()) + ["emotion", "vqscore_8"] # ensure emotion/vqscore can be set fully
+                allowed_params = list(default_conditioning_params.keys()) + ["emotion",
+                    "vqscore_8"] # ensure emotion/vqscore can be set fully
                 for key, value in cli_params.items():
                     if key in allowed_params:
                         if isinstance(value, list): # For 'emotion' and 'vqscore_8'
@@ -172,7 +180,8 @@ def synthesize_with_zonos(
                 if "disable_torch_compile" in cli_p:
                     disable_compile_flag = bool(cli_p["disable_torch_compile"])
                     logger.info(f"Zonos: User override for disable_torch_compile: {disable_compile_flag}")
-            except: pass
+            except Exception:  # noqa: S110
+                pass
 
 
         logger.info("Zonos: Generating audio codes...")
@@ -230,6 +239,7 @@ def synthesize_with_zonos(
         # Only clear GPU cache if CUDA was used.
         if device == "cuda" and TORCH_AVAILABLE and torch_zonos.cuda.is_available():
             torch_zonos.cuda.empty_cache()
-        elif device == "mps" and TORCH_AVAILABLE and hasattr(torch_zonos.backends, "mps") and torch_zonos.backends.mps.is_available() and hasattr(torch_zonos.mps, "empty_cache"):
+        elif device == "mps" and TORCH_AVAILABLE and hasattr(torch_zonos.backends,
+            "mps") and torch_zonos.backends.mps.is_available() and hasattr(torch_zonos.mps, "empty_cache"):
             torch_zonos.mps.empty_cache()
         gc.collect()

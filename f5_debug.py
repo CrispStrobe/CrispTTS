@@ -28,7 +28,7 @@ def create_test_audio():
         audio += np.sin(2 * np.pi * frequency * 2 * t) * 0.1
         audio += np.random.normal(0, 0.01, len(audio))  # Small amount of noise
 
-        temp_file = tempfile.mktemp(suffix=".wav")
+        temp_file = tempfile.mktemp(suffix=".wav")  # noqa: S306
         sf.write(temp_file, audio, sample_rate)
 
         print(f"✅ Created test audio: {temp_file}")
@@ -123,7 +123,7 @@ def test_f5_mlx_with_output_path():
             # Cleanup
             try:
                 Path(test_audio).unlink()
-            except:
+            except Exception:  # noqa: S110
                 pass
 
     except ImportError:
@@ -171,11 +171,11 @@ def test_german_with_output_path():
                 resampler = torchaudio.transforms.Resample(sr, 24000)
                 audio_data = resampler(audio_tensor).squeeze().numpy()
                 sr = 24000
-            except:
+            except Exception:
                 print("⚠️ Cannot resample, using original sample rate")
 
         # Save prepared audio
-        temp_audio = tempfile.mktemp(suffix="_prepared.wav")
+        temp_audio = tempfile.mktemp(suffix="_prepared.wav")  # noqa: S306
         sf.write(temp_audio, audio_data, sr)
 
         # Create output file
