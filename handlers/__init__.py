@@ -180,6 +180,20 @@ except ImportError as e:
 except Exception as e_tts_cpp_other:
     logger.error(f"An unexpected error occurred during import of tts_cpp_handler.py: {e_tts_cpp_other}", exc_info=True)
 
+# CrispASR TTS Handler (C++ native engines via binary)
+synthesize_with_crispasr = None
+try:
+    from .crispasr_handler import synthesize_with_crispasr
+    if synthesize_with_crispasr:
+        logger.info("CrispASR TTS handler imported SUCCESSFULLY.")
+    else:
+        logger.warning("CrispASR TTS handler file imported, but function is None.")
+        synthesize_with_crispasr = None
+except ImportError as e_imp_crispasr:
+    logger.warning(f"Could not import CrispASR TTS handler due to ImportError: {e_imp_crispasr}", exc_info=False)
+except Exception as e_other_crispasr:
+    logger.error(f"An UNEXPECTED error during import of crispasr_handler.py: {e_other_crispasr}", exc_info=True)
+
 # Chatterbox Handler (for Kartoffelbox models)
 synthesize_with_chatterbox = None
 try:
@@ -222,6 +236,7 @@ ALL_HANDLERS = {
     "kokoro_onnx": synthesize_with_kokoro_onnx,
     "zonos": synthesize_with_zonos,
     "chatterbox": synthesize_with_chatterbox,
+    "crispasr": synthesize_with_crispasr,
 }
 
 # Remove entries where the handler function is None (due to import failure)

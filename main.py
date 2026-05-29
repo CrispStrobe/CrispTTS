@@ -476,6 +476,23 @@ def run_synthesis(args):
         return
     text_to_synthesize = text_to_synthesize[:3000]
 
+    # --- Pre-synthesis translation (CrispASR integration) ---
+    if getattr(args, 'translate', False):
+        try:
+            from handlers.crispasr_handler import translate_text_with_crispasr
+            original_text = text_to_synthesize
+            text_to_synthesize = translate_text_with_crispasr(
+                text_to_synthesize,
+                source_lang=args.translate_from,
+                target_lang=args.translate_to,
+                backend=args.translate_backend,
+            )
+            logger.info("Translation (%s->%s): '%s...' -> '%s...'",
+                        args.translate_from, args.translate_to,
+                        original_text[:50], text_to_synthesize[:50])
+        except Exception as e_tr:
+            logger.warning("Translation failed, using original text: %s", e_tr)
+
     model_config_base = GERMAN_TTS_MODELS.get(args.model_id)
     if not model_config_base: 
         logger.error(f"Invalid model ID '{args.model_id}' passed to run_synthesis.")
@@ -528,6 +545,28 @@ def run_synthesis(args):
     if handler_func:
         try:
             handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params, args.output_file, args.play_direct)
+
+            # --- Post-synthesis ASR verification (CrispASR integration) ---
+            if getattr(args, 'verify', False) and args.output_file and os.path.isfile(args.output_file):
+                try:
+                    from handlers.crispasr_handler import verify_tts_with_asr
+                    logger.info("Running ASR verification on TTS output...")
+                    result = verify_tts_with_asr(
+                        args.output_file, text_to_synthesize,
+                        asr_backend=args.verify_backend,
+                    )
+                    if "error" in result:
+                        logger.warning("ASR verification failed: %s", result["error"])
+                    else:
+                        logger.info("ASR roundtrip result: '%s'", result["asr_text"])
+                        logger.info("Word overlap similarity: %.1f%%", result["similarity"] * 100)
+                        print(f"\n--- ASR Verification ---")
+                        print(f"Original:   {result['original_text']}")
+                        print(f"ASR output: {result['asr_text']}")
+                        print(f"Similarity: {result['similarity']*100:.1f}%")
+                except Exception as e_verify:
+                    logger.warning("ASR verification error: %s", e_verify)
+
         except Exception as e_synth:
             logger.error(f"Synthesis failed for model {args.model_id}: {e_synth}", exc_info=True)
     else:
@@ -555,7 +594,16 @@ def main_cli_entrypoint():
     synth_group.add_argument("--play-direct", action="store_true", help="Play audio directly after synthesis (not with --test-all*).")
     synth_group.add_argument("--german-voice-id", type=str, help="Override default voice/speaker for the selected model.")
     synth_group.add_argument("--model-params", type=str, help="JSON string of model-specific parameters (e.g., '{\"temperature\":0.7}').")
-    
+
+    # CrispASR integration options
+    crispasr_group = parser.add_argument_group(title="CrispASR Integration")
+    crispasr_group.add_argument("--verify", action="store_true", help="Run ASR on TTS output for roundtrip quality verification (requires crispasr binary).")
+    crispasr_group.add_argument("--verify-backend", type=str, default="parakeet", help="ASR backend for --verify (default: parakeet).")
+    crispasr_group.add_argument("--translate", action="store_true", help="Translate input text before synthesis (e.g., EN→DE via m2m100).")
+    crispasr_group.add_argument("--translate-from", type=str, default="en", help="Source language for --translate (default: en).")
+    crispasr_group.add_argument("--translate-to", type=str, default="de", help="Target language for --translate (default: de).")
+    crispasr_group.add_argument("--translate-backend", type=str, default="m2m100", help="Translation backend for --translate (default: m2m100).")
+
     parser.add_argument("--loglevel", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set console logging level (default: INFO).")
 
     override_group = parser.add_argument_group(title="Runtime Model Path/Repo Overrides (for selected --model-id or during --test-all*)")

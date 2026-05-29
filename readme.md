@@ -2,45 +2,57 @@
 
 CrispTTS is a versatile command-line Text-to-Speech (TTS) tool designed for synthesizing German speech using a variety of popular local and cloud-based TTS engines. Its modular architecture allows for easy maintenance and straightforward addition of new TTS handlers.
 
-NOTE: This is in very early experimental / work in progress state. Currently these models are BROKEN: dia, f5, maybe nemo. (It proved a bit difficult to make up a consistent python environment with all libraries at once, and nemo was therefore postponed for now.) They might be fixed later if my time allows...
+### Part of the Crisp ecosystem
+
+| Project | Role |
+|---|---|
+| **[Susurrus](https://github.com/CrispStrobe/Susurrus)** | Python GUI + CLI — 30+ ASR, 12 TTS, translation |
+| **[CrispASR](https://github.com/CrispStrobe/CrispASR)** | C++ ASR/TTS engine — 24+ backends, ggml inference |
+| **CrispTTS** | This repo — Python TTS CLI with 28+ handlers |
+| **[CrisperWeaver](https://github.com/CrispStrobe/CrisperWeaver)** | Flutter transcription app — desktop + mobile |
+
+NOTE: This is in experimental / work in progress state. Some Python-only models may be broken due to dependency conflicts. The CrispASR-based handlers (`crispasr_*`) are the most reliable — they use native C++ inference with no Python ML dependencies.
 
 ## Features
 
-- **Multiple TTS Engine Support**:
-  - Microsoft Edge TTS (Cloud-based, requires `edge-tts`)
-  - Coqui TTS: Generic handler supporting models like XTTS v2, VITS, and more.
-  - Piper (Local, ONNX-based, requires `piper-tts`)
-  - Orpheus 
-    - GGUF (Local, requires `llama-cpp-python`)
-    - Orpheus via LM Studio API (Requires running LM Studio server)
-    - Orpheus via Ollama API (Requires running Ollama server with Orpheus model)
-  - OuteTTS (Local, with LlamaCPP or Hugging Face Transformers backend, requires `outetts` and its dependencies)
-  - SpeechT5 (Local, German fine-tune via Hugging Face Transformers)
-  - FastPitch (Local, German via NeMo and Hugging Face)
-  - `mlx-audio` for several models
-    - Bark** (Local, optimized for Apple Silicon, requires `mlx-audio`):
-      - Uses MLX-converted models (e.g., from `mlx-community/bark-small`)
-      - Voice prompts are fetched from a separate repository (e.g., `suno/bark-small`) via an included monkeypatch, enabling a wide range of voices
-  - llasa
-  - F5 (some models, per f5-tts-mlx)
-  - kokoro-onnx (lightweight, local ONNX-based engine with multiple voices, no German)
-  - TTS.cpp (local C++ engine using GGUF models, e.g., Parler, Dia, Kokoro)
-- **Command-Line Interface**: Easy-to-use CLI for listing models, getting voice info, and performing synthesis
-- **Text Input Flexibility**: Synthesize text directly from the command line or from various file types (`.txt`, `.md`, `.html`, `.pdf`, `.epub`)
-- **Customizable Output**: Save audio to specified files (typically `.wav` or `.mp3`)
-- **Direct Playback**: Option to play synthesized audio directly
+- **28+ TTS Engine Support**:
+  - **CrispASR native C++ engines** (7 backends, auto-download, no Python ML deps):
+    - Kokoro (multilingual, Apache 2.0)
+    - Orpheus + Kartoffel-Orpheus DE (19 German speakers, llama3.2 license)
+    - Qwen3-TTS (voice cloning + voice design, Apache 2.0)
+    - Chatterbox (CFM synthesis, MIT)
+    - VibeVoice TTS (voice cloning)
+    - IndexTTS (zero-shot cloning, Apache 2.0)
+    - VoxCPM2 (48 kHz, 30 languages, Apache 2.0)
+  - Microsoft Edge TTS (cloud-based, requires `edge-tts`)
+  - Coqui TTS (XTTS v2, VITS, etc.)
+  - Piper (local ONNX, requires `piper-tts`)
+  - Orpheus GGUF (local, requires `llama-cpp-python`)
+  - Orpheus via LM Studio / Ollama API
+  - OuteTTS (LlamaCPP or HF backend)
+  - SpeechT5 (German fine-tune via HF Transformers)
+  - FastPitch (German via NeMo)
+  - mlx-audio (Bark, Kokoro, Dia — Apple Silicon)
+  - LLaSA (hybrid, German, multilingual variants)
+  - F5-TTS (MLX/PyTorch)
+  - Kokoro ONNX (lightweight)
+  - TTS.cpp (GGUF models)
+  - Zonos (acoustic conditioning)
+  - Chatterbox Python (Kartoffelbox)
+- **CrispASR Integration**:
+  - `--verify`: ASR roundtrip verification of TTS output quality
+  - `--translate`: Pre-synthesis translation (EN→DE via m2m100/MadLad)
+- **Text Input Flexibility**: Synthesize from CLI, `.txt`, `.md`, `.html`, `.pdf`, `.epub`
+- **Customizable Output**: Save audio to `.wav` or `.mp3`
+- **Direct Playback**: Play synthesized audio immediately
 - **Voice Selection**: Override default voices/speakers for most models
-- **Model Parameter Tuning**: Pass JSON-formatted parameters to fine-tune model behavior
+- **Model Parameter Tuning**: JSON-formatted parameters for fine-tuning
 - **Comprehensive Testing**:
-  - `--test-all`: Test all configured models with default voices
-  - `--test-all-speakers`: Test all models with all their pre-configured available voices
-- **Modular Design**:
-  - `config.py`: Centralized model configurations and global settings
-  - `utils.py`: Shared helper functions (text extraction, audio I/O, etc.)
-  - `handlers/`: Dedicated Python package with individual modules for each TTS engine's logic
-  - `main.py`: Main CLI entry point
-- **Logging**: Configurable logging levels for debugging and monitoring
-- **Automatic Patching**: Includes necessary runtime monkeypatches for some libraries (e.g., for `mlx-audio` Bark voice loading, VLLM Triton placeholder issues) to enhance compatibility and functionality
+  - `--test-all`: Test all models with default voices
+  - `--test-all-speakers`: Test all models with all configured voices
+- **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
+- **Logging**: Configurable logging levels
+- **Automatic Patching**: Runtime monkeypatches for library compatibility
 
 ## Project Structure
 
