@@ -1,20 +1,26 @@
 # convert_f5_to_mlx_monkeypatched_v4_debug.py
 import argparse
-from pathlib import Path
-import tempfile
-import shutil
-import os
 import json
-from typing import Optional, Tuple
+import os
+import shutil
 
 # --- Early imports for monkeypatching & core functionality ---
 import sys
-from huggingface_hub import snapshot_download, hf_hub_download, HfApi # upload_file also useful
+import tempfile
+from pathlib import Path
+from typing import Optional, Tuple
+
+from huggingface_hub import (  # upload_file also useful
+    HfApi,
+    hf_hub_download,
+    snapshot_download,
+)
+
 
 # --- Monkeypatch Definition ---
 # This function will replace the original fetch_from_hub
 def _patched_fetch_from_hub_impl_v4(hf_repo_or_path: str, quantization_bits: Optional[int] = None) -> Path:
-    print(f"--- DDD: Executing MONKEYPATCHED fetch_from_hub v4 ---")
+    print("--- DDD: Executing MONKEYPATCHED fetch_from_hub v4 ---")
     print(f"DDD: Received path/repo_id: '{hf_repo_or_path}' (type: {type(hf_repo_or_path)})")
     local_path_candidate = Path(hf_repo_or_path)
     print(f"DDD: Path object: {local_path_candidate}")
@@ -42,7 +48,7 @@ def _patched_fetch_from_hub_impl_v4(hf_repo_or_path: str, quantization_bits: Opt
 
 # --- Apply Monkeypatch ---
 try:
-    import f5_tts_mlx.utils 
+    import f5_tts_mlx.utils
     sys.modules['f5_tts_mlx.utils'].fetch_from_hub = _patched_fetch_from_hub_impl_v4
     print("--- Monkeypatch applied to sys.modules['f5_tts_mlx.utils'].fetch_from_hub ---")
 
@@ -62,18 +68,19 @@ except Exception as e:
     exit(1)
 
 # --- Standard Imports (should now use patched util if they import f5_tts_mlx.utils) ---
+import re
+
 import mlx.core as mx
 import mlx.nn as nn
-from mlx.utils import tree_flatten
-import soundfile as sf
 import numpy as np
-import re
+import soundfile as sf
+from mlx.utils import tree_flatten
 
 try:
     from f5_tts_mlx.cfm import F5TTS
+    from f5_tts_mlx.generate import HOP_LENGTH, SAMPLE_RATE
     from f5_tts_mlx.utils import convert_char_to_pinyin
-    from f5_tts_mlx.generate import SAMPLE_RATE, HOP_LENGTH
-    from vocos_mlx import Vocos # For vocoder bypass
+    from vocos_mlx import Vocos  # For vocoder bypass
 except ImportError as e:
     print(f"Error importing f5_tts_mlx components after monkeypatching: {e}")
     exit(1)
@@ -107,15 +114,15 @@ def convert_and_quantize_f5_model(
 
     with tempfile.TemporaryDirectory() as temp_conversion_input_dir:
         temp_dir_path = Path(temp_conversion_input_dir)
-        
+
         temp_pytorch_weights_for_conversion = temp_dir_path / "model_v1.safetensors"
         shutil.copyfile(source_pytorch_safetensors_path, temp_pytorch_weights_for_conversion)
         shutil.copyfile(source_vocab_path, temp_dir_path / "vocab.txt")
-        
+
         print(f"Attempting to load and convert PyTorch model from temp dir: {temp_dir_path}")
         mlx_model_converted = F5TTS.from_pretrained(
-            str(temp_dir_path), 
-            quantization_bits=None 
+            str(temp_dir_path),
+            quantization_bits=None
         )
         print("PyTorch model weights successfully loaded and converted to MLX structure.")
 
@@ -196,7 +203,7 @@ def perform_mlx_inference(
         print(f"Reference audio is longer than {MAX_REF_AUDIO_DURATION_SEC}s ({len(audio_data)/SAMPLE_RATE:.2f}s). Truncating to {MAX_REF_AUDIO_DURATION_SEC}s.")
         audio_data = audio_data[:max_ref_samples]
         print(f"DEBUG: Reference audio shape after truncation: {audio_data.shape}")
-    
+
     ref_audio_mx = mx.array(audio_data)
 
     rms = mx.sqrt(mx.mean(mx.square(ref_audio_mx)))
@@ -256,7 +263,7 @@ def perform_mlx_inference(
         vocoder_bypass_used = True
         try:
             original_internal_vocoder = f5_model_infer._vocoder
-            f5_model_infer._vocoder = None 
+            f5_model_infer._vocoder = None
             print("INFO: Temporarily disabled internal vocoder in F5TTS instance to attempt raw mel output.")
 
             raw_mels_batched, _ = f5_model_infer.sample(
@@ -275,18 +282,18 @@ def perform_mlx_inference(
                 raise ValueError(f"Bypassed vocoder but did not get expected raw mels [1, frames, mels]. Shape: {raw_mels_batched.shape}")
 
             generated_mels_full_frames = raw_mels_batched[0] # Shape: [frames, mels]
-            generated_mels_trimmed_frames = generated_mels_full_frames[ref_audio_len_frames:, :] 
+            generated_mels_trimmed_frames = generated_mels_full_frames[ref_audio_len_frames:, :]
 
             print("INFO: Vocoding externally using script's VocosMLX instance.")
             script_vocoder = Vocos.from_pretrained("lucasnewman/vocos-mel-24khz")
             mx.eval(script_vocoder.parameters())
-            
+
             # --- CORRECTED MEL SHAPE FOR THIS VOCOS ---
             # Vocos lucasnewman/vocos-mel-24khz expects (batch, frames, mels) as per your test_vocos_mlx.py
             mels_for_script_vocoder = mx.expand_dims(generated_mels_trimmed_frames, axis=0) # [1, gen_frames, mels]
             mels_for_script_vocoder = mels_for_script_vocoder.astype(mx.float32)
             print(f"DEBUG: Shape of mels_for_script_vocoder for external vocoder: {mels_for_script_vocoder.shape}, Dtype: {mels_for_script_vocoder.dtype}")
-            
+
             generated_wave_batched_external = script_vocoder.decode(mels_for_script_vocoder)
             mx.eval(generated_wave_batched_external)
             print(f"DEBUG: Shape of generated_wave_script_vocoded_batched: {generated_wave_batched_external.shape}")
@@ -297,9 +304,9 @@ def perform_mlx_inference(
                  generated_wave_full = generated_wave_batched_external[0]
             else:
                  raise ValueError(f"External vocoding failed to produce 1D or [1,L] audio. Shape: {generated_wave_batched_external.shape}")
-            
+
             # This generated_wave_full is already the generated part (mels were trimmed before vocoding)
-            generated_wave_trimmed = generated_wave_full 
+            generated_wave_trimmed = generated_wave_full
         except Exception as e_bypass:
             print(f"ERROR: Vocoder bypass strategy also failed: {e_bypass}")
             # Re-raise the original error that triggered the bypass, plus the bypass error
@@ -307,7 +314,7 @@ def perform_mlx_inference(
                                           f"Expected a batched audio array [1, audio_samples], "
                                           f"but got shape {generated_wave_batched.shape} and type {type(generated_wave_batched)}.")
             raise ValueError(f"Both direct sample() output and vocoder bypass failed. Original trigger: {original_trigger_error_msg}") from e_bypass
-    
+
     # If generated_wave_full is still None here, it means direct path also failed critically
     if generated_wave_full is None:
         raise ValueError("Failed to obtain valid audio waveform from model sample or bypass.")
@@ -317,7 +324,7 @@ def perform_mlx_inference(
         print(f"DEBUG: Shape of generated_wave_full (after batch index, before trim): {generated_wave_full.shape}")
         if generated_wave_full.ndim == 0:
             raise ValueError(f"generated_wave_full is scalar before trimming. Original batched shape: {generated_wave_batched.shape}")
-        
+
         ref_len_samples = ref_audio_mx.shape[0]
         if ref_len_samples >= generated_wave_full.shape[0]:
             print(f"WARNING: Reference audio length ({ref_len_samples}) is >= generated full audio length ({generated_wave_full.shape[0]}). Generated part might be empty or very short.")
@@ -325,7 +332,7 @@ def perform_mlx_inference(
             actual_gen_start_index = max(0, actual_gen_start_index) # Ensure not negative
             generated_wave_trimmed = generated_wave_full[actual_gen_start_index:]
             if generated_wave_trimmed.size == 0 and generated_wave_full.size > 0 :
-                 generated_wave_trimmed = generated_wave_full[-1:] 
+                 generated_wave_trimmed = generated_wave_full[-1:]
             elif generated_wave_trimmed.size == 0 and generated_wave_full.size == 0:
                  generated_wave_trimmed = mx.array([], dtype=generated_wave_full.dtype)
             print(f"DEBUG: Trimming result (ref >= gen): {generated_wave_trimmed.shape}")

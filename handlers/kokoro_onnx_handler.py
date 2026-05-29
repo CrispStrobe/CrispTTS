@@ -1,13 +1,14 @@
 # CrispTTS/handlers/kokoro_onnx_handler.py
 
-import logging
-import json
-from pathlib import Path
 import gc
+import json
+import logging
+from pathlib import Path
+
 import numpy as np
 
 # CrispTTS utils
-from utils import save_audio, play_audio
+from utils import play_audio, save_audio
 
 logger = logging.getLogger("CrispTTS.handlers.kokoro_onnx")
 
@@ -52,7 +53,7 @@ def synthesize_with_kokoro_onnx(
     voices_bin_path = Path(voices_bin_path_str).resolve()
 
     if not onnx_model_path.exists() or not voices_bin_path.exists():
-        logger.error(f"Kokoro-ONNX: Model file or voices file not found.")
+        logger.error("Kokoro-ONNX: Model file or voices file not found.")
         logger.error(f"  - Searched for ONNX model at: {onnx_model_path}")
         logger.error(f"  - Searched for voices file at: {voices_bin_path}")
         logger.error("  Please download these from the 'kokoro-onnx' GitHub releases and update the paths in config.py.")
@@ -92,7 +93,7 @@ def synthesize_with_kokoro_onnx(
         if not isinstance(samples, np.ndarray) or samples.size == 0:
             logger.error("Kokoro-ONNX: Synthesis returned no audio data.")
             return
-            
+
         logger.info(f"Kokoro-ONNX: Synthesis successful. Sample rate: {sample_rate}Hz.")
 
         # --- 4. Save or Play the Audio ---

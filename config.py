@@ -1,8 +1,8 @@
 # config.py
 
+import logging  # Use logging for config-level warnings if needed
 import os
 from pathlib import Path
-import logging # Use logging for config-level warnings if needed
 
 logger_cfg = logging.getLogger("CrispTTS.config")
 
@@ -25,12 +25,10 @@ OuteTTSInterfaceVersion_Enum = None # type: ignore
 
 if TORCH_AVAILABLE_FOR_CONFIG: # OuteTTS depends on PyTorch
     try:
-        from outetts import (
-            Models as _OuteTTSModels_Enum,
-            Backend as _OuteTTSBackend_Enum,
-            LlamaCppQuantization as _OuteTTSLlamaCppQuantization_Enum,
-            InterfaceVersion as _OuteTTSInterfaceVersion_Enum
-        )
+        from outetts import Backend as _OuteTTSBackend_Enum
+        from outetts import InterfaceVersion as _OuteTTSInterfaceVersion_Enum
+        from outetts import LlamaCppQuantization as _OuteTTSLlamaCppQuantization_Enum
+        from outetts import Models as _OuteTTSModels_Enum
         OuteTTSModels_Enum = _OuteTTSModels_Enum
         OuteTTSBackend_Enum = _OuteTTSBackend_Enum
         OuteTTSLlamaCppQuantization_Enum = _OuteTTSLlamaCppQuantization_Enum
@@ -85,8 +83,8 @@ LM_STUDIO_HEADERS = {"Content-Type": "application/json"}
 KARTORPHEUS_NATURAL_MODEL_ID = "SebastianBodza/Kartoffel_Orpheus-3B_german_natural-v0.1"
 KARTORPHEUS_SNAC_MODEL_ID = "hubertsiuzdak/snac_24khz"
 KARTORPHEUS_NATURAL_SPEAKERS = [
-    "Jakob", "Anton", "Julian", "Jan", "Alexander", "Emil", "Ben", 
-    "Elias", "Felix", "Jonas", "Noah", "Maximilian", "Sophie", 
+    "Jakob", "Anton", "Julian", "Jan", "Alexander", "Emil", "Ben",
+    "Elias", "Felix", "Jonas", "Noah", "Maximilian", "Sophie",
     "Marie", "Mia", "Maria", "Sophia", "Lina", "Lea"
 ]
 KARTORPHEUS_NATURAL_DEFAULT_SPEAKER = "Julian"
@@ -105,7 +103,7 @@ ZONOS_HYBRID_MODEL_ID = "Zyphra/Zonos-v0.1-hybrid"
 # --- LLaSA Specific Configs ---
 LLASA_MLX_LLM_MODEL_ID = "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
 
-LLASA_CHAT_TEMPLATE_TOKENIZER_ID = "HKUSTAudio/Llasa-1B-Multilingual" 
+LLASA_CHAT_TEMPLATE_TOKENIZER_ID = "HKUSTAudio/Llasa-1B-Multilingual"
 
 LLASA_XCODEC2_VOCODER_MODEL_ID = "HKUSTAudio/xcodec2"
 LLASA_GERMAN_TRANSFORMERS_MODEL_ID = "MultiLlasa/Llasa-1B-Multilingual-German"
@@ -116,7 +114,7 @@ LLASA_WHISPER_MODEL_ID_FOR_TRANSCRIPTION = "openai/whisper-large-v3-turbo" # Or 
 MLX_AUDIO_KOKORO_MODEL_ID = "mlx-community/Kokoro-82M-bf16"
 MLX_AUDIO_KOKORO_LANG_CODE = "en-us" # For espeak G2P
 MLX_AUDIO_KOKORO_DEFAULT_VOICE = "af_heart" # Hypothetical, or use "af_heart" for testing
-MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "bf_emma", ] 
+MLX_AUDIO_KOKORO_VOICES = ["af_heart", "af_nova", "bf_emma", ]
 # en-us: af_alloy, af_aoede, af_bella, af_heart, af_jessica, af_kore, af_nicole, af_nova, af_river, af_sarah, af_sky
 # en-us: am_adam, am_echo, am_eric, am_fenrir, am_liam, am_michael, am_onyx, am_puck
 # en-gb: bf_alice, bf_emma, bf_isabella, bf_lily, bm_daniel, bm_fable, bm_george, bm_lewis
@@ -136,10 +134,10 @@ OUTETTS_HF_REPO_ID = "OuteAI/Llama-OuteTTS-1.0-1B-ONNX"
 # git clone https://github.com/mmwillet/TTS.cpp
 # cd TTS.cpp
 # git clone -b support-for-tts https://github.com/mmwillet/ggml.git
-# cmake -B build          
+# cmake -B build
 # cmake --build build --config Release
 # Adjust this path to wherever your TTS.cpp 'cli' executable is located.
-TTS_CPP_EXECUTABLE_PATH = "../TTS.cpp/build/cli" 
+TTS_CPP_EXECUTABLE_PATH = "../TTS.cpp/build/cli"
 
 # Example paths to GGUF models. User must download these separately.
 # See TTS.cpp docs for links to GGUF files for each model.
@@ -378,16 +376,16 @@ GERMAN_TTS_MODELS = {
     "coqui_xtts_v2_de_clone": {
         "handler_function_key": "coqui_tts", # XTTS also uses the Coqui TTS API
         "coqui_model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
-        "default_coqui_speaker": None, 
-        "language": "de",      
-        "sample_rate": 24000,  
+        "default_coqui_speaker": None,
+        "language": "de",
+        "sample_rate": 24000,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
-        "available_voices": [DEFAULT_GERMAN_REF_WAV], 
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
         "notes": "Coqui XTTS v2 (multilingual, 24kHz). Requires a speaker_wav for voice cloning. Ref WAV ~6-20s."
     },
     "coqui_css10_de_vits": {
         "handler_function_key": "coqui_tts",
-        "coqui_model_name": "tts_models/de/css10/vits-neon", 
+        "coqui_model_name": "tts_models/de/css10/vits-neon",
         "default_coqui_speaker": None,
         "language": "de",
         "sample_rate": 22050, # VITS typical sample rate
@@ -397,25 +395,25 @@ GERMAN_TTS_MODELS = {
     "coqui_vctk_en_vits": {
         "handler_function_key": "coqui_tts",
         "coqui_model_name": "tts_models/en/vctk/vits",
-        "default_coqui_speaker": "p225", 
+        "default_coqui_speaker": "p225",
         "available_voices": ["p225", "p228", "p232", "p249"],
         "language": "en",
-        "sample_rate": 22050, 
+        "sample_rate": 22050,
         "notes": "Coqui TTS: English VCTK VITS (multi-speaker). Use VCTK speaker IDs."
     },
     "llasa_hybrid_de_clone": {
         "handler_function_key": "llasa_hybrid",
         "llm_model_id": LLASA_MLX_LLM_MODEL_ID,
-        "chat_tokenizer_id": LLASA_CHAT_TEMPLATE_TOKENIZER_ID, 
+        "chat_tokenizer_id": LLASA_CHAT_TEMPLATE_TOKENIZER_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
         "language": "de",
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
-        "available_voices": [DEFAULT_GERMAN_REF_WAV], 
+        "available_voices": [DEFAULT_GERMAN_REF_WAV],
         "sample_rate": 16000,
-        "requires_hf_token": False, 
+        "requires_hf_token": False,
         "notes": "LLaSA 1B Hybrid (MLX LLM + PyTorch XCodec2). Uses ref WAV for cloning. 16kHz. Experimental."
     },
-    "llasa_hybrid_de_zeroshot": { 
+    "llasa_hybrid_de_zeroshot": {
         "handler_function_key": "llasa_hybrid",
         "llm_model_id": LLASA_MLX_LLM_MODEL_ID, # e.g., "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
         "chat_tokenizer_id": LLASA_CHAT_TEMPLATE_TOKENIZER_ID, # e.g., "HKUSTAudio/Llasa-1B-Multilingual"
@@ -460,9 +458,9 @@ GERMAN_TTS_MODELS = {
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
-        "language": None, 
+        "language": None,
         "default_voice_id": "./german.wav",  # Changed from "./my_bark_output.wav"
-        "available_voices": ["./german.wav"], 
+        "available_voices": ["./german.wav"],
         "sample_rate": 16000,
         "requires_hf_token": False,
         "notes": "LLaSA Multilingual (Multilingual-specific handler + XCodec2). Voice cloning via reference WAV. Output: 16kHz WAV."
@@ -520,10 +518,10 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_spark_control": {
         "handler_function_key": "mlx_audio",
         "mlx_model_path": MLX_AUDIO_SPARK_REPO_ID,
-        "default_voice_id": "female", 
+        "default_voice_id": "female",
         "available_voices": ["female", "male"],
-        "default_speed": 1.0, 
-        "default_pitch": 1.0, 
+        "default_speed": 1.0,
+        "default_pitch": 1.0,
         "sample_rate": 16000,
         "notes": "mlx-audio (Spark model) with controllable attributes. Uses Apple Silicon MLX."
     },
@@ -532,12 +530,12 @@ GERMAN_TTS_MODELS = {
         "mlx_model_path": "mlx-community/bark-small", # For the main MLX model
         "default_voice_id": "v2/de_speaker_3",        # This voice will be fetched from "suno/bark-small" by the patch
         "available_voices": [
-            "v2/de_speaker_0", "v2/de_speaker_1", "v2/de_speaker_2", 
-            "v2/de_speaker_3", "v2/de_speaker_4", "v2/de_speaker_5", 
-            "v2/de_speaker_6", "v2/de_speaker_7", "v2/de_speaker_8", 
+            "v2/de_speaker_0", "v2/de_speaker_1", "v2/de_speaker_2",
+            "v2/de_speaker_3", "v2/de_speaker_4", "v2/de_speaker_5",
+            "v2/de_speaker_6", "v2/de_speaker_7", "v2/de_speaker_8",
             "v2/de_speaker_9", "v2/en_speaker_1" # Example
         ],
-        "lang_code": "de", 
+        "lang_code": "de",
         "sample_rate": 24000,
         "notes": "mlx-audio (Bark) with main model from mlx-community/bark-small and voices from suno/bark-small (via patch)."
     },
@@ -555,7 +553,7 @@ GERMAN_TTS_MODELS = {
         "notes": "Kartoffelbox v0.1 (Chatterbox-based). German TTS with emotion control and voice cloning. Gated model."
     },
     "kartoffelbox_zeroshot": {
-        "crisptts_model_id": "kartoffelbox_zeroshot", 
+        "crisptts_model_id": "kartoffelbox_zeroshot",
         "handler_function_key": "chatterbox",
         "model_repo_id": "SebastianBodza/Kartoffelbox-v0.1",
         "t3_checkpoint_file": "t3_cfg.safetensors",
@@ -574,7 +572,7 @@ GERMAN_TTS_MODELS = {
         "language": "multilingual",
         "default_voice_id": "./german.wav",
         "available_voices": ["./german.wav"],
-        "sample_rate": 24000, 
+        "sample_rate": 24000,
         "default_steps": 32,
         "default_cfg_strength": 2.0,
         "requires_hf_token": False,
@@ -599,7 +597,7 @@ GERMAN_TTS_MODELS = {
         "use_mlx": False,  # Force PyTorch backend
         "language": "de",
         # Specify the exact checkpoint file within the repo's subdirectory
-        "checkpoint_filename": "F5TTS_Base/model_420000.safetensors", 
+        "checkpoint_filename": "F5TTS_Base/model_420000.safetensors",
         "default_voice_id": "./german.wav",
         "available_voices": ["./german.wav"],
         "sample_rate": 24000,
@@ -627,7 +625,7 @@ GERMAN_TTS_MODELS = {
         "handler_function_key": "f5_tts",
         "model_repo_id": "eamag/f5-tts-mlx-german",
         "use_mlx": True, # Let this attempt MLX first, so the fallback can be triggered
-        "language": "de", 
+        "language": "de",
         "default_voice_id": "./german.wav",
         "available_voices": ["./german.wav"],
         "sample_rate": 24000,
@@ -760,5 +758,5 @@ GERMAN_TTS_MODELS = {
         # "ref_audio_max_duration_ms": 10000, # Optional: to enforce shorter ref for Dia
         "notes": "mlx-audio (Dia model) for voice cloning..."
     },
-    
+
 }

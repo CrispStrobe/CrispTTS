@@ -1,10 +1,10 @@
 # CrispTTS/handlers/zonos_handler.py
 
-import logging
-import json
-from pathlib import Path
 import gc
-import platform # Add this import
+import json
+import logging
+import platform  # Add this import
+from pathlib import Path
 
 # --- Conditional Imports ---
 TORCH_AVAILABLE = False
@@ -28,8 +28,8 @@ except ImportError:
 
 if TORCH_AVAILABLE:
     try:
-        from zonos.model import Zonos
         from zonos.conditioning import make_cond_dict
+        from zonos.model import Zonos
         Zonos_class = Zonos
         make_cond_dict_func = make_cond_dict
         ZONOS_AVAILABLE = True
@@ -37,7 +37,7 @@ if TORCH_AVAILABLE:
     except ImportError:
         logger_init.warning("'zonos-tts' library not found. Zonos handler will be non-functional. Install with: (see Zonos repo for instructions)") # Updated install advice
 
-from utils import save_audio, play_audio
+from utils import play_audio, save_audio
 
 logger = logging.getLogger("CrispTTS.handlers.zonos")
 
@@ -98,7 +98,7 @@ def synthesize_with_zonos(
         if not ref_audio_path_str:
             logger.error("Zonos requires a reference audio file. Please specify via --german-voice-id or in config.")
             return
-        
+
         ref_audio_path = Path(ref_audio_path_str).resolve()
         if not ref_audio_path.exists():
             logger.error(f"Zonos: Reference audio file not found at '{ref_audio_path}'.")
@@ -122,7 +122,7 @@ def synthesize_with_zonos(
 
         language = crisptts_model_config.get("language", "en-us") # Default from config
         cond_dict_args = {"text": text, "speaker": CACHED_SPEAKER_EMBEDDING, "language": language, "device": device}
-        
+
         # Default conditioning parameters (can be overridden by model_params_override)
         # These are based on common parameters seen in Zonos's Gradio UI and examples.
         # Users can provide these via --model-params
@@ -141,7 +141,7 @@ def synthesize_with_zonos(
             if key not in cond_dict_args: # Only if not already set by required args
                 if isinstance(val, list): cond_dict_args[key] = torch_zonos.tensor(val, device=device)
                 else: cond_dict_args[key] = val
-        
+
         if model_params_override:
             try:
                 cli_params = json.loads(model_params_override)
@@ -151,14 +151,14 @@ def synthesize_with_zonos(
                         if isinstance(value, list): # For 'emotion' and 'vqscore_8'
                             cond_dict_args[key] = torch_zonos.tensor(value, device=device)
                         else: # For float/bool params
-                            cond_dict_args[key] = value 
+                            cond_dict_args[key] = value
                 logger.info(f"Zonos: Applied custom model parameters via --model-params: {list(cli_params.keys())}")
             except json.JSONDecodeError:
                 logger.warning(f"Zonos: Could not parse --model-params JSON: {model_params_override}")
 
         final_cond_dict = make_cond_dict_func(**cond_dict_args)
         conditioning = CACHED_ZONOS_MODEL.prepare_conditioning(final_cond_dict)
-        
+
         # Determine if torch.compile should be disabled
         # Disable on CPU or MPS (Mac) as Triton is primarily for NVIDIA GPUs
         # or if the user explicitly passes "disable_torch_compile": true in model_params
@@ -194,7 +194,7 @@ def synthesize_with_zonos(
             # For torchaudio.save, it expects [channels, samples] or [samples]
             # If Zonos returns [1, channels, samples], then wav_tensor[0] is [channels, samples]
             # If Zonos returns [1, samples] (mono), then wav_tensor[0] is [samples]
-            wav_tensor_processed = wav_tensor[0] 
+            wav_tensor_processed = wav_tensor[0]
             logger.debug(f"Zonos: Processed wav_tensor shape for saving/playing: {wav_tensor_processed.shape}")
         elif wav_tensor.ndim == 2 or wav_tensor.ndim == 1:
             wav_tensor_processed = wav_tensor # Already in 2D or 1D format
@@ -220,7 +220,7 @@ def synthesize_with_zonos(
             audio_for_play = wav_tensor_processed
             if audio_for_play.ndim == 2 and audio_for_play.shape[0] > 0 : # If [channels, samples]
                 audio_for_play = audio_for_play[0] # Take the first channel
-            
+
             play_audio(audio_for_play.squeeze(), is_path=False, sample_rate=sampling_rate)
 
     except Exception as e:

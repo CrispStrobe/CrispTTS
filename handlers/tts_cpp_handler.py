@@ -1,11 +1,11 @@
 # CrispTTS/handlers/tts_cpp_handler.py
 
-import logging
 import json
+import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-import shutil
 
 # CrispTTS utils
 from utils import play_audio
@@ -52,7 +52,7 @@ def synthesize_with_tts_cpp(
     if not gguf_model_path_str:
         logger.error(f"TTS.cpp ({crisptts_specific_model_id}): 'gguf_model_path' not defined in config. Skipping.")
         return
-    
+
     gguf_model_path = Path(gguf_model_path_str).resolve()
     if not gguf_model_path.exists():
         logger.error(f"TTS.cpp ({crisptts_specific_model_id}): GGUF model file not found at '{gguf_model_path}'.")

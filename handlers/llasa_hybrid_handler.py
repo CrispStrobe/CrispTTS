@@ -4,16 +4,17 @@ Robust LLaSA Hybrid Handler for CrispTTS
 Combines MLX LLM with PyTorch XCodec2 for speech synthesis with voice cloning
 """
 
-import logging
-import os
-from pathlib import Path
 import gc
 import json
-import numpy as np
-import sys
+import logging
+import os
 import re
+import sys
 import tempfile
-from typing import Optional, List, Tuple, Union, Callable
+from pathlib import Path
+from typing import Callable, List, Optional, Tuple, Union
+
+import numpy as np
 
 # --- Conditional Imports with Robust Error Handling ---
 MLX_LM_AVAILABLE = False
@@ -81,7 +82,7 @@ except Exception as e:
 
 try:
     import torch as torch_imported
-    import torchaudio as torchaudio_imported_module 
+    import torchaudio as torchaudio_imported_module
     torch_llasa = torch_imported
     torchaudio = torchaudio_imported_module
     if hasattr(torchaudio_imported_module, 'transforms'):
@@ -120,7 +121,7 @@ except ImportError:
     logger_init.info("Scipy not found. Reference audio resampling will use torchaudio or basic methods if needed.")
 
 try:
-    from utils import save_audio, play_audio, SuppressOutput
+    from utils import SuppressOutput, play_audio, save_audio
     save_audio_util = save_audio
     play_audio_util = play_audio
     SuppressOutput_util = SuppressOutput
@@ -238,7 +239,7 @@ def _validate_and_prepare_reference_audio(
                     resampled_tensor = resampler(tensor_audio)
                     prompt_wav_samples = resampled_tensor.squeeze(0).numpy()
                     sr_prompt = target_sr
-                    logger.info(f"LLaSA Prep Ref Audio: Resampled successfully with torchaudio.")
+                    logger.info("LLaSA Prep Ref Audio: Resampled successfully with torchaudio.")
                 except Exception as e_torchaudio_resample:
                     logger.error(f"LLaSA Prep Ref Audio: torchaudio resampling failed: {e_torchaudio_resample}. Using original SR {sr_prompt}Hz.", exc_info=True)
             else:
@@ -291,20 +292,20 @@ def _llasa_extract_speech_ids_from_str_list(speech_tokens_text: str) -> List[int
     if not isinstance(speech_tokens_text, str):
         logger.warning(f"LLaSA Extract Speech IDs: Expected string input, got {type(speech_tokens_text)}")
         return []
-    
+
     # More robust regex to find speech tokens
     matches = re.findall(r"<\|s_(\d+)\|>", speech_tokens_text)
     for num_str in matches:
-        try: 
+        try:
             speech_id = int(num_str)
             # Basic validation - speech IDs should be reasonable
             if 0 <= speech_id <= 70000:  # XCodec2 typical range
                 speech_ids.append(speech_id)
             else:
                 logger.warning(f"LLaSA: Skipping unreasonable speech ID: {speech_id}")
-        except ValueError: 
+        except ValueError:
             logger.warning(f"LLaSA Extract Speech IDs: Could not parse int from '{num_str}' in '{speech_tokens_text[:100]}...'")
-    
+
     logger.debug(f"LLaSA Extract Speech IDs: Input (first 100): '{speech_tokens_text[:100]}...', Extracted IDs: {len(speech_ids)} (e.g., {speech_ids[:10]})")
     return speech_ids
 
@@ -398,7 +399,7 @@ def synthesize_with_llasa_hybrid(
         else: # Handles Python None or empty strings
             actual_ref_speaker_wav_for_processing = None
             logger.debug(f"{log_prefix}Candidate ref path is Python None or empty string, ensuring zero-shot mode.")
-    
+
     logger.info(f"{log_prefix}Effective reference audio path for processing: '{actual_ref_speaker_wav_for_processing}' (type: {type(actual_ref_speaker_wav_for_processing)})")
 
     # Get PyTorch device for XCodec2
@@ -418,7 +419,7 @@ def synthesize_with_llasa_hybrid(
             try:
                 logger.debug(f"{log_prefix}Loading MLX LLM: '{llm_model_id_cfg}'")
                 llasa_llm_mlx_model, llasa_llm_mlx_tokenizer = mlx_lm_load(llm_model_id_cfg)
-                if not (llasa_llm_mlx_model and llasa_llm_mlx_tokenizer): 
+                if not (llasa_llm_mlx_model and llasa_llm_mlx_tokenizer):
                     raise ValueError("MLX LLM model or tokenizer failed to load (returned None).")
                 logger.info(f"{log_prefix}MLX LLM and its tokenizer loaded successfully.")
             except Exception as e_mlx_load:
@@ -428,7 +429,7 @@ def synthesize_with_llasa_hybrid(
             try:
                 logger.debug(f"{log_prefix}Loading Chat Template Tokenizer (HF): '{chat_tokenizer_id_cfg}'")
                 chat_template_hf_tokenizer = AutoTokenizer_llasa_chat.from_pretrained(chat_tokenizer_id_cfg)
-                if not chat_template_hf_tokenizer: 
+                if not chat_template_hf_tokenizer:
                     raise ValueError("HF Chat Template Tokenizer failed to load (returned None).")
                 logger.info(f"{log_prefix}HF Chat Template Tokenizer loaded successfully.")
             except Exception as e_hf_tok_load:
@@ -438,13 +439,13 @@ def synthesize_with_llasa_hybrid(
             try:
                 logger.debug(f"{log_prefix}Loading PyTorch XCodec2 Model: '{codec_model_id_cfg}' to device '{pt_device_name_str}'")
                 codec_model_pt_inst = XCodec2Model_llasa.from_pretrained(codec_model_id_cfg).to(pt_device_obj).eval()
-                if not codec_model_pt_inst: 
+                if not codec_model_pt_inst:
                     raise ValueError("XCodec2 model failed to load (returned None).")
                 logger.info(f"{log_prefix}PyTorch XCodec2 Model loaded successfully to {pt_device_name_str}.")
             except Exception as e_xcodec_load:
                 logger.error(f"{log_prefix}Failed to load PyTorch XCodec2 Model '{codec_model_id_cfg}': {e_xcodec_load}", exc_info=True)
                 return
-        
+
         logger.info(f"{log_prefix}All primary models and tokenizers appear to be loaded.")
 
         # Initialize variables for processing
@@ -456,14 +457,14 @@ def synthesize_with_llasa_hybrid(
         if actual_ref_speaker_wav_for_processing:
             logger.info(f"{log_prefix}Attempting voice cloning using reference: '{actual_ref_speaker_wav_for_processing}'")
             project_root_path = Path(__file__).resolve().parent.parent
-            
+
             ref_audio_validation_result = _validate_and_prepare_reference_audio(
                 actual_ref_speaker_wav_for_processing,
                 project_root_path,
                 target_sample_rate,
                 max_duration_s=15
             )
-            
+
             if ref_audio_validation_result:
                 path_str_from_validation, audio_samples_np, actual_sr, temp_file_to_del_from_validation = ref_audio_validation_result
                 temp_trimmed_ref_audio_file_to_delete = temp_file_to_del_from_validation
@@ -476,13 +477,13 @@ def synthesize_with_llasa_hybrid(
                         with torch_llasa.no_grad():
                             ref_audio_tensor = torch_llasa.from_numpy(audio_samples_np).float().unsqueeze(0).to(pt_device_obj)
                             vq_codes_from_ref = codec_model_pt_inst.encode_code(ref_audio_tensor)[0,0,:].tolist()
-                        
+
                         if vq_codes_from_ref:
                             speech_prefix_tokens = _llasa_ids_to_speech_tokens_str(vq_codes_from_ref)
                             assistant_content_prefix_str += "".join(speech_prefix_tokens)
                             logger.info(f"{log_prefix}Generated {len(vq_codes_from_ref)} speech prefix tokens from reference audio for cloning.")
                             logger.debug(f"{log_prefix}First 10 reference speech IDs: {vq_codes_from_ref[:10]}")
-                            
+
                             # For German model workflow, get better transcription - simplified
                             ref_transcription = "Das ist eine deutsche Sprachprobe"
                             logger.debug(f"{log_prefix}Using simplified German transcription for text combination")
@@ -520,14 +521,14 @@ def synthesize_with_llasa_hybrid(
         # Construct chat prompt for MLX LLM - following blueprint format exactly
         user_content = f"Convert the text to speech:<|TEXT_UNDERSTANDING_START|>{combined_text}<|TEXT_UNDERSTANDING_END|>"
         chat_for_template = [
-            {"role": "user", "content": user_content}, 
+            {"role": "user", "content": user_content},
             {"role": "assistant", "content": assistant_content_prefix_str}
         ]
-        
+
         try:
             logger.debug(f"{log_prefix}Applying chat template. User content (text part): '{text_to_synthesize[:60]}...', Assistant prefix starts with: '{assistant_content_prefix_str[:60]}...'")
             prompt_str_for_llm = chat_template_hf_tokenizer.apply_chat_template(chat_for_template, tokenize=False, add_generation_prompt=True)
-            if not prompt_str_for_llm: 
+            if not prompt_str_for_llm:
                 raise ValueError("Applying chat template resulted in an empty prompt string.")
             logger.debug(f"{log_prefix}Full prompt string for LLM (first 300 chars): '{prompt_str_for_llm[:300]}...'")
         except Exception as e_chat_template:
@@ -542,7 +543,7 @@ def synthesize_with_llasa_hybrid(
         # Max new tokens calculation with better limits - following blueprint approach
         desired_max_speech_tokens_llm_can_generate = 300  # Reduced from 600 to prevent excessive generation
         max_new_tokens_for_llm = max(MIN_SPEECH_TOKENS_THRESHOLD, min(llm_max_context - num_prompt_tokens - 50, desired_max_speech_tokens_llm_can_generate))
-        
+
         if max_new_tokens_for_llm <= 0:
             logger.error(f"{log_prefix}Calculated max_new_tokens for LLM is {max_new_tokens_for_llm}, which is too low (prompt too long for context). Prompt tokens: {num_prompt_tokens}, Max context: {llm_max_context}. Skipping LLM generation.")
             return
@@ -552,7 +553,7 @@ def synthesize_with_llasa_hybrid(
         sampler_top_p = 1.0  # Following blueprint exactly
         sampler_min_p = 0.05
         sampler_top_k = 50   # Increased for better diversity
-        
+
         if model_params_override:
             try:
                 params_json = json.loads(model_params_override)
@@ -562,7 +563,7 @@ def synthesize_with_llasa_hybrid(
                 sampler_top_k = int(params_json.get("top_k", sampler_top_k))
             except (json.JSONDecodeError, ValueError) as e_params:
                 logger.warning(f"{log_prefix}Could not parse --model-params for LLM sampler settings: {e_params}. Using defaults.")
-        
+
         mlx_sampler = make_sampler_func(temp=sampler_temp, top_p=sampler_top_p)
         logger.info(f"{log_prefix}Starting MLX LLM generation. max_new_tokens={max_new_tokens_for_llm}. Sampler settings: temp={sampler_temp}, top_p={sampler_top_p}")
 
@@ -571,7 +572,7 @@ def synthesize_with_llasa_hybrid(
             model=llasa_llm_mlx_model,
             tokenizer=llasa_llm_mlx_tokenizer,
             prompt=prompt_str_for_llm,
-            max_tokens=max_new_tokens_for_llm, 
+            max_tokens=max_new_tokens_for_llm,
             sampler=mlx_sampler,
             verbose=logger.isEnabledFor(logging.DEBUG)
         )
@@ -579,12 +580,12 @@ def synthesize_with_llasa_hybrid(
         if not llm_generated_output_str:
             logger.error(f"{log_prefix}MLX LLM generation returned an empty string. Skipping further processing.")
             return
-        
+
         logger.debug(f"{log_prefix}Raw LLM output string length: {len(llm_generated_output_str)}. Starts with: '{llm_generated_output_str[:100]}...', Ends with: '...{llm_generated_output_str[-100:]}'")
-        
+
         # Process LLM output string - improved EOS handling
         completion_part_str = llm_generated_output_str
-        
+
         # Better EOS detection following blueprint patterns
         eos_patterns = [
             '<|SPEECH_GENERATION_END|>',
@@ -593,22 +594,22 @@ def synthesize_with_llasa_hybrid(
             '</s>',
             '<|im_end|>'
         ]
-        
+
         earliest_eos_pos = len(completion_part_str)
         found_eos = None
-        
+
         for pattern in eos_patterns:
             pos = completion_part_str.find(pattern)
             if pos != -1 and pos < earliest_eos_pos:
                 earliest_eos_pos = pos
                 found_eos = pattern
-        
+
         if found_eos:
             completion_part_str = completion_part_str[:earliest_eos_pos]
             logger.debug(f"{log_prefix}Truncated completion at '{found_eos}' (pos {earliest_eos_pos}). Final part length: {len(completion_part_str)}")
         else:
             logger.debug(f"{log_prefix}No EOS marker found. Using full completion.")
-        
+
         # Additional safety: detect and handle repetitive patterns
         if '<|s_' in completion_part_str:
             tokens = re.findall(r'<\|s_\d+\|>', completion_part_str)
@@ -623,7 +624,7 @@ def synthesize_with_llasa_hybrid(
                             completion_part_str = completion_part_str[:truncate_pos]
                             logger.info(f"{log_prefix}Detected repetitive pattern at token {i}, truncated to prevent gibberish")
                             break
-        
+
         if not completion_part_str.strip():
             logger.error(f"{log_prefix}LLM completion is empty after processing EOS. No speech IDs to extract.")
             return
@@ -639,9 +640,9 @@ def synthesize_with_llasa_hybrid(
                 logger.info(f"{log_prefix}Output too short with voice cloning. Attempting RETRY WITHOUT CLONING (zero-shot fallback).")
                 # Clean up resources before recursive call
                 if temp_trimmed_ref_audio_file_to_delete and temp_trimmed_ref_audio_file_to_delete.exists():
-                    try: 
+                    try:
                         temp_trimmed_ref_audio_file_to_delete.unlink(missing_ok=True)
-                    except OSError: 
+                    except OSError:
                         pass
                 _cleanup_resources(llasa_llm_mlx_model, llasa_llm_mlx_tokenizer, chat_template_hf_tokenizer, codec_model_pt_inst)
                 # Recursive call for fallback
@@ -654,21 +655,21 @@ def synthesize_with_llasa_hybrid(
         # Decode speech IDs to waveform using XCodec2
         speech_ids_tensor_for_xcodec = torch_llasa.tensor(numeric_speech_ids_for_xcodec, device=pt_device_obj).unsqueeze(0).unsqueeze(0)
         logger.info(f"{log_prefix}Decoding {len(numeric_speech_ids_for_xcodec)} speech IDs with XCodec2 model...")
-        
+
         generated_waveform_pt = None
         with torch_llasa.no_grad(), SuppressOutput_util(suppress_stdout=suppress_external_lib_logs, suppress_stderr=suppress_external_lib_logs):
             generated_waveform_pt = codec_model_pt_inst.decode_code(speech_ids_tensor_for_xcodec)
-        
+
         if generated_waveform_pt is None or generated_waveform_pt.numel() == 0:
             logger.error(f"{log_prefix}XCodec2 decode_code returned None or an empty tensor. No audio produced.")
             return
-        
+
         # For cloning mode: trim the reconstructed reference audio (following blueprint)
         if is_cloning_mode and processed_ref_audio_np is not None:
             ref_samples = len(processed_ref_audio_np)
             logger.info(f"{log_prefix}Generated audio shape before trimming: {generated_waveform_pt.shape}")
             logger.info(f"{log_prefix}Reference audio samples to trim: {ref_samples}")
-            
+
             if generated_waveform_pt.shape[2] > ref_samples:
                 logger.info(f"{log_prefix}Trimming {ref_samples} reference samples from generated audio")
                 generated_waveform_pt = generated_waveform_pt[:, :, ref_samples:]
@@ -679,13 +680,13 @@ def synthesize_with_llasa_hybrid(
                 logger.warning(f"{log_prefix}This may indicate synthesis failure - keeping full generated audio")
         else:
             logger.debug(f"{log_prefix}Zero-shot mode or no reference - no audio trimming needed")
-        
+
         # Convert to numpy array for saving/playing
         audio_output_np = generated_waveform_pt[0,0,:].cpu().numpy()
         if audio_output_np.size == 0:
             logger.error(f"{log_prefix}XCodec2 decoding resulted in an empty numpy array. No audio produced.")
             return
-        
+
         duration_seconds = audio_output_np.shape[0] / target_sample_rate
         logger.info(f"{log_prefix}XCodec2 decoding successful. Generated audio duration: {duration_seconds:.2f}s at {target_sample_rate}Hz.")
 
@@ -700,7 +701,7 @@ def synthesize_with_llasa_hybrid(
                 logger.info(f"{log_prefix}Synthesized audio successfully saved to: {output_path_obj}")
             except Exception as e_save:
                 logger.error(f"{log_prefix}Failed to save synthesized audio to '{output_path_obj}': {e_save}", exc_info=True)
-        
+
         if play_direct and play_audio_util:
             try:
                 logger.info(f"{log_prefix}Attempting to play synthesized audio directly...")
@@ -708,7 +709,7 @@ def synthesize_with_llasa_hybrid(
                 play_audio_util(audio_int16_bytes_for_play, is_path=False, input_format="pcm_s16le", sample_rate=target_sample_rate)
             except Exception as e_play:
                 logger.error(f"{log_prefix}Failed to play synthesized audio directly: {e_play}", exc_info=True)
-        
+
         logger.info(f"{log_prefix}Synthesis process completed successfully{'.' if not _is_fallback_attempt else ' (after fallback to zero-shot).'}")
 
     except Exception as e_main_synth:
@@ -766,29 +767,29 @@ def _log_initialization_status_detailed():
     is_functional, status_dict = validate_llasa_installation()
     title = "LLaSA Hybrid Handler Initialization Status"; logger.info(f"\n{'=' * 60}\n{title:^60}\n{'=' * 60}")
     logger.info(f"Overall Status: {'✓ FUNCTIONAL' if is_functional else '✗ NON-FUNCTIONAL'}")
-    
+
     for key_check in ["dependencies_met", "python_objects_loaded"]:
         key_title = key_check.replace('_', ' ').title()
         is_met_or_loaded = status_dict.get(key_check, False)
         logger.info(f"  - {key_title:<25}: {'✓ Yes' if is_met_or_loaded else '✗ No'}")
-        
+
         missing_list_key = ""
         if key_check == "dependencies_met":
             missing_list_key = "missing_dependencies"
         elif key_check == "python_objects_loaded":
             missing_list_key = "missing_python_objects"
-        
+
         if not is_met_or_loaded: # Only show missing items if the category itself is 'No'
             missing_items = status_dict.get(missing_list_key, [])
             if isinstance(missing_items, list) and missing_items:
                 logger.info(f"    Missing:   {', '.join(missing_items)}")
-            elif missing_items: 
+            elif missing_items:
                  logger.info(f"    Missing items (unexpected format for {missing_list_key}): {missing_items}")
 
     logger.info("-" * 60 + "\nDependency Details:")
     details = status_dict.get("details", {})
-    if isinstance(details, dict): 
-        for comp, avail in details.items(): 
+    if isinstance(details, dict):
+        for comp, avail in details.items():
             logger.info(f"  - {comp:<25}: {'✓ Available' if avail else '✗ Missing/Unavailable'}")
     else:
         logger.warning(f"LLaSA Init: 'details' in status_report is not a dictionary: {details}")
@@ -797,9 +798,9 @@ def _log_initialization_status_detailed():
 
     if is_functional:
         logger.info("LLaSA Hybrid Handler appears ready for use.")
-        if not test_llasa_basic_functionality(): 
+        if not test_llasa_basic_functionality():
             logger.warning("LLaSA: Basic functionality test FAILED despite dependencies appearing met. Check detailed logs for test_llasa_basic_functionality.")
-    else: 
+    else:
         logger.warning("LLaSA Hybrid Handler: NOT ready. Check missing components/errors above.")
     logger.info("=" * 60)
 

@@ -1,16 +1,17 @@
 # CrispTTS/handlers/mlx_audio_handler.py
-import logging
-import platform
-import os
-from pathlib import Path
-import json
-import tempfile
 import gc
+import json
+import logging
+import os
+import platform
+import shutil  # Import shutil for cleaning up temp dirs if needed
+import tempfile
+from pathlib import Path
+
 import numpy as np
-import shutil # Import shutil for cleaning up temp dirs if needed
 
 # CrispTTS utils (ensure SuppressOutput is still safe to import here)
-from utils import save_audio, play_audio, SuppressOutput
+from utils import SuppressOutput, play_audio, save_audio
 
 logger = logging.getLogger("CrispTTS.handlers.mlx_audio")
 
@@ -36,7 +37,7 @@ logger_init = logging.getLogger("CrispTTS.handlers.mlx_audio.init")
 
 try:
     from pydub import AudioSegment
-    from pydub.utils import mediainfo # Optional for transcription pre-processing
+    from pydub.utils import mediainfo  # Optional for transcription pre-processing
     AudioSegment_pydub = AudioSegment
     pydub_mediainfo_func = mediainfo
     PYDUB_AVAILABLE_FOR_TRIM = True # Also indicates pydub is generally available
@@ -45,8 +46,8 @@ except ImportError:
     logger_init.info("pydub not found. Reference audio trimming/conversion for MLX-Audio will be limited.")
 
 try:
-    from mlx_audio.tts.generate import generate_audio as generate_audio_mlx_imp
     import mlx.core as mx_core_imported
+    from mlx_audio.tts.generate import generate_audio as generate_audio_mlx_imp
 
     generate_audio_mlx_func = generate_audio_mlx_imp
     mx_core_module = mx_core_imported
@@ -125,7 +126,7 @@ def _patched_load_voice_prompt(voice_prompt_input): #
         if hasattr(bark_pipeline_module_for_patch, 'ALLOWED_PROMPTS') and \
            normalized_voice_name not in bark_pipeline_module_for_patch.ALLOWED_PROMPTS: #
             logger.warning(f"[Patched] Voice '{normalized_voice_name}' not in ALLOWED_PROMPTS. Using NPY load from '{BARK_VOICE_PROMPT_REPO_ID}'.") #
-        
+
         base_stem = "" #
         relative_dir = "speaker_embeddings" #
         if normalized_voice_name == "announcer": base_stem = "announcer" #
@@ -133,7 +134,7 @@ def _patched_load_voice_prompt(voice_prompt_input): #
             base_stem = normalized_voice_name.split(os.path.sep, 1)[1] #
             relative_dir = os.path.join(relative_dir, "v2") #
         else: base_stem = normalized_voice_name #
-        
+
         prompts_dict = {} #
         try:
             for key, suffix in {"semantic_prompt": "semantic_prompt.npy", "coarse_prompt": "coarse_prompt.npy", "fine_prompt": "fine_prompt.npy"}.items(): #
@@ -248,10 +249,10 @@ def _transcribe_ref_audio_for_mlx(
         )
         gen_kwargs = {"return_timestamps": True} #
         if language_hint: gen_kwargs["language"] = language_hint.lower() #
-        
+
         with SuppressOutput(suppress_stderr=True, suppress_stdout=not logger.isEnabledFor(logging.DEBUG)): #
             result = whisper_pipe(str(temp_wav_for_whisper), generate_kwargs=gen_kwargs) #
-        
+
         full_text = result.get("text", "").strip() #
         if not full_text and "chunks" in result and isinstance(result["chunks"], list): #
             full_text = " ".join([chunk.get('text',"").strip() for chunk in result["chunks"]]).strip() #
@@ -335,7 +336,7 @@ def synthesize_with_mlx_audio(
                 is_cloning_intent = True #
         else: #
             voice_name_or_npz_path_for_mlx = effective_voice_input_str # Treat as name if not a file #
-    
+
     logger.info(f"mlx-audio ({crisptts_specific_model_id}): Cloning intent: {is_cloning_intent}. Voice/NPZ: '{voice_name_or_npz_path_for_mlx}'. Ref audio for cloning: '{actual_ref_audio_path_for_cloning}'.") #
 
     mlx_gen_kwargs = { #
@@ -352,10 +353,10 @@ def synthesize_with_mlx_audio(
         try:
             cli_params_json = json.loads(model_params_override) #
             custom_ref_text_from_params = cli_params_json.get("ref_text") #
-            
+
             if "max_tokens" in cli_params_json: #
                 cli_params_json["max_length_override"] = cli_params_json.pop("max_tokens") #
-            
+
             valid_keys = ["speed", "temperature", "top_p", "top_k", "repetition_penalty", "streaming_interval",  #
                           "pitch", "gender", "stt_model", "lang_code", "cfg_scale", "sentence_split_method",  #
                           "max_length_override"] #
@@ -399,7 +400,7 @@ def synthesize_with_mlx_audio(
                 logger.info(f"mlx-audio ({crisptts_specific_model_id}): Using trimmed audio '{audio_path_for_transcription}' for Whisper transcription.")
             else:
                 logger.warning(f"mlx-audio ({crisptts_specific_model_id}): Trimming for transcription failed or not needed, using original '{actual_ref_audio_path_for_cloning}'. This might be too long.")
-        
+
         # This part of the logic remains similar, but uses audio_path_for_transcription
         mlx_gen_kwargs["voice"] = None  #
 
@@ -416,7 +417,7 @@ def synthesize_with_mlx_audio(
                     elif hasattr(torch_whisper_module.backends, "mps") and torch_whisper_module.backends.mps.is_available(): #
                         if platform.machine() == "arm64" and platform.system() == "Darwin": logger.info("mlx-audio: MLX on MPS, Whisper to CPU.") #
                         else: whisper_target_device = "mps" #
-                
+
                 transcribed_text, trans_err = _transcribe_ref_audio_for_mlx( #
                     audio_path_for_transcription, whisper_model_id_cfg, os.getenv("HF_TOKEN"), #
                     whisper_target_device, crisptts_model_config.get("language_for_whisper") #
@@ -444,7 +445,7 @@ def synthesize_with_mlx_audio(
             if "dia" in crisptts_specific_model_id.lower() and max_dur_ms > 12000: #
                 logger.warning(f"mlx-audio ({crisptts_specific_model_id}): Reducing ref audio trim for Dia to 12s from {max_dur_ms/1000.0:.1f}s.") #
                 max_dur_ms = 12000 #
-            
+
             # Trim the original ref audio for the mlx generate() function, storing in temp_dir_path
             path_to_use_for_generate, path_to_temp_trimmed_ref_for_generate_func = _trim_ref_audio_if_needed( #
                 Path(actual_ref_audio_path_for_cloning), max_dur_ms, temp_dir_path #
@@ -464,7 +465,7 @@ def synthesize_with_mlx_audio(
             os.chdir(temp_dir_path) #
             # Ensure no conflicting voice/ref_audio parameters are passed to mlx-audio
             final_kwargs_for_generate = {k: v for k, v in mlx_gen_kwargs.items() if v is not None or k == "sentence_split_method"} #
-            
+
             if is_cloning_intent: #
                 if "voice" in final_kwargs_for_generate: del final_kwargs_for_generate["voice"] #
             elif voice_name_or_npz_path_for_mlx: #
@@ -475,7 +476,7 @@ def synthesize_with_mlx_audio(
             logger.debug(f"mlx-audio ({crisptts_specific_model_id}): Calling generate_audio with text: '{text[:50]}...', kwargs: {json.dumps(final_kwargs_for_generate, default=str)}") #
             with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), suppress_stderr=not logger.isEnabledFor(logging.DEBUG)): #
                 generate_audio_mlx_func(model_path=mlx_model_repo_id_or_path, text=text, **final_kwargs_for_generate) #
-            
+
             output_format_ext = final_kwargs_for_generate.get("audio_format", "wav") #
             expected_temp_output_file = temp_dir_path / f"{temp_file_basename}.{output_format_ext}" #
             if expected_temp_output_file.exists() and expected_temp_output_file.stat().st_size > 100: #

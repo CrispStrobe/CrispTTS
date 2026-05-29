@@ -1,14 +1,15 @@
 # handlers/edge_handler.py
 
 import asyncio
-import tempfile
+import gc
 import logging
 import os
+import tempfile
 from pathlib import Path
-import gc
 
 # Use relative imports for project modules
-from utils import save_audio, play_audio
+from utils import play_audio, save_audio
+
 # EdgeTTS is imported conditionally
 
 logger = logging.getLogger("CrispTTS.handlers.edge")
@@ -41,7 +42,7 @@ def synthesize_with_edge_tts(model_config, text, voice_id_override, model_params
 
     voice_id = voice_id_override or model_config.get("default_voice_id", "de-DE-KatjaNeural")
     logger.debug(f"EdgeTTS - Voice: {voice_id}, Text: '{text[:50]}...'")
-    
+
     temp_mp3_path_obj = None # Will be a Path object
     success_path_str = None  # Will be a string path
 
@@ -53,7 +54,7 @@ def synthesize_with_edge_tts(model_config, text, voice_id_override, model_params
         # Create a temporary file that will be cleaned up
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmpfile_obj:
             temp_mp3_path_obj = Path(tmpfile_obj.name)
-        
+
         # Ensure asyncio loop management
         try:
             loop = asyncio.get_event_loop_policy().get_event_loop()

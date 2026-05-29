@@ -1,9 +1,9 @@
 # handlers/nemo_handler.py
 
-import logging
-from pathlib import Path
-import os
 import gc
+import logging
+import os
+from pathlib import Path
 
 # Conditional imports
 TORCH_AVAILABLE_IN_HANDLER = False
@@ -38,7 +38,7 @@ if TORCH_AVAILABLE_IN_HANDLER and HF_HUB_AVAILABLE_IN_HANDLER:
         pass # Fail silently, checked in handler
 
 # Use relative imports for project modules
-from utils import save_audio, play_audio # Assuming these are in utils.py
+from utils import play_audio, save_audio  # Assuming these are in utils.py
 
 logger = logging.getLogger("CrispTTS.handlers.nemo")
 
@@ -83,7 +83,7 @@ def synthesize_with_fastpitch_nemo(model_config, text, voice_id_override, model_
 
         # NeMo models might need specific parsing/tokenization
         parsed_text = spec_generator.parse(text)
-        
+
         speaker_id_to_use = int(voice_id_override) if voice_id_override and voice_id_override.isdigit() else model_config.get("default_speaker_id", 0)
         logger.info(f"FastPitch (NeMo) - Using speaker ID: {speaker_id_to_use}")
 
@@ -98,7 +98,7 @@ def synthesize_with_fastpitch_nemo(model_config, text, voice_id_override, model_
             # For multi-speaker FastPitch from NGC/HF, it's usually an integer speaker ID.
             spectrogram = spec_generator.generate_spectrogram(tokens=parsed_text, speaker=speaker_id_to_use)
             audio_tensor = vocoder.convert_spectrogram_to_audio(spec=spectrogram)
-        
+
         # Ensure audio_tensor is on CPU and 1D or 2D [1, samples] for torchaudio
         audio_for_save = audio_tensor.detach().cpu().squeeze()
         if audio_for_save.ndim == 0: # Handle scalar tensor if it occurs
@@ -112,13 +112,13 @@ def synthesize_with_fastpitch_nemo(model_config, text, voice_id_override, model_
         if effective_output_file_wav_str:
             torchaudio_module_h.save(effective_output_file_wav_str, audio_for_save, sample_rate=sampling_rate)
             logger.info(f"FastPitch (NeMo) - Audio saved to {effective_output_file_wav_str}")
-        
+
         if play_direct:
             # Convert to numpy array of float32, then to int16 bytes for play_audio's PCM path
             audio_np_float32 = audio_for_save.squeeze().numpy().astype(np.float32)
             audio_np_int16 = (audio_np_float32 * 32767).astype(np.int16)
             play_audio(audio_np_int16.tobytes(), is_path=False, input_format="pcm_s16le", sample_rate=sampling_rate)
-            
+
     except Exception as e:
         logger.error(f"FastPitch (NeMo) - Synthesis failed: {e}", exc_info=True)
     finally:

@@ -1,21 +1,27 @@
 # utils.py
 
-import os
-import sys
 import io
 import json
-import wave
-import shutil
-from pathlib import Path
 import logging
-import numpy as np
+import os
+import shutil
+import sys
 import tempfile
+import wave
+from pathlib import Path
+
+import numpy as np
 
 # --- Project-Specific Imports (from other planned modules) ---
 # These will be available once config.py is created and populated.
 try:
+    from config import (
+        ORPHEUS_AVAILABLE_VOICES_BASE,
+        ORPHEUS_DEFAULT_VOICE,
+        ORPHEUS_GERMAN_VOICES,
+        SAUERKRAUT_VOICES,
+    )
     from config import ORPHEUS_SAMPLE_RATE as DEFAULT_ORPHEUS_SR
-    from config import ORPHEUS_DEFAULT_VOICE, ORPHEUS_GERMAN_VOICES, SAUERKRAUT_VOICES, ORPHEUS_AVAILABLE_VOICES_BASE
 except ImportError:
     # Fallbacks if config.py is not yet available or fully populated during initial setup
     logger = logging.getLogger("CrispTTS.utils_early") # Use a temporary logger if main one not set up
@@ -303,7 +309,7 @@ def orpheus_format_prompt(prompt_text, voice_name, available_voices_list):
     """Formats prompt for Orpheus models, using globally defined voice lists if needed."""
     voice_name_lower = voice_name.lower()
     found_match = None
-    
+
     # Ensure available_voices_list is actually a list
     if not isinstance(available_voices_list, list):
         logger.warning(f"Orpheus: available_voices_list is not a list ({type(available_voices_list)}). Using default fallback.")
@@ -313,7 +319,7 @@ def orpheus_format_prompt(prompt_text, voice_name, available_voices_list):
         if isinstance(v_avail, str) and v_avail.lower() == voice_name_lower:
             found_match = v_avail
             break
-    
+
     chosen_voice = voice_name
     if found_match:
         if voice_name != found_match:
@@ -341,7 +347,7 @@ def _orpheus_master_token_processor_and_decoder(raw_token_text_generator, output
     logger.debug("Orpheus Master Processor - Starting token processing and decoding.")
     all_audio_data = bytearray()
     wav_file = None
-    
+
     if output_file_wav_str:
         output_p = Path(output_file_wav_str)
         output_p.parent.mkdir(parents=True, exist_ok=True)
@@ -364,7 +370,7 @@ def _orpheus_master_token_processor_and_decoder(raw_token_text_generator, output
             if not isinstance(text_chunk, str):
                 logger.warning(f"Orpheus Processor: Received non-string chunk: {type(text_chunk)}")
                 continue
-            
+
             current_pos = 0
             while True:
                 start_custom = text_chunk.find("<custom_token_", current_pos)
@@ -372,16 +378,16 @@ def _orpheus_master_token_processor_and_decoder(raw_token_text_generator, output
                 end_custom = text_chunk.find(">", start_custom)
                 if end_custom == -1:
                     logger.debug(f"Orpheus Processor: Incomplete token at end of chunk: {text_chunk[start_custom:]}")
-                    break 
-                
+                    break
+
                 custom_token_str = text_chunk[start_custom : end_custom + 1]
                 token_id = orpheus_turn_token_into_id(custom_token_str, id_conversion_idx)
-                
+
                 if token_id is not None and token_id > 0:
                     token_buffer.append(token_id)
                     token_count_for_decoder += 1
                     id_conversion_idx += 1
-                    
+
                     if token_count_for_decoder % 7 == 0 and token_count_for_decoder >= 28:
                         buffer_to_process = token_buffer[-28:]
                         if len(buffer_to_process) == 28:
@@ -402,7 +408,7 @@ def _orpheus_master_token_processor_and_decoder(raw_token_text_generator, output
         if wav_file:
             try: wav_file.close()
             except Exception as e_close: logger.warning(f"Orpheus Processor - Failed to close WAV file {output_file_wav_str}: {e_close}")
-        
+
     if not all_audio_data:
         logger.warning("Orpheus Processor - No audio data was generated/decoded.")
         if output_file_wav_str and Path(output_file_wav_str).exists(): # If an empty file was created
@@ -456,11 +462,11 @@ def _prepare_oute_speaker_ref(speaker_ref_path_str: str, model_id_for_log: str =
         if len(audio_segment) > MAX_OUTE_REF_DURATION_MS:
             logger.info(f"{model_id_for_log} - Reference audio '{speaker_ref_path_input}' ({len(audio_segment)/1000.0:.1f}s) is > {MAX_OUTE_REF_DURATION_MS/1000.0:.1f}s. Trimming to {MAX_OUTE_REF_DURATION_MS/1000.0:.1f}s.")
             trimmed_segment = audio_segment[:MAX_OUTE_REF_DURATION_MS]
-            
+
             # Create a temporary file for the trimmed audio
             fd, temp_trimmed_audio_path_str = tempfile.mkstemp(suffix=".wav", prefix="trimmed_ref_")
             os.close(fd) # Close the file descriptor, pydub will reopen
-            
+
             trimmed_segment.export(temp_trimmed_audio_path_str, format="wav")
             logger.info(f"{model_id_for_log} - Using trimmed temporary audio: {temp_trimmed_audio_path_str}")
             speaker_ref_path_to_use = Path(temp_trimmed_audio_path_str)
@@ -469,12 +475,12 @@ def _prepare_oute_speaker_ref(speaker_ref_path_str: str, model_id_for_log: str =
             logger.info(f"{model_id_for_log} - Reference audio '{speaker_ref_path_input}' ({len(audio_segment)/1000.0:.1f}s) is within length limits. Using original.")
             speaker_ref_path_to_use = speaker_ref_path_input
             # temp_trimmed_audio_path_to_delete remains None
-            
+
     except Exception as e_audio_proc:
         logger.warning(f"{model_id_for_log} - Error processing reference audio '{speaker_ref_path_input}' for length check/trim: {e_audio_proc}. Using original path without trimming attempt.")
         speaker_ref_path_to_use = speaker_ref_path_input # Fallback to original path
         # temp_trimmed_audio_path_to_delete remains None
-            
+
     return speaker_ref_path_to_use, temp_trimmed_audio_path_to_delete
 
 def get_huggingface_cache_dir() -> Path:
@@ -503,8 +509,10 @@ def list_available_models(models_config_dict):
 def get_voice_info(model_id_to_query, models_config_dict):
     """Prints detailed voice/speaker information for a specific model."""
     # Imports from config needed for default voice names if not in model_config
-    from config import ORPHEUS_DEFAULT_VOICE as G_ORPHEUS_DEFAULT_VOICE # Avoid name clash
-    
+    from config import (
+        ORPHEUS_DEFAULT_VOICE as G_ORPHEUS_DEFAULT_VOICE,  # Avoid name clash
+    )
+
     print(f"\nVoice Information for Model: {model_id_to_query}")
     print("-------------------------------------")
     if model_id_to_query not in models_config_dict:
@@ -526,7 +534,7 @@ def get_voice_info(model_id_to_query, models_config_dict):
     if "test_default_speakers" in config and config["test_default_speakers"] and "oute" in model_id_to_query:
         print("  OuteTTS internal default speaker IDs suggested for testing (use with --german-voice-id):")
         for voice in config["test_default_speakers"]: print(f"    - {voice}")
-    
+
     # Model-specific guidance
     if model_id_to_query == "piper_local": print("  Piper Voice: Provide model path (e.g., 'de/de_DE/...') or JSON '{\"model\":\"...\", \"config\":\"...\"}' via --german-voice-id.")
     elif model_id_to_query == "speecht5_german_transformers": print("  SpeechT5 Voice: Provide embedding index (int) or .pt/.pth xvector path via --german-voice-id.")

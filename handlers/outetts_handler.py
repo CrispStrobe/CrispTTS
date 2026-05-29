@@ -1,12 +1,12 @@
 # handlers/outetts_handler.py
 
-import logging
-import json
-from pathlib import Path
-import os
 import gc
+import json
+import logging
+import os
 import platform
 import time
+from pathlib import Path
 
 # --- Conditional Imports ---
 OUTETTS_AVAILABLE = False
@@ -38,11 +38,15 @@ except ImportError:
 
 if TORCH_AVAILABLE_IN_HANDLER:
     try:
-        from outetts import (
-            Interface as _Interface, ModelConfig as _ModelConfig, Models as _Models, Backend as _Backend,
-            LlamaCppQuantization as _LlamaCppQuantization, GenerationConfig as _GenerationConfig,
-            GenerationType as _GenerationType, SamplerConfig as _SamplerConfig, InterfaceVersion as _InterfaceVersion
-        )
+        from outetts import Backend as _Backend
+        from outetts import GenerationConfig as _GenerationConfig
+        from outetts import GenerationType as _GenerationType
+        from outetts import Interface as _Interface
+        from outetts import InterfaceVersion as _InterfaceVersion
+        from outetts import LlamaCppQuantization as _LlamaCppQuantization
+        from outetts import ModelConfig as _ModelConfig
+        from outetts import Models as _Models
+        from outetts import SamplerConfig as _SamplerConfig
         OuteTTSInterface_h, OuteTTSModelConfig_h, OuteTTSModels_h, OuteTTSBackend_h = _Interface, _ModelConfig, _Models, _Backend
         OuteTTSLlamaCppQuantization_h, OuteTTSGenerationConfig_h = _LlamaCppQuantization, _GenerationConfig
         OuteTTSGenerationType_h, OuteTTSSamplerConfig_h, OuteTTSInterfaceVersion_h = _GenerationType, _SamplerConfig, _InterfaceVersion
@@ -57,8 +61,8 @@ if TORCH_AVAILABLE_IN_HANDLER:
 else:
     logger_init.warning("PyTorch not available, OuteTTS library not loaded. OuteTTS handler non-functional.")
 
-from utils import _prepare_oute_speaker_ref, SuppressOutput
 from config import OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA
+from utils import SuppressOutput, _prepare_oute_speaker_ref
 
 logger = logging.getLogger("CrispTTS.handlers.outetts")
 

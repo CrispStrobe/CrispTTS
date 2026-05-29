@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crisptts"
+version = "0.2.0"
+description = "Modular German Text-to-Speech synthesizer with 28+ TTS engines"
+readme = "readme.md"
+license = "EUPL-1.2"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.4.0",
+    "bandit>=1.7.5",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+]
+edge = ["edge-tts>=6.1.0"]
+piper = ["piper-tts>=1.2.0"]
+ml = [
+    "torch>=2.6.0",
+    "torchaudio>=2.6.0",
+    "transformers>=4.46.0",
+    "soundfile>=0.12.0",
+]
+text-extraction = [
+    "pypdfium2>=4.0.0",
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12.0",
+    "markdown>=3.5.0",
+]
+
+[project.scripts]
+crisptts = "main:main_cli_entrypoint"
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S"]
+ignore = [
+    "E501",   # line-too-long — handled per-file
+    "E701",   # multiple-statements-on-one-line — existing style
+    "E702",   # multiple-statements-on-one-line-semicolon — existing style
+    "S110",   # try-except-pass — intentional in handler imports
+    "S603",   # subprocess-without-shell-equals-true — by design
+    "S310",   # suspicious-url-open-usage — intentional downloads
+    "S101",   # assert — used in tests
+    "E402",   # module-import-not-at-top — required for conditional imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+"handlers/*.py" = ["E722"]  # bare-except in legacy handlers
+"main.py" = ["E402"]  # imports after monkey-patching block
+"config.py" = ["F401"]  # os/Path imported for use in model path definitions
+"f5_debug.py" = ["E722", "F841"]
+"f5-test.py" = ["E722", "F841"]
+
+[tool.bandit]
+skips = ["B101"]  # assert used in tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v"

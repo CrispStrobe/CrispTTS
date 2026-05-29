@@ -31,7 +31,10 @@ except ImportError as e:
 synthesize_with_orpheus_lm_studio = None
 synthesize_with_orpheus_ollama = None
 try:
-    from .orpheus_api_handler import synthesize_with_orpheus_lm_studio, synthesize_with_orpheus_ollama
+    from .orpheus_api_handler import (
+        synthesize_with_orpheus_lm_studio,
+        synthesize_with_orpheus_ollama,
+    )
     logger.debug("Orpheus API handlers (LM Studio, Ollama) imported.")
 except ImportError as e:
     logger.warning(f"Could not import Orpheus API handlers (orpheus_api_handler.py): {e}. These handlers will be unavailable.")
@@ -89,29 +92,31 @@ try:
         logger.info("Orpheus Kartoffel (Transformers) handler imported SUCCESSFULLY.")
     else: # This case should ideally not happen if the import itself was successful
         logger.warning("Orpheus Kartoffel handler file imported, BUT 'synthesize_with_orpheus_kartoffel' function is None (unexpected).")
-        synthesize_with_orpheus_kartoffel = None 
-except ImportError as e_imp_kartoffel: 
+        synthesize_with_orpheus_kartoffel = None
+except ImportError as e_imp_kartoffel:
     logger.warning(f"Could not import Orpheus Kartoffel handler (kartoffel.py) due to ImportError: {e_imp_kartoffel}", exc_info=False) # Reduced log level for common missing optional deps
-except Exception as e_other_kartoffel: 
+except Exception as e_other_kartoffel:
     logger.error(f"An UNEXPECTED error occurred during import of kartoffel.py: {e_other_kartoffel}", exc_info=True)
 
 synthesize_with_llasa_hybrid_func = None
 try:
     from .llasa_hybrid_handler import synthesize_with_llasa_hybrid
-    synthesize_with_llasa_hybrid_func = synthesize_with_llasa_hybrid 
+    synthesize_with_llasa_hybrid_func = synthesize_with_llasa_hybrid
     if synthesize_with_llasa_hybrid_func:
         logger.info("LLaSA Hybrid handler imported SUCCESSFULLY.")
     else: # This case should ideally not happen
         logger.warning("LLaSA Hybrid handler file imported, but function is None (unexpected).")
-except ImportError as e_imp_llasa: 
+except ImportError as e_imp_llasa:
     logger.warning(f"Could not import LLaSA Hybrid handler (llasa_hybrid_handler.py) due to ImportError: {e_imp_llasa}", exc_info=False)
-except Exception as e_other_llasa: 
+except Exception as e_other_llasa:
     logger.error(f"An UNEXPECTED error during import of llasa_hybrid_handler.py: {e_other_llasa}", exc_info=True)
 
 # NEW: Separate LLaSA handlers for German and Multilingual models
 synthesize_with_llasa_german_transformers_func = None
 try:
-    from .llasa_german_transformers_handler import synthesize_with_llasa_german_transformers
+    from .llasa_german_transformers_handler import (
+        synthesize_with_llasa_german_transformers,
+    )
     synthesize_with_llasa_german_transformers_func = synthesize_with_llasa_german_transformers
     if synthesize_with_llasa_german_transformers_func:
         logger.info("LLaSA German Transformers handler imported SUCCESSFULLY.")
@@ -138,7 +143,9 @@ except Exception as e_other_llasa_german:
 
 synthesize_with_llasa_multilingual_transformers_func = None
 try:
-    from .llasa_multilingual_transformers_handler import synthesize_with_llasa_multilingual_transformers
+    from .llasa_multilingual_transformers_handler import (
+        synthesize_with_llasa_multilingual_transformers,
+    )
     synthesize_with_llasa_multilingual_transformers_func = synthesize_with_llasa_multilingual_transformers
     if synthesize_with_llasa_multilingual_transformers_func:
         logger.info("LLaSA Multilingual Transformers handler imported SUCCESSFULLY.")
@@ -221,8 +228,8 @@ ALL_HANDLERS = {
     "orpheus_ollama": synthesize_with_orpheus_ollama,
     # OuteTTS models can share a handler if logic differentiates via config
     "outetts": synthesize_with_outetts_local, # Use this for "oute_llamacpp" and "oute_hf"
-    "speecht5": synthesize_with_speecht5_transformers, 
-    "nemo_fastpitch": synthesize_with_fastpitch_nemo, 
+    "speecht5": synthesize_with_speecht5_transformers,
+    "nemo_fastpitch": synthesize_with_fastpitch_nemo,
     "coqui_tts": synthesize_with_coqui_tts, # Generic handler for all Coqui TTS API models
     "orpheus_kartoffel": synthesize_with_orpheus_kartoffel,
     "llasa_hybrid": synthesize_with_llasa_hybrid_func,

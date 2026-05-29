@@ -1,6 +1,7 @@
 # decoder.py
 
 import logging
+
 import numpy as np
 import torch
 
@@ -11,7 +12,7 @@ snac_loaded_model = None # The loaded model instance
 snac_device = "cpu" # Default to CPU
 
 try:
-    from snac import SNAC as SNAC_cls # Import the class
+    from snac import SNAC as SNAC_cls  # Import the class
     SNAC_model = SNAC_cls
     SNAC_AVAILABLE = True
     logger_decoder_init = logging.getLogger("CrispTTS.decoder.init") # Logger for init phase
@@ -29,7 +30,7 @@ try:
                 snac_device = "mps"
             else:
                 snac_device = "cpu"
-            
+
             snac_loaded_model = _snac_model_instance.to(snac_device)
             logger_decoder_init.info(f"SNAC model 'hubertsiuzdak/snac_24khz' loaded successfully to device: {snac_device}")
         except Exception as e:
@@ -80,12 +81,12 @@ def convert_to_audio(multiframe_tokens: list[int], total_token_count: int) -> by
     if not all(isinstance(token, int) for token in multiframe_tokens):
         logger.warning(f"Decoder: Received non-integer tokens in multiframe_tokens: {multiframe_tokens}")
         return b''
-        
+
     num_frames_possible = len(multiframe_tokens) // 7
     if num_frames_possible == 0:
         # logger.debug(f"Decoder: Not enough tokens ({len(multiframe_tokens)}) for a full 7-token frame.")
         return b''
-    
+
     # Process only complete frames
     valid_tokens_for_processing = multiframe_tokens[:num_frames_possible * 7]
 
@@ -98,10 +99,10 @@ def convert_to_audio(multiframe_tokens: list[int], total_token_count: int) -> by
     for j in range(num_frames_possible):
         i = 7 * j
         codes_0_list.append(valid_tokens_for_processing[i])
-        
+
         codes_1_list.append(valid_tokens_for_processing[i+1])
         codes_1_list.append(valid_tokens_for_processing[i+4])
-        
+
         codes_2_list.append(valid_tokens_for_processing[i+2])
         codes_2_list.append(valid_tokens_for_processing[i+3])
         codes_2_list.append(valid_tokens_for_processing[i+5])
@@ -130,14 +131,14 @@ def convert_to_audio(multiframe_tokens: list[int], total_token_count: int) -> by
         # The slice [:, :, 2048:4096] takes 2048 samples. At 24kHz, this is ~85ms.
         # This needs to be understood in context of how the Orpheus model produces tokens
         # and how SNAC is expected to reconstruct audio from them.
-        
+
         # Using the slice from your provided decoder.py
         # Ensure audio_hat has the expected dimensions before slicing
         if audio_hat.ndim == 3 and audio_hat.shape[2] >= 4096:
             audio_slice = audio_hat[:, :, 2048:4096]
         elif audio_hat.ndim == 3 and audio_hat.shape[2] > 0 : # If output is shorter, take what's available
             logger.warning(f"SNAC output shorter than expected for slicing. Output shape: {audio_hat.shape}. Using available audio.")
-            audio_slice = audio_hat 
+            audio_slice = audio_hat
         else:
             logger.error(f"SNAC output has unexpected shape: {audio_hat.shape}. Cannot process.")
             return b''
@@ -145,10 +146,10 @@ def convert_to_audio(multiframe_tokens: list[int], total_token_count: int) -> by
 
         detached_audio_cpu = audio_slice.detach().cpu()
         audio_numpy_float32 = detached_audio_cpu.numpy().astype(np.float32)
-        
+
         # Normalize if needed (SNAC output is typically [-1, 1]) and convert to int16
         audio_numpy_int16 = (np.clip(audio_numpy_float32, -1.0, 1.0) * 32767).astype(np.int16)
-        
+
         audio_bytes = audio_numpy_int16.tobytes()
         # logger.debug(f"Decoder: Successfully decoded {len(multiframe_tokens)} tokens into {len(audio_bytes)} audio bytes.")
         return audio_bytes
@@ -174,8 +175,8 @@ if not SNAC_AVAILABLE or not snac_loaded_model:
 
 
 if __name__ == "__main__":
+    import wave
     from pathlib import Path
-    import wave 
 
     # Configure a basic logger for standalone testing of this decoder.py
     logging.basicConfig(
@@ -193,7 +194,7 @@ if __name__ == "__main__":
         # The structure from your `decoder.py` implies 7 input tokens make one SNAC frame.
         # convert_to_audio processes `num_frames_possible = len(multiframe_tokens) // 7`
         # and expects multiframe_tokens to be a flat list.
-        
+
         # Test with 28 tokens (4 SNAC frames)
         # These are raw token IDs *after* `orpheus_turn_token_into_id`
         # (which subtracts 10 and the offset).
@@ -205,11 +206,11 @@ if __name__ == "__main__":
         # This implies the tokens from `orpheus_turn_token_into_id` are what SNAC expects *after* they are
         # structured into the three codebooks (codes_0, codes_1, codes_2).
         # The values in `multiframe_tokens` should be the already processed IDs from `orpheus_turn_token_into_id`.
-        
+
         # Let's simulate tokens that might be valid for SNAC codebooks (e.g., small integers)
         # This is for testing the flow, not for meaningful audio.
         dummy_processed_tokens_1 = [100, 200, 300, 400, 150, 250, 350] * 4 # 28 tokens for 4 SNAC frames
-        
+
         logger.info(f"Testing convert_to_audio with {len(dummy_processed_tokens_1)} dummy processed tokens...")
         audio_output_bytes = convert_to_audio(dummy_processed_tokens_1, len(dummy_processed_tokens_1))
 

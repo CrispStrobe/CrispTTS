@@ -1,15 +1,15 @@
 # handlers/piper_handler.py
 
+import gc
 import json
 import logging
 import os
 import tempfile
 import wave
 from pathlib import Path
-import gc
 
 # Use relative imports for project modules
-from utils import save_audio, play_audio
+from utils import play_audio, save_audio
 
 logger = logging.getLogger("CrispTTS.handlers.piper")
 
@@ -58,7 +58,7 @@ def synthesize_with_piper_local(model_config, text, voice_id_override, model_par
                 model_path_in_repo = voice_id_override
         elif isinstance(voice_id_override, str): # Assuming direct path or repo relative path
             model_path_in_repo = voice_id_override
-    
+
     if not model_path_in_repo: # Fallback to default from config if override not provided
         model_path_in_repo = model_config.get("default_model_path_in_repo")
 
@@ -81,12 +81,12 @@ def synthesize_with_piper_local(model_config, text, voice_id_override, model_par
     # Use a unique cache directory for piper models within the project's cache
     model_cache_dir_base = Path.home() / ".cache" / "crisptts_cache" / "piper_models"
     model_cache_dir_base.mkdir(parents=True, exist_ok=True)
-    
+
     # Construct local paths maintaining subdirectory structure from repo path
     # Path(model_path_in_repo).parent will give the subdirectories
     local_piper_model_path_target_dir = model_cache_dir_base / Path(model_path_in_repo).parent
     local_piper_config_path_target_dir = model_cache_dir_base / Path(config_path_in_repo).parent
-    
+
     local_piper_model_path_target_dir.mkdir(parents=True, exist_ok=True)
     local_piper_config_path_target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,7 +132,7 @@ def synthesize_with_piper_local(model_config, text, voice_id_override, model_par
             logger.info(f"Piper - Synthesis successful, {len(audio_data)} bytes generated.")
             effective_output_file_wav = Path(output_file_str).with_suffix(".wav") if output_file_str else None
             # Piper voice config usually has sample_rate
-            current_sample_rate = getattr(getattr(voice_obj, 'config', None), 'sample_rate', 22050) 
+            current_sample_rate = getattr(getattr(voice_obj, 'config', None), 'sample_rate', 22050)
 
             if effective_output_file_wav:
                 save_audio(audio_data, str(effective_output_file_wav), source_is_path=False, input_format="wav", sample_rate=current_sample_rate)

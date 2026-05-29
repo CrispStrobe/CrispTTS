@@ -1,24 +1,25 @@
 # handlers/orpheus_kartoffel_handler.py
 
+import gc
+import json
 import logging
 import os
+import sys  # For stderr print on critical import fails
 from pathlib import Path
-import gc
-import json 
-from typing import List, Optional 
-import numpy as np 
-import sys # For stderr print on critical import fails
+from typing import List, Optional
+
+import numpy as np
 
 # Conditional imports
 TORCH_AVAILABLE_IN_HANDLER = False
 TRANSFORMERS_AVAILABLE_IN_HANDLER = False
 SNAC_AVAILABLE_IN_HANDLER = False
-SOUNDFILE_AVAILABLE_IN_HANDLER = False 
+SOUNDFILE_AVAILABLE_IN_HANDLER = False
 
-torch_kartoffel = None 
+torch_kartoffel = None
 AutoModelForCausalLM_kartoffel, AutoTokenizer_kartoffel = None, None
-SNAC_kartoffel_cls = None 
-sf_kartoffel = None   
+SNAC_kartoffel_cls = None
+sf_kartoffel = None
 
 logger_init = logging.getLogger("CrispTTS.handlers.orpheus_kartoffel.init")
 
@@ -41,8 +42,8 @@ if TORCH_AVAILABLE_IN_HANDLER: # Only try these if torch is available
         logger_init.info("Transformers library not found. Kartoffel Orpheus handler will be non-functional.")
 
     try:
-        from snac import SNAC # Import the main SNAC class
-        SNAC_kartoffel_cls = SNAC 
+        from snac import SNAC  # Import the main SNAC class
+        SNAC_kartoffel_cls = SNAC
         SNAC_AVAILABLE_IN_HANDLER = True
     except ImportError as e:
         print(f"Kartoffel Handler INIT ERROR: SNAC import failed: {e}", file=sys.stderr)
@@ -58,7 +59,7 @@ except ImportError as e:
 # --- MODIFIED IMPORT FOR UTILS ---
 # Assuming utils.py is in the project root, which is in sys.path thanks to main.py
 try:
-    from utils import save_audio, play_audio, SuppressOutput 
+    from utils import SuppressOutput, play_audio, save_audio
     UTILS_AVAILABLE = True
 except ImportError as e:
     print(f"Kartoffel Handler CRITICAL INIT ERROR: Failed to import from 'utils': {e}", file=sys.stderr)
@@ -70,7 +71,7 @@ except ImportError as e:
 logger = logging.getLogger("CrispTTS.handlers.orpheus_kartoffel")
 
 def _redistribute_codes_for_kartoffel(code_list: list[int], device: str) -> Optional[List['torch.Tensor']]:
-    if not TORCH_AVAILABLE_IN_HANDLER or not torch_kartoffel: 
+    if not TORCH_AVAILABLE_IN_HANDLER or not torch_kartoffel:
         return None
     if not code_list or len(code_list) % 7 != 0:
         logger.warning(f"Kartoffel: Code list length ({len(code_list)}) is not a multiple of 7. Cannot redistribute.")
@@ -79,7 +80,7 @@ def _redistribute_codes_for_kartoffel(code_list: list[int], device: str) -> Opti
     if num_frames == 0:
         logger.warning("Kartoffel: Not enough codes for any SNAC frames after filtering.")
         return None
-        
+
     layer_1_codes, layer_2_codes, layer_3_codes = [], [], []
     for i in range(num_frames):
         base_idx = 7 * i
@@ -103,9 +104,9 @@ def _redistribute_codes_for_kartoffel(code_list: list[int], device: str) -> Opti
     return codes_for_snac
 
 def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, model_params_override, output_file_str, play_direct):
-    crisptts_model_id_for_log = model_config.get('crisptts_model_id', 'orpheus_kartoffel_natural') 
+    crisptts_model_id_for_log = model_config.get('crisptts_model_id', 'orpheus_kartoffel_natural')
 
-    if not all([TORCH_AVAILABLE_IN_HANDLER, TRANSFORMERS_AVAILABLE_IN_HANDLER, 
+    if not all([TORCH_AVAILABLE_IN_HANDLER, TRANSFORMERS_AVAILABLE_IN_HANDLER,
                   SNAC_AVAILABLE_IN_HANDLER, SOUNDFILE_AVAILABLE_IN_HANDLER, UTILS_AVAILABLE]):
         logger.error(f"Kartoffel Orpheus ({crisptts_model_id_for_log}): Missing core dependencies (PyTorch, Transformers, SNAC, SoundFile, or project Utils). Skipping.")
         return
@@ -121,12 +122,12 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
 
     # ... (rest of the function from Step 32, ensuring all config keys are checked for None) ...
     # (Make sure to use the aliased module names: torch_kartoffel, AutoModelForCausalLM_kartoffel, etc.)
-    
+
     kartoffel_model_id = model_config.get("model_repo_id")
     tokenizer_id = model_config.get("tokenizer_repo_id", kartoffel_model_id)
     snac_model_id_cfg = model_config.get("snac_model_id")
     chosen_voice = voice_id_override or model_config.get("default_voice_id")
-    
+
     prompt_start_token_id = model_config.get("prompt_start_token_id")
     prompt_end_token_ids_list = model_config.get("prompt_end_token_ids")
     generation_eos_token_id = model_config.get("generation_eos_token_id")
@@ -137,7 +138,7 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
 
     # Check all required config values are present
     required_configs = {
-        "kartoffel_model_id": kartoffel_model_id, "tokenizer_id": tokenizer_id, 
+        "kartoffel_model_id": kartoffel_model_id, "tokenizer_id": tokenizer_id,
         "snac_model_id_cfg": snac_model_id_cfg, "chosen_voice": chosen_voice,
         "prompt_start_token_id": prompt_start_token_id, "prompt_end_token_ids_list": prompt_end_token_ids_list,
         "generation_eos_token_id": generation_eos_token_id, "audio_start_marker_token_id": audio_start_marker_token_id,
@@ -149,7 +150,7 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
             return
 
     logger.info(f"Kartoffel Orpheus ({crisptts_model_id_for_log}): Synthesizing with model '{kartoffel_model_id}', voice '{chosen_voice}'.")
-    
+
     loaded_kartoffel_model_inst = None
     loaded_tokenizer_inst = None
     loaded_snac_decoder_inst = None
@@ -164,16 +165,16 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
             loaded_tokenizer_inst = AutoTokenizer_kartoffel.from_pretrained(tokenizer_id, token=hf_token, trust_remote_code=True)
             loaded_kartoffel_model_inst = AutoModelForCausalLM_kartoffel.from_pretrained(
                 kartoffel_model_id, torch_dtype=torch_kartoffel.float16,
-                token=hf_token, trust_remote_code=True 
+                token=hf_token, trust_remote_code=True
             ).to(device).eval()
             loaded_snac_decoder_inst = SNAC_kartoffel_cls.from_pretrained(snac_model_id_cfg).to(device).eval()
         logger.info("Kartoffel Orpheus: Models (Kartoffel, Tokenizer, SNAC) loaded.")
-        
-        full_prompt_text = f"{chosen_voice}: {text}"       
+
+        full_prompt_text = f"{chosen_voice}: {text}"
         input_ids_text = loaded_tokenizer_inst(full_prompt_text, return_tensors="pt").input_ids
         start_token_tensor = torch_kartoffel.tensor([[prompt_start_token_id]], dtype=torch_kartoffel.int64)
         end_tokens_tensor = torch_kartoffel.tensor([prompt_end_token_ids_list], dtype=torch_kartoffel.int64)
-        
+
         input_ids = torch_kartoffel.cat([start_token_tensor, input_ids_text, end_tokens_tensor], dim=1).to(device)
         attention_mask = torch_kartoffel.ones_like(input_ids)
 
@@ -195,11 +196,11 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
             generated_ids_output = loaded_kartoffel_model_inst.generate(
                 input_ids=input_ids, attention_mask=attention_mask, **gen_params
             )
-        
+
         logger.debug("Kartoffel Orpheus: Post-processing generated token IDs...")
         token_indices = (generated_ids_output == audio_start_marker_token_id).nonzero(as_tuple=True)
-        
-        cropped_tensor = generated_ids_output 
+
+        cropped_tensor = generated_ids_output
         if token_indices[1].numel() > 0:
             last_occurrence_idx = token_indices[1][-1].item()
             cropped_tensor = generated_ids_output[:, last_occurrence_idx + 1 :]
@@ -219,23 +220,23 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
         if new_length_for_snac == 0:
             logger.error("Kartoffel Orpheus: Zero audio tokens after ensuring multiple of 7. Skipping.")
             return
-            
+
         trimmed_row_for_snac = masked_row[:new_length_for_snac]
         processed_code_list = [t.item() - audio_token_offset for t in trimmed_row_for_snac]
         logger.debug(f"Kartoffel Orpheus: Prepared {len(processed_code_list)} codes for SNAC ({len(processed_code_list)//7} frames).")
 
         snac_input_codes = _redistribute_codes_for_kartoffel(processed_code_list, device)
-        
+
         if not snac_input_codes:
             logger.error("Kartoffel Orpheus: Failed to redistribute codes for SNAC. Skipping.")
             return
 
         logger.info("Kartoffel Orpheus: Decoding with SNAC...")
         with torch_kartoffel.no_grad():
-            audio_hat = loaded_snac_decoder_inst.decode(snac_input_codes) 
-        
+            audio_hat = loaded_snac_decoder_inst.decode(snac_input_codes)
+
         audio_numpy = audio_hat.detach().squeeze().cpu().numpy()
-        
+
         if audio_numpy.ndim == 0 or audio_numpy.size == 0 :
             logger.error("Kartoffel Orpheus: SNAC decoding resulted in empty or scalar audio.")
             return
@@ -252,7 +253,7 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
                 logger.error(f"Kartoffel Orpheus: Failed to save to {output_path_obj}: {e_save}", exc_info=True)
 
         if play_direct and audio_numpy.size > 0 :
-            audio_to_play = audio_numpy.flatten() 
+            audio_to_play = audio_numpy.flatten()
             audio_int16 = (np.clip(audio_to_play, -1.0, 1.0) * 32767).astype(np.int16)
             play_audio(audio_int16.tobytes(), is_path=False, input_format="pcm_s16le", sample_rate=sample_rate)
 
@@ -266,12 +267,12 @@ def synthesize_with_orpheus_kartoffel(model_config, text, voice_id_override, mod
         if 'input_ids' in locals() : del input_ids
         if 'attention_mask' in locals(): del attention_mask
         if 'generated_ids_output' in locals(): del generated_ids_output
-        
+
         if TORCH_AVAILABLE_IN_HANDLER and torch_kartoffel:
             if torch_kartoffel.cuda.is_available(): torch_kartoffel.cuda.empty_cache()
             if hasattr(torch_kartoffel.backends, "mps") and torch_kartoffel.backends.mps.is_available() and hasattr(torch_kartoffel.mps, "empty_cache"):
                 try: torch_kartoffel.mps.empty_cache()
-                except Exception: pass 
+                except Exception: pass
         gc.collect()
 
-print(f"--- Orpheus Kartoffel Handler Module Parsed (orpheus_kartoffel_handler.py) ---")
+print("--- Orpheus Kartoffel Handler Module Parsed (orpheus_kartoffel_handler.py) ---")

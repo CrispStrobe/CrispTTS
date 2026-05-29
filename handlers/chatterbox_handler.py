@@ -1,12 +1,12 @@
 # handlers/chatterbox_handler.py
 
-import logging
-import os
-from pathlib import Path
 import gc
 import json
-import tempfile
+import logging
+import os
 import sys
+import tempfile
+from pathlib import Path
 
 # Conditional imports
 TORCH_AVAILABLE_IN_HANDLER = False
@@ -65,7 +65,7 @@ except ImportError as e:
     logger_init.info("safetensors library not found.")
 
 try:
-    from utils import save_audio, play_audio, SuppressOutput, _prepare_oute_speaker_ref
+    from utils import SuppressOutput, _prepare_oute_speaker_ref, play_audio, save_audio
     UTILS_AVAILABLE = True
 except ImportError as e:
     print(f"Chatterbox Handler CRITICAL INIT ERROR: Failed to import from 'utils': {e}", file=sys.stderr)
@@ -77,13 +77,13 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
     crisptts_model_id_for_log = model_config.get('crisptts_model_id', 'kartoffelbox_unknown')
 
     # Check dependencies
-    if not all([TORCH_AVAILABLE_IN_HANDLER, CHATTERBOX_AVAILABLE_IN_HANDLER, 
+    if not all([TORCH_AVAILABLE_IN_HANDLER, CHATTERBOX_AVAILABLE_IN_HANDLER,
                 SOUNDFILE_AVAILABLE_IN_HANDLER, HF_HUB_AVAILABLE_IN_HANDLER,
                 SAFETENSORS_AVAILABLE_IN_HANDLER, UTILS_AVAILABLE]):
         logger.error(f"Chatterbox ({crisptts_model_id_for_log}): Missing core dependencies. Skipping.")
         return
-    
-    if not all([torch_chatterbox, ChatterboxTTS, sf_chatterbox, 
+
+    if not all([torch_chatterbox, ChatterboxTTS, sf_chatterbox,
                 hf_hub_download_chatterbox, load_file_chatterbox]):
         logger.error(f"Chatterbox ({crisptts_model_id_for_log}): Critical modules not loaded. Skipping.")
         return
@@ -92,7 +92,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
     model_repo_id = model_config.get("model_repo_id")
     t3_checkpoint_file = model_config.get("t3_checkpoint_file", "t3_cfg.safetensors")
     sample_rate = model_config.get("sample_rate", 22050)
-    
+
     if not model_repo_id:
         logger.error(f"Chatterbox ({crisptts_model_id_for_log}): Missing model_repo_id in config.")
         return
@@ -105,7 +105,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
             # Try relative to project root
             project_root = Path(__file__).resolve().parent.parent
             voice_path = (project_root / voice_id_override).resolve()
-        
+
         if voice_path.exists() and voice_path.suffix.lower() in ['.wav', '.mp3', '.flac']:
             reference_audio_path = str(voice_path)
             logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Using reference audio: {reference_audio_path}")
@@ -118,7 +118,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
         "temperature": 0.6,
         "cfg_weight": 0.3
     }
-    
+
     if model_params_override:
         try:
             cli_params = json.loads(model_params_override)
@@ -127,7 +127,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
             logger.warning(f"Chatterbox ({crisptts_model_id_for_log}): Could not parse --model-params: {model_params_override}")
 
     logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Synthesizing with model '{model_repo_id}'")
-    
+
     chatterbox_model = None
     temp_ref_audio = None
 
@@ -145,16 +145,16 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
         logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Loading base ChatterboxTTS model...")
         with SuppressOutput(suppress_stdout=not logger.isEnabledFor(logging.DEBUG), suppress_stderr=True):
             chatterbox_model = ChatterboxTTS.from_pretrained(device=device)
-        
+
         # Download and apply German patch
         logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Downloading German patch from {model_repo_id}...")
         hf_token = os.getenv("HF_TOKEN")
         checkpoint_path = hf_hub_download_chatterbox(
-            repo_id=model_repo_id, 
+            repo_id=model_repo_id,
             filename=t3_checkpoint_file,
             token=hf_token
         )
-        
+
         logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Applying German patch...")
         t3_state = load_file_chatterbox(checkpoint_path, device="cpu")
         chatterbox_model.t3.load_state_dict(t3_state)
@@ -175,7 +175,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
         # Generate speech
         logger.info(f"Chatterbox ({crisptts_model_id_for_log}): Generating speech...")
         logger.debug(f"Generation params: {generation_params}")
-        
+
         with torch_chatterbox.inference_mode():
             if reference_audio_path:
                 wav = chatterbox_model.generate(
@@ -189,7 +189,7 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
                     text,
                     **generation_params
                 )
-        
+
         # Process output audio
         if wav is None or wav.numel() == 0:
             logger.error(f"Chatterbox ({crisptts_model_id_for_log}): Generation returned empty audio.")
@@ -227,10 +227,10 @@ def synthesize_with_chatterbox(model_config, text, voice_id_override, model_para
                 Path(temp_ref_audio).unlink(missing_ok=True)
             except Exception as e_cleanup:
                 logger.warning(f"Chatterbox ({crisptts_model_id_for_log}): Failed to cleanup temp file: {e_cleanup}")
-        
+
         if chatterbox_model is not None:
             del chatterbox_model
-        
+
         if TORCH_AVAILABLE_IN_HANDLER and torch_chatterbox:
             if torch_chatterbox.cuda.is_available():
                 torch_chatterbox.cuda.empty_cache()

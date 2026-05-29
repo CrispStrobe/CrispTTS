@@ -1,13 +1,13 @@
 # handlers/llasa_multilingual_transformers_handler.py
 # Follows HKUSTAudio/Llasa-1B-Multilingual & MultiLlasa/Llasa-1B-Multilingual-German repository implementation examples.
 
-import logging
-import os
-from pathlib import Path
 import gc
 import json
-import tempfile # For temporary audio file for Whisper
-from typing import Optional, List, Tuple # For type hinting
+import logging
+import os
+import tempfile  # For temporary audio file for Whisper
+from pathlib import Path
+from typing import List, Optional, Tuple  # For type hinting
 
 # Conditional imports
 TORCH_AVAILABLE = False
@@ -30,7 +30,7 @@ NUMPY_AVAILABLE = False
 numpy_llasa_multi = None
 
 # CrispTTS Utils
-from utils import save_audio, play_audio, SuppressOutput
+from utils import SuppressOutput, play_audio, save_audio
 
 logger_init = logging.getLogger("CrispTTS.handlers.llasa_multilingual_transformers.init")
 logger = logging.getLogger("CrispTTS.handlers.llasa_multilingual_transformers")
@@ -55,7 +55,7 @@ except ImportError:
 
 if TORCH_AVAILABLE: # Only attempt these if torch is available
     try:
-        from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
         AutoTokenizer_llasa_multi = AutoTokenizer
         AutoModelForCausalLM_llasa_multi = AutoModelForCausalLM
         pipeline_llasa_multi = pipeline # Assign the imported pipeline function
@@ -194,7 +194,7 @@ def synthesize_with_llasa_multilingual_transformers(
         return
 
     hf_token = os.getenv("HF_TOKEN") if model_config.get("requires_hf_token") else None
-    
+
     device_str = "cpu"
     if IS_CUDA_LLASA_MULTI: device_str = "cuda"
     elif IS_MPS_LLASA_MULTI: device_str = "mps"
@@ -208,7 +208,7 @@ def synthesize_with_llasa_multilingual_transformers(
     try:
         logger.info(f"{log_prefix}Loading LLaSA Tokenizer from '{tokenizer_id}'...")
         llasa_tokenizer_inst = AutoTokenizer_llasa_multi.from_pretrained(tokenizer_id, token=hf_token, trust_remote_code=True)
-        
+
         logger.info(f"{log_prefix}Loading LLaSA LLM from '{llm_model_id}' to device '{device_str}'...")
         llasa_llm_inst = AutoModelForCausalLM_llasa_multi.from_pretrained(llm_model_id, token=hf_token, trust_remote_code=True)
         llasa_llm_inst.to(device_str).eval()
@@ -221,13 +221,13 @@ def synthesize_with_llasa_multilingual_transformers(
         is_cloning_mode = False
         speech_ids_prefix_str_list = []
         input_text_for_llm = text
-        
+
         actual_ref_audio_path_str = voice_id_override or model_config.get("default_voice_id")
         if actual_ref_audio_path_str and isinstance(actual_ref_audio_path_str, str) and actual_ref_audio_path_str.strip().lower() != 'none':
             resolved_ref_path = Path(actual_ref_audio_path_str.strip())
             if not resolved_ref_path.is_absolute():
                 resolved_ref_path = (Path.cwd() / resolved_ref_path).resolve()
-            
+
             logger.debug(f"{log_prefix}Checking for reference audio file at resolved path: {resolved_ref_path}")
             if resolved_ref_path.exists() and resolved_ref_path.is_file():
                 is_cloning_mode = True
@@ -246,12 +246,12 @@ def synthesize_with_llasa_multilingual_transformers(
                     resampler = torchaudio_llasa_multi.transforms.Resample(orig_freq=sr_ref, new_freq=target_ref_sr_for_xcodec)
                     waveform_ref = resampler(waveform_ref)
                     sr_ref = target_ref_sr_for_xcodec
-                
+
                 if waveform_ref.shape[1] / sr_ref > max_ref_secs:
                     waveform_ref = waveform_ref[:, :int(sr_ref * max_ref_secs)]
                 waveform_ref = torch_llasa_multi.nn.functional.pad(waveform_ref, (0, int(sr_ref * 0.5)), "constant", 0)
                 logger.debug(f"{log_prefix}Ref audio processed for XCodec. Final shape: {waveform_ref.shape}")
-                
+
                 processed_ref_waveform_for_trimming = waveform_ref.clone().to(device_str)
 
                 ref_transcription = "Reference audio transcription placeholder."
@@ -259,13 +259,13 @@ def synthesize_with_llasa_multilingual_transformers(
                 if model_params_override:
                     try: custom_ref_text = json.loads(model_params_override).get("reference_text")
                     except (json.JSONDecodeError, TypeError): pass
-                
+
                 if custom_ref_text and isinstance(custom_ref_text, str) and custom_ref_text.strip():
                     ref_transcription = custom_ref_text.strip()
                     logger.info(f"{log_prefix}Using provided reference text: '{ref_transcription[:100]}...'")
                 else:
                     whisper_model_id_cfg = model_config.get("whisper_model_id_for_transcription")
-                    
+
                     # --- ADDED DEBUG LOGS ---
                     logger.debug(f"{log_prefix}Whisper Check: whisper_model_id_cfg = '{whisper_model_id_cfg}' (type: {type(whisper_model_id_cfg)})")
                     logger.debug(f"{log_prefix}Whisper Check: pipeline_llasa_multi is {'NOT None and callable' if callable(pipeline_llasa_multi) else ('None or not callable')} (type: {type(pipeline_llasa_multi)})")
@@ -274,7 +274,7 @@ def synthesize_with_llasa_multilingual_transformers(
 
                     if whisper_model_id_cfg and pipeline_llasa_multi and callable(pipeline_llasa_multi): # Ensure pipeline_llasa_multi is callable
                         logger.info(f"{log_prefix}Preparing to transcribe ref audio '{resolved_ref_path}' with Whisper: '{whisper_model_id_cfg}'")
-                        
+
                         temp_whisper_audio_file_to_delete, prep_error = _prepare_audio_for_whisper_local(
                             str(resolved_ref_path), target_sr=16000, log_prefix=f"{log_prefix}WhisperPrep: "
                         )
@@ -285,7 +285,7 @@ def synthesize_with_llasa_multilingual_transformers(
                             logger.debug(f"{log_prefix}Ref audio prepared for Whisper at temp path: {temp_whisper_audio_file_to_delete}")
                             whisper_pipeline_device_arg = device_str
                             if device_str == "cuda": whisper_pipeline_device_arg = 0
-                            
+
                             cache_key = (whisper_model_id_cfg, whisper_pipeline_device_arg, str(torch_llasa_multi.float16 if device_str != "cpu" else torch_llasa_multi.float32))
                             if cache_key in _llasa_multilingual_whisper_pipeline_cache:
                                 whisper_pipeline_inst = _llasa_multilingual_whisper_pipeline_cache[cache_key]
@@ -296,7 +296,7 @@ def synthesize_with_llasa_multilingual_transformers(
                                     device=whisper_pipeline_device_arg, token=hf_token
                                 )
                                 _llasa_multilingual_whisper_pipeline_cache[cache_key] = whisper_pipeline_inst
-                            
+
                             lang_hint_for_whisper = model_config.get("language")
                             whisper_gen_kwargs = {"language": lang_hint_for_whisper.lower()} if lang_hint_for_whisper else {}
                             whisper_gen_kwargs["return_timestamps"] = True
@@ -304,11 +304,11 @@ def synthesize_with_llasa_multilingual_transformers(
                             logger.debug(f"{log_prefix}Calling Whisper ASR pipeline (model: {whisper_model_id_cfg}) with generate_kwargs: {whisper_gen_kwargs}")
                             with SuppressOutput(suppress_stderr=True, suppress_stdout=not logger.isEnabledFor(logging.DEBUG)):
                                 transcription_output = whisper_pipeline_inst(str(temp_whisper_audio_file_to_delete), generate_kwargs=whisper_gen_kwargs)
-                            
+
                             transcribed_text_str = transcription_output.get("text", "").strip()
                             if not transcribed_text_str and "chunks" in transcription_output:
                                 transcribed_text_str = " ".join([chunk.get('text',"").strip() for chunk in transcription_output["chunks"]]).strip()
-                            
+
                             if transcribed_text_str:
                                 ref_transcription = transcribed_text_str
                                 logger.info(f"{log_prefix}Whisper transcription: '{ref_transcription[:100]}...'")
@@ -318,7 +318,7 @@ def synthesize_with_llasa_multilingual_transformers(
                     else: # This is the path taken if condition whisper_model_id_cfg and pipeline_llasa_multi is false
                         logger.warning(f"{log_prefix}No custom reference text AND (Whisper model not configured OR Transformers pipeline not available). Using placeholder transcription.")
                         ref_transcription = "Reference audio (transcription N/A)."
-                
+
                 input_text_for_llm = f"{ref_transcription} {text}"
                 with torch_llasa_multi.no_grad():
                     vq_codes_from_ref_tensor = codec_model_inst.encode_code(input_waveform=processed_ref_waveform_for_trimming.to(device_str))
@@ -333,12 +333,12 @@ def synthesize_with_llasa_multilingual_transformers(
         else:
             is_cloning_mode = False; input_text_for_llm = text
             logger.info(f"{log_prefix}No reference audio path. Operating in Zero-Shot mode.")
-        
+
         formatted_text_for_llm = f"<|TEXT_UNDERSTANDING_START|>{input_text_for_llm}<|TEXT_UNDERSTANDING_END|>"
         assistant_start_content = "<|SPEECH_GENERATION_START|>"
         if is_cloning_mode and speech_ids_prefix_str_list:
             assistant_start_content += "".join(speech_ids_prefix_str_list)
-        
+
         chat_prompt_list = [
             {"role": "user", "content": f"Convert the text to speech:{formatted_text_for_llm}"},
             {"role": "assistant", "content": assistant_start_content}
@@ -354,18 +354,18 @@ def synthesize_with_llasa_multilingual_transformers(
             "eos_token_id": llasa_tokenizer_inst.convert_tokens_to_ids('<|SPEECH_GENERATION_END|>'),
             "do_sample": True, "top_p": 1.0, "temperature": 0.8
         }
-        default_min_new = 4 if is_cloning_mode else model_config.get("min_new_tokens_zeroshot", 1) 
+        default_min_new = 4 if is_cloning_mode else model_config.get("min_new_tokens_zeroshot", 1)
         generation_params["min_new_tokens"] = model_config.get("min_new_tokens", default_min_new)
-        
+
         if model_params_override:
             try:
                 cli_gen_params = json.loads(model_params_override)
-                valid_hf_keys = {"temperature", "top_p", "top_k", "do_sample", "num_beams", 
+                valid_hf_keys = {"temperature", "top_p", "top_k", "do_sample", "num_beams",
                                  "repetition_penalty", "max_new_tokens", "min_new_tokens", "max_length"}
                 for k_param, v_param in cli_gen_params.items():
                     if k_param in valid_hf_keys: generation_params[k_param] = v_param
             except (json.JSONDecodeError, TypeError): pass # Already logged warning if needed
-        
+
         if generation_params["eos_token_id"] == llasa_tokenizer_inst.unk_token_id:
             generation_params["eos_token_id"] = llasa_tokenizer_inst.eos_token_id
 
@@ -376,15 +376,15 @@ def synthesize_with_llasa_multilingual_transformers(
                 pad_token_id=llasa_tokenizer_inst.eos_token_id,
                 **generation_params
             )
-        
+
         start_index_for_generated_part = input_ids_for_llm.shape[1]
         generated_ids_after_prompt = llm_output_ids_tensor[0][start_index_for_generated_part:]
         if generated_ids_after_prompt.numel() > 0 and generated_ids_after_prompt[-1] == generation_params["eos_token_id"]:
             generated_ids_after_prompt = generated_ids_after_prompt[:-1]
-        
+
         generated_token_strings_from_llm = llasa_tokenizer_inst.convert_ids_to_tokens(generated_ids_after_prompt.tolist())
         final_numeric_speech_ids_for_xcodec = _extract_speech_ids_llasa_multi(generated_token_strings_from_llm)
-        
+
         if not final_numeric_speech_ids_for_xcodec:
             logger.error(f"{log_prefix}No valid numeric speech IDs extracted. Cannot decode."); return
         logger.info(f"{log_prefix}Extracted {len(final_numeric_speech_ids_for_xcodec)} numeric speech IDs for XCodec2.")
@@ -392,7 +392,7 @@ def synthesize_with_llasa_multilingual_transformers(
         xcodec_input_tensor = torch_llasa_multi.tensor(final_numeric_speech_ids_for_xcodec, device=device_str).unsqueeze(0).unsqueeze(0)
         with torch_llasa_multi.no_grad():
             generated_waveform_decoded = codec_model_inst.decode_code(xcodec_input_tensor)
-        
+
         if generated_waveform_decoded is None or generated_waveform_decoded.numel() == 0:
             logger.error(f"{log_prefix}XCodec2 decoding returned None or empty tensor."); return
 
@@ -407,7 +407,7 @@ def synthesize_with_llasa_multilingual_transformers(
                     generated_waveform_decoded = generated_waveform_decoded[:, :, num_samples_in_original_ref_prompt:]
                 else:
                     logger.warning(f"{log_prefix}Requested to trim re-synthesized prompt, but decoded audio too short.")
-        
+
         audio_output_np_final = generated_waveform_decoded.squeeze().cpu().numpy()
         if audio_output_np_final.size == 0:
             logger.error(f"{log_prefix}Final audio is empty after XCodec2 and potential trimming."); return
@@ -423,7 +423,7 @@ def synthesize_with_llasa_multilingual_transformers(
                 logger.info(f"{log_prefix}Audio saved to {output_path_wav}")
             except Exception as e_save:
                 logger.error(f"{log_prefix}Failed to save audio: {e_save}", exc_info=True)
-        
+
         if play_direct:
             try:
                 audio_int16_bytes = (numpy_llasa_multi.clip(audio_output_np_final, -1.0, 1.0) * 32767).astype(numpy_llasa_multi.int16).tobytes()

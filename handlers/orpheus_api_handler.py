@@ -1,20 +1,27 @@
 # handlers/orpheus_api_handler.py
 
+import gc
 import json
 import logging
 from pathlib import Path
+
 import requests
-import gc
 
 # Use relative imports
 from config import (
-    ORPHEUS_SAMPLE_RATE, ORPHEUS_DEFAULT_VOICE, ORPHEUS_GERMAN_VOICES,
-    SAUERKRAUT_VOICES, ORPHEUS_AVAILABLE_VOICES_BASE,
-    LM_STUDIO_API_URL_DEFAULT, LM_STUDIO_HEADERS, OLLAMA_API_URL_DEFAULT
+    LM_STUDIO_API_URL_DEFAULT,
+    LM_STUDIO_HEADERS,
+    OLLAMA_API_URL_DEFAULT,
+    ORPHEUS_AVAILABLE_VOICES_BASE,
+    ORPHEUS_DEFAULT_VOICE,
+    ORPHEUS_GERMAN_VOICES,
+    ORPHEUS_SAMPLE_RATE,
+    SAUERKRAUT_VOICES,
 )
 from utils import (
-    play_audio, orpheus_format_prompt,
-    _orpheus_master_token_processor_and_decoder
+    _orpheus_master_token_processor_and_decoder,
+    orpheus_format_prompt,
+    play_audio,
 )
 
 logger = logging.getLogger("CrispTTS.handlers.orpheus_api")
@@ -29,7 +36,7 @@ def synthesize_with_orpheus_lm_studio(model_config, text, voice_id_override, mod
 
     cli_params = json.loads(model_params_override) if model_params_override else {}
     model_name_in_api = cli_params.get("gguf_model_name_in_api", model_config.get("gguf_model_name_in_api", "SauerkrautTTS-Preview-0.1"))
-    
+
     # Use ORPHEUS_DEFAULT_VOICE from config.py as the ultimate fallback for formatting
     formatted_prompt = orpheus_format_prompt(text, voice, available_voices) # Util from utils.py
     logger.debug(f"Orpheus LM Studio - Formatted prompt for API: {formatted_prompt}")
@@ -50,7 +57,7 @@ def synthesize_with_orpheus_lm_studio(model_config, text, voice_id_override, mod
         try:
             response = requests.post(api_url, headers=LM_STUDIO_HEADERS, json=payload, stream=True, timeout=120)
             response.raise_for_status() # Check for HTTP errors
-            
+
             full_raw_output_for_debug = ""
             for line in response.iter_lines():
                 if line:

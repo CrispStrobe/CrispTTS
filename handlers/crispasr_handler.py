@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import time
 
-from utils import save_audio, play_audio
+from utils import play_audio, save_audio
 
 logger = logging.getLogger("CrispTTS.handlers.crispasr")
 
@@ -104,7 +104,7 @@ def _download_crispasr():
     try:
         if asset.endswith(".tar.gz"):
             with tarfile.open(archive_path, "r:gz") as tf:
-                tf.extractall(_CACHE_DIR, filter="data")
+                tf.extractall(_CACHE_DIR, filter="data")  # nosec B202
         elif asset.endswith(".zip"):
             with zipfile.ZipFile(archive_path, "r") as zf:
                 for member in zf.namelist():

@@ -1,17 +1,23 @@
 # handlers/orpheus_gguf_handler.py
 
+import gc
 import json
 import logging
 import os
+import sys  # ADDED for sys.modules check
 from pathlib import Path
-import gc
-import sys # ADDED for sys.modules check
 
 # Use relative imports for project modules
-from config import ORPHEUS_SAMPLE_RATE, ORPHEUS_DEFAULT_VOICE, ORPHEUS_GERMAN_VOICES # Import constants
+from config import (  # Import constants
+    ORPHEUS_DEFAULT_VOICE,
+    ORPHEUS_GERMAN_VOICES,
+    ORPHEUS_SAMPLE_RATE,
+)
 from utils import (
-    SuppressOutput, play_audio,
-    orpheus_format_prompt, _orpheus_master_token_processor_and_decoder
+    SuppressOutput,
+    _orpheus_master_token_processor_and_decoder,
+    orpheus_format_prompt,
+    play_audio,
 )
 
 logger = logging.getLogger("CrispTTS.handlers.orpheus_gguf")
@@ -32,8 +38,8 @@ except ImportError:
 
 if HF_HUB_AVAILABLE_IN_HANDLER: # LlamaCPP is useful only if models can be fetched
     try:
-        from llama_cpp import Llama as Llama_imp
         import llama_cpp as llama_cpp_module
+        from llama_cpp import Llama as Llama_imp
         LlamaForHandler = Llama_imp
         LLAMA_CPP_AVAILABLE_IN_HANDLER = True # Corrected
         try:
@@ -114,7 +120,7 @@ def synthesize_with_orpheus_gguf_local(model_config, text, voice_id_override, mo
             logger.debug("Orpheus GGUF Local - llama-cpp-python stream finished.")
 
         effective_output_file_wav_str = str(Path(output_file_str).with_suffix(".wav")) if output_file_str else None
-        
+
         audio_bytes = _orpheus_master_token_processor_and_decoder(
             _llama_cpp_text_stream_generator_local(),
             output_file_wav_str=effective_output_file_wav_str
