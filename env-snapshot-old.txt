@@ -53,7 +53,7 @@ sentencepiece # Often a dependency for transformers tokenizers
 # NeMo (for handlers/nemo_handler.py)
 # nemo_toolkit[all] is large; nemo_toolkit[tts] might be more focused.
 # Check official NeMo installation instructions for best results.
-nemo_toolkit[tts] >=1.18.0
+nemo_toolkit[tts] >=2.7.3
 # Ensure 'Cython' and 'wget' are installed if building NeMo from source or some dependencies need it.
 
 # MLX Audio (for handlers/mlx_audio_handler.py)
