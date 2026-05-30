@@ -1,6 +1,24 @@
-# Ignore Python cache files
+# Python cache files
 __pycache__/
 *.pyc
+
+# Build / packaging artifacts
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Generated audio / test outputs
 german.wav
 *.wav
 tts_test_outputs/
+
+# OS cruft
+.DS_Store

@@ -8,9 +8,10 @@ version = "0.2.0"
 description = "Modular German Text-to-Speech synthesizer with 28+ TTS engines"
 readme = "readme.md"
 license = "EUPL-1.2"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "requests>=2.25.0",
+    "numpy>=1.26.0,<2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -39,9 +40,18 @@ text-extraction = [
 [project.scripts]
 crisptts = "main:main_cli_entrypoint"
 
+# Flat layout: package the handlers package plus the core top-level modules.
+# Explicit discovery prevents setuptools from tripping over tests/ and local
+# scratch dirs (e.g. tts_test_outputs/) during the build.
+[tool.setuptools]
+py-modules = ["main", "config", "utils", "decoder"]
+
+[tool.setuptools.packages.find]
+include = ["handlers*"]
+
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "S"]

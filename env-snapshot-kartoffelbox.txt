@@ -45,7 +45,7 @@ appnope==0.1.3
 APScheduler==3.10.1
 aqlm==1.0.1
 archivebox==0.7.2
-archspec @ file:///home/conda/feedstock_root/build_artifacts/archspec_1708969572489/work
+archspec
 argbind==0.3.9
 argcomplete==3.6.2
 argon2-cffi==23.1.0
@@ -93,7 +93,7 @@ blis==1.2.1
 blobfile==3.0.0
 bnnumerizer==0.0.2
 bnunicodenormalizer==0.1.7
-boltons @ file:///Users/cbousseau/work/recipes/ci_py311/boltons_1677965141748/work
+boltons
 boto3==1.34.123
 botocore==1.34.148
 braceexpand==0.1.7
@@ -114,7 +114,7 @@ cattrs==23.2.3
 cdifflib==1.2.6
 cerebras_cloud_sdk==1.35.0
 certifi==2025.4.26
-cffi @ file:///Users/cbousseau/work/recipes/ci_py311/cffi_1677903595907/work
+cffi
 cfgv==3.4.0
 chardet==3.0.4
 charset-normalizer==3.4.2
@@ -136,13 +136,13 @@ coloredlogs==15.0.1
 colorlog==6.8.2
 comm==0.2.1
 commonmark==0.9.1
-compressed-rtf @ file:///home/conda/feedstock_root/build_artifacts/compressed-rtf_1594407552836/work
+compressed-rtf
 compressed-tensors==0.9.3
-conda @ file:///Users/runner/miniforge3/conda-bld/conda_1727884731219/work
-conda-content-trust @ file:///Users/cbousseau/work/recipes/ci_py311/conda-content-trust_1677970020347/work
-conda-libmamba-solver @ file:///croot/conda-libmamba-solver_1706733287605/work/src
-conda-package-handling @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_fc4cx8vjhj/croot/conda-package-handling_1690999937094/work
-conda_package_streaming @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_aecpaup22q/croot/conda-package-streaming_1690987978274/work
+conda
+conda-content-trust
+conda-libmamba-solver
+conda-package-handling
+conda_package_streaming
 confection==0.1.4
 ConfigArgParse==1.7
 conformer==0.3.2
@@ -187,7 +187,7 @@ dirtyjson==1.0.8
 diskcache==5.6.3
 Distance==0.1.3
 distlib==0.4.0
-distro @ file:///home/conda/feedstock_root/build_artifacts/distro_1704321475663/work
+distro
 Django==3.1.14
 django-extensions==3.1.5
 dlinfo==2.0.0
@@ -199,13 +199,13 @@ docopt==0.6.2
 docstring_parser==0.16
 docutils==0.16
 docx==0.2.4
-docx2txt @ file:///home/conda/feedstock_root/build_artifacts/docx2txt_1724281378092/work
+docx2txt
 duckdb==1.2.1
 e2b==0.17.1
 e2b-code-interpreter==0.0.10
 easygui==0.98.3
 easyocr @ git+https://github.com/JaidedAI/EasyOCR.git@c4f3cd7225efd4f85451bd8b4a7646ae9a092420
-ebcdic @ file:///home/conda/feedstock_root/build_artifacts/ebcdic_1621162493973/work/ebcdic
+ebcdic
 -e git+https://github.com/gryf/ebook-converter@72d0858ad8a852b0e659d8a57b5330f39106d545#egg=ebook_converter
 EbookLib==0.17.1
 ecdsa==0.19.1
@@ -265,7 +265,7 @@ flatten-dict==0.4.2
 flax==0.8.4
 fonttools==4.47.2
 fqdn==1.5.1
-frozendict @ file:///Users/runner/miniforge3/conda-bld/frozendict_1728841356120/work
+frozendict
 frozenlist==1.4.1
 fsspec==2025.3.0
 ftfy==6.3.1
@@ -390,7 +390,7 @@ joblib==1.3.2
 json5==0.9.25
 jsonargparse==3.13.1
 jsonlines==1.2.0
-jsonpatch @ file:///home/conda/feedstock_root/build_artifacts/jsonpatch_1695536281965/work
+jsonpatch
 jsonpath-python==1.0.6
 jsonpointer==2.1
 jsonrpcclient==4.0.3
@@ -445,7 +445,7 @@ Levenshtein==0.27.1
 lhotse==1.30.3
 libclang==16.0.6
 libcst==1.7.0
-libmambapy @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_69t7vyvo1k/croot/mamba-split_1704219411138/work/libmambapy
+libmambapy
 librosa==0.10.2
 lightning==2.4.0
 lightning-utilities==0.11.2
@@ -470,16 +470,16 @@ llama_cpp_python==0.3.9
 llava @ https://h2o-release.s3.amazonaws.com/h2ogpt/llava-1.7.0.dev0-py3-none-any.whl#sha256=3799d074143f86041934874bc882b884d71d892d3781e90dd8d745ff29e7cd7d
 llguidance==0.7.20
 # Editable install with no version control (llmtuner==0.7.0)
--e /Users/christianstrobele/code/LLaMA-Factory
+# llmtuner / LLaMA-Factory: local editable install removed (not portable); see https://github.com/hiyouga/LLaMA-Factory
 llvmlite==0.44.0
 lm-format-enforcer==0.10.11
 # Editable install with no version control (lm_eval==0.4.2)
--e /Users/christianstrobele/code/lm-evaluation-harness
+# lm_eval / lm-evaluation-harness: local editable install removed (not portable); see https://github.com/EleutherAI/lm-evaluation-harness
 lmdb==1.6.2
 loguru==0.7.3
 logzero==1.7.0
 lunr==0.8.0
-lxml @ file:///Users/runner/miniforge3/conda-bld/lxml_1671013771134/work
+lxml
 macholib==1.16.3
 Mako==1.3.5
 Markdown==3.6
@@ -495,9 +495,9 @@ mdutils==1.8.0
 mecab-python3==1.0.10
 mediapy==1.1.6
 meilisearch==0.28.2
-menuinst @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_26a7xsau78/croot/menuinst_1706732941263/work
+menuinst
 # Editable install with no version control (mergekit==0.0.4.1)
--e /Users/christianstrobele/Downloads/mergekit
+# mergekit: local editable install removed (not portable); see https://github.com/arcee-ai/mergekit
 micloud==0.6
 MIDIUtil==1.2.1
 milvus-lite==2.4.12
@@ -557,7 +557,7 @@ oauthlib==3.2.2
 ocrmypdf==16.10.0
 odfpy==1.4.1
 olefile==0.46
-oletools @ file:///home/conda/feedstock_root/build_artifacts/oletools_1643648364003/work
+oletools
 ollama==0.5.1
 omegaconf==2.3.0
 onnx==1.16.1
@@ -615,7 +615,7 @@ pbkdf2==1.3
 pcodedmp==1.2.6
 pdf2image==1.17.0
 pdfminer==20191125
-pdfminer.six @ file:///home/conda/feedstock_root/build_artifacts/pdfminer.six_1720352529635/work
+pdfminer.six
 pdfplumber==0.11.5
 pdftext==0.5.1
 peft==0.10.0
@@ -679,12 +679,12 @@ pybricks==3.6.1
 pybricksdev==2.0.1
 pybtex==0.24.0
 pycares==4.3.0
-pycld3 @ file:///Users/christianstrobele/code/EQ-Bench/data/pycld3
+pycld3
 pyclipper==1.3.0.post6
 pycocotools==2.0.7
-pycosat @ file:///Users/cbousseau/work/recipes/ci_py311/pycosat_1677933552468/work
+pycosat
 pycountry==23.12.11
-pycparser @ file:///tmp/build/80754af9/pycparser_1636541352034/work
+pycparser
 pycryptodome==3.20.0
 pycryptodomex==3.21.0
 pydantic==2.10.6
@@ -895,7 +895,7 @@ pyreadstat==1.2.7
 PyRTF3==0.47.5
 pysbd==0.3.4
 pyserial==3.5
-PySocks @ file:///Users/cbousseau/work/recipes/ci_py311/pysocks_1677906386870/work
+PySocks
 pystoi==0.4.1
 pytablewriter==1.2.0
 pytesseract==0.3.13
@@ -967,7 +967,7 @@ rich-toolkit==0.13.2
 rouge-score==0.1.2
 rpds-py==0.17.1
 rsa==4.7.2
-RTFDE @ file:///home/conda/feedstock_root/build_artifacts/rtfde_1701943537480/work
+RTFDE
 ruamel.yaml==0.18.6
 ruamel.yaml.clib==0.2.8
 ruff==0.11.2
@@ -1011,7 +1011,7 @@ sniffio==1.3.0
 sortedcontainers==2.4.0
 sounddevice==0.5.2
 soundfile==0.13.1
-soupsieve @ file:///home/conda/feedstock_root/build_artifacts/soupsieve_1693929250441/work
+soupsieve
 sox==1.5.0
 soxr==0.5.0.post1
 spacy==3.8.4
@@ -1065,7 +1065,7 @@ terminado==0.18.1
 tesseract==0.1.3
 text-unidecode==1.3
 texterrors==0.5.1
-textract @ file:///Users/christianstrobele/Documents/texte/textract_fix/textract-1.6.5
+textract
 tf-keras==2.15.0
 thinc==8.3.4
 thread-task==0.9.7
@@ -1085,7 +1085,7 @@ tokentrim==0.1.13
 toml==0.10.2
 tomli==2.2.1
 tomlkit==0.12.0
-toolz @ file:///Users/cbousseau/work/recipes/ci_py311/toolz_1677925870232/work
+toolz
 torch==2.7.0
 torch-audiomentations==0.11.1
 torch-stoi==0.2.3
@@ -1108,7 +1108,7 @@ transformers-stream-generator==0.0.5
 trio==0.25.0
 trio-websocket==0.11.1
 trl==0.8.6
-truststore @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_42mm7e6j06/croot/truststore_1695244298716/work
+truststore
 TTS==0.22.0
 twilio==9.3.8
 Twisted==22.10.0
@@ -1180,7 +1180,7 @@ x-transformers==2.3.5
 xcodec2==0.1.5
 xformers==0.0.29.post3
 xlrd==1.2.0
-XlsxWriter @ file:///home/conda/feedstock_root/build_artifacts/xlsxwriter_1723277104680/work
+XlsxWriter
 xmod==1.8.1
 xxhash==3.4.1
 yarl==1.9.4
