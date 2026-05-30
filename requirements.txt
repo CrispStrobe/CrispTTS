@@ -6,7 +6,7 @@ numpy>=1.26.0,<2.0.0  # Compromise: works with most packages, avoids 2.x conflic
 requests>=2.25.0
 
 # PyTorch Ecosystem - Stable versions that work together
-torch>=2.6.0,<2.8.0
+torch>=2.6.0,<2.13.0
 torchaudio>=2.6.0,<2.8.0
 # Note: torchvision intentionally omitted to avoid conflicts
 
