@@ -14,7 +14,7 @@ EbookLib >=0.17          # For .epub file processing
 
 # --- Audio Processing & Playback (from utils.py) ---
 # Optional if you only save files and don't use direct playback or some conversions
-pydub >=0.25             # For audio manipulation and playback
+pydub >=0.25.1           # For audio manipulation and playback
 sounddevice >=0.4        # For raw PCM audio playback (used by some handlers)
 soundfile >=0.10         # For reading/writing WAV files (used by SpeechT5, NeMo, and some utils)
 

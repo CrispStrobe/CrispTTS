@@ -11,19 +11,19 @@ updates:
       - dependencies
       - github-actions
 
-  # Track the project's real install manifest only. The
-  # requirements_current_working_state*.txt files are full conda-env
-  # snapshots kept for reference, not installable manifests, so they are
-  # intentionally not managed here.
+  # requirements.txt is a hand-tuned "tested working configuration" with
+  # documented cross-package constraints (e.g. librosa<0.11 for chatterbox,
+  # matched torch/torchaudio bounds), and the env-snapshot-*.txt files are
+  # reference snapshots. Routine version bumps fight those locks, so pip is
+  # restricted to security updates only (open-pull-requests-limit: 0 disables
+  # version-update PRs while still allowing Dependabot security updates).
   - package-ecosystem: pip
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "deps"
     labels:
       - dependencies
       - python
-    allow:
-      - dependency-type: direct
