@@ -1,4 +1,4 @@
-absl-py==0.11.0
+absl-py==2.1.0
 accelerate==1.7.0
 Adafruit-Blinka==8.50.0
 adafruit-blinka-bleio==4.1.2
@@ -33,7 +33,6 @@ albumentations==1.4.10
 alembic==1.13.3
 altair==5.2.0
 altgraph==0.17.4
-android_backup==0.2.0
 ane_transformers==0.1.1
 annotated-types==0.7.0
 anthropic==0.49.0
@@ -44,10 +43,9 @@ appdirs==1.4.4
 appnope==0.1.3
 APScheduler==3.10.1
 aqlm==1.0.1
-archivebox==0.7.2
-archspec @ file:///home/conda/feedstock_root/build_artifacts/archspec_1708969572489/work
+archspec
 argbind==0.3.9
-argcomplete==3.6.2
+argcomplete==1.10.0
 argon2-cffi==23.1.0
 argon2-cffi-bindings==21.2.0
 arrow==1.3.0
@@ -74,26 +72,24 @@ awkward_cpp==45
 awscli==1.33.30
 Babel==2.15.0
 backoff==2.2.1
-backports.tarfile==1.2.0
 bangla==0.0.5
 bcrypt==4.1.2
-beautifulsoup4==4.13.4
+beautifulsoup4==4.13.3
 beir==2.1.0
 bibtexparser==1.4.3
 binho-host-adapter==0.1.6
-bip39==0.0.2
 bitarray==2.9.2
 bitsandbytes==0.42.0
 blake3==1.0.4
 bleach==6.1.0
-bleak==1.1.0
+bleak==0.20.2
 blessed==1.20.0
 blinker==1.7.0
 blis==1.2.1
 blobfile==3.0.0
 bnnumerizer==0.0.2
 bnunicodenormalizer==0.1.7
-boltons @ file:///Users/cbousseau/work/recipes/ci_py311/boltons_1677965141748/work
+boltons
 boto3==1.34.123
 botocore==1.34.148
 braceexpand==0.1.7
@@ -112,15 +108,11 @@ camelot-py==1.0.0
 catalogue==2.0.10
 cattrs==23.2.3
 cdifflib==1.2.6
-cerebras_cloud_sdk==1.35.0
 certifi==2025.4.26
-cffi @ file:///Users/cbousseau/work/recipes/ci_py311/cffi_1677903595907/work
-cfgv==3.4.0
+cffi
 chardet==3.0.4
 charset-normalizer==3.4.2
 chat_with_mlx==0.2.2
-chatterbox-tts==0.1.2
-cheroot==10.0.1
 chess==1.11.2
 chex==0.1.86
 chroma-hnswlib==0.7.3
@@ -129,30 +121,25 @@ click==8.1.8
 cloud-tpu-client==0.10
 cloudpathlib==0.16.0
 cloudpickle==3.1.1
-cohere==5.15.0
-colorama==0.4.6
+colorama
 colorclass==2.2.2
 coloredlogs==15.0.1
 colorlog==6.8.2
 comm==0.2.1
 commonmark==0.9.1
-compressed-rtf @ file:///home/conda/feedstock_root/build_artifacts/compressed-rtf_1594407552836/work
+compressed-rtf
 compressed-tensors==0.9.3
-conda @ file:///Users/runner/miniforge3/conda-bld/conda_1727884731219/work
-conda-content-trust @ file:///Users/cbousseau/work/recipes/ci_py311/conda-content-trust_1677970020347/work
-conda-libmamba-solver @ file:///croot/conda-libmamba-solver_1706733287605/work/src
-conda-package-handling @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_fc4cx8vjhj/croot/conda-package-handling_1690999937094/work
-conda_package_streaming @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_aecpaup22q/croot/conda-package-streaming_1690987978274/work
+conda
+conda-content-trust
+conda-libmamba-solver
+conda-package-handling
+conda_package_streaming
 confection==0.1.4
 ConfigArgParse==1.7
-conformer==0.3.2
 constantly==23.10.4
-construct==2.10.70
 contourpy==1.3.2
 coqpit==0.0.17
 coremltools==8.2
-croniter==6.0.0
-crypto==1.4.1
 cryptography==44.0.2
 css-parser==1.0.10
 cssselect==1.3.0
@@ -180,16 +167,12 @@ deprecation==2.1.0
 depyf==0.18.0
 descript-audio-codec==1.0.0
 descript-audiotools==0.7.2
-diffusers==0.29.0
 diGraph==0.1.4
 dill==0.3.8
 dirtyjson==1.0.8
 diskcache==5.6.3
 Distance==0.1.3
-distlib==0.4.0
-distro @ file:///home/conda/feedstock_root/build_artifacts/distro_1704321475663/work
-Django==3.1.14
-django-extensions==3.1.5
+distro
 dlinfo==2.0.0
 dm-tree==0.1.8
 dnspython==2.7.0
@@ -199,13 +182,13 @@ docopt==0.6.2
 docstring_parser==0.16
 docutils==0.16
 docx==0.2.4
-docx2txt @ file:///home/conda/feedstock_root/build_artifacts/docx2txt_1724281378092/work
+docx2txt
 duckdb==1.2.1
 e2b==0.17.1
 e2b-code-interpreter==0.0.10
 easygui==0.98.3
 easyocr @ git+https://github.com/JaidedAI/EasyOCR.git@c4f3cd7225efd4f85451bd8b4a7646ae9a092420
-ebcdic @ file:///home/conda/feedstock_root/build_artifacts/ebcdic_1621162493973/work/ebcdic
+ebcdic
 -e git+https://github.com/gryf/ebook-converter@72d0858ad8a852b0e659d8a57b5330f39106d545#egg=ebook_converter
 EbookLib==0.17.1
 ecdsa==0.19.1
@@ -223,7 +206,6 @@ emoji==2.12.1
 en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
 encodec==0.1.1
 entmax==1.3
-epub2txt==0.1.6
 espeakng-loader==0.2.4
 et-xmlfile==1.1.0
 etils==1.9.4
@@ -235,13 +217,11 @@ execnet==2.1.1
 executing==2.0.1
 extract-msg==0.29.0
 f5-tts==1.1.4
-f5-tts-mlx==0.2.6
 fairseq==0.12.2
 faiss-cpu==1.7.4
 fastapi==0.115.12
 fastapi-cli==0.0.7
 fastapi_poe==0.0.34
-fastavro==1.11.1
 fastembed==0.6.0
 -e git+https://github.com/SYSTRAN/faster-whisper.git@d57c5b40b06e59ec44240d93485a95799548af50#egg=faster_whisper
 fastjsonschema==2.19.1
@@ -265,9 +245,9 @@ flatten-dict==0.4.2
 flax==0.8.4
 fonttools==4.47.2
 fqdn==1.5.1
-frozendict @ file:///Users/runner/miniforge3/conda-bld/frozendict_1728841356120/work
+frozendict
 frozenlist==1.4.1
-fsspec==2025.3.0
+fsspec==2025.5.0
 ftfy==6.3.1
 future==1.0.0
 g2p-en==2.1.0
@@ -303,7 +283,7 @@ gradio_client==1.8.0
 gradio_pdf==0.0.8
 gradio_tools==0.0.9
 graphviz==0.20.3
-greenlet==3.2.3
+greenlet==3.0.3
 groovy==0.1.2
 groq==0.5.0
 grpcio==1.64.0
@@ -324,10 +304,9 @@ hangul-romanize==0.1.0
 hf-hub-ctranslate2==2.12.0
 hf-xet==1.1.2
 hf_transfer==0.1.5
-hidapi==0.14.0.post4
 hpack==4.0.0
 html2image==2.0.4.3
-html2text==2025.4.15
+html2text==2024.2.26
 html5-parser==0.4.12
 httpcore==1.0.4
 httplib2==0.22.0
@@ -342,7 +321,6 @@ hyperframe==6.0.1
 hyperlink==21.0.0
 HyperPyYAML==1.2.2
 icecream==2.1.3
-identify==2.6.13
 idna==3.10
 ifaddr==0.2.0
 imageio==2.33.1
@@ -365,7 +343,6 @@ ipfs_hamt_directory_py==0.1.1
 ipykernel==6.29.0
 ipython==8.21.0
 ipywidgets==8.1.2
-isbnlib==3.10.14
 isodate==0.7.2
 isoduration==20.11.0
 itemadapter==0.11.0
@@ -375,9 +352,6 @@ izihawa-ipfs-api==1.0.7
 izihawa-utils==1.1.4
 jamo==0.4.1
 Janome==0.5.0
-jaraco.classes==3.4.0
-jaraco.context==6.0.1
-jaraco.functools==4.2.1
 jax==0.4.26
 jaxlib==0.4.26
 jedi==0.19.1
@@ -390,7 +364,7 @@ joblib==1.3.2
 json5==0.9.25
 jsonargparse==3.13.1
 jsonlines==1.2.0
-jsonpatch @ file:///home/conda/feedstock_root/build_artifacts/jsonpatch_1695536281965/work
+jsonpatch
 jsonpath-python==1.0.6
 jsonpointer==2.1
 jsonrpcclient==4.0.3
@@ -412,11 +386,9 @@ jupyterlab_widgets==3.0.10
 kagglehub==0.1.9
 kaldi-python-io==1.2.2
 kaldiio==2.18.1
-kanjize==1.6.0
 keras==3.10.0
 keras-core==0.1.7
 keras-nlp==0.8.1
-keyring==25.6.0
 kiwisolver==1.4.5
 kornia==0.8.1
 kornia_rs==0.1.9
@@ -437,7 +409,7 @@ langcodes==3.3.0
 langdetect==1.0.9
 langsmith==0.1.147
 language-tags==1.2.0
-lark==1.1.8
+lark==1.2.2
 latexcodec==3.0.0
 layoutparser==0.3.4
 lazy_loader==0.4
@@ -445,8 +417,8 @@ Levenshtein==0.27.1
 lhotse==1.30.3
 libclang==16.0.6
 libcst==1.7.0
-libmambapy @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_69t7vyvo1k/croot/mamba-split_1704219411138/work/libmambapy
-librosa==0.10.2
+libmambapy
+librosa==0.10.2.post1
 lightning==2.4.0
 lightning-utilities==0.11.2
 lilcom==1.8.1
@@ -470,16 +442,14 @@ llama_cpp_python==0.3.9
 llava @ https://h2o-release.s3.amazonaws.com/h2ogpt/llava-1.7.0.dev0-py3-none-any.whl#sha256=3799d074143f86041934874bc882b884d71d892d3781e90dd8d745ff29e7cd7d
 llguidance==0.7.20
 # Editable install with no version control (llmtuner==0.7.0)
-# -e /Users/christianstrobele/code/LLaMA-Factory  # local editable install (not portable); see https://github.com/hiyouga/LLaMA-Factory
+# llmtuner / LLaMA-Factory: local editable install removed (not portable); see https://github.com/hiyouga/LLaMA-Factory
 llvmlite==0.44.0
 lm-format-enforcer==0.10.11
 # Editable install with no version control (lm_eval==0.4.2)
-# -e /Users/christianstrobele/code/lm-evaluation-harness  # local editable install (not portable); see https://github.com/EleutherAI/lm-evaluation-harness
+# lm_eval / lm-evaluation-harness: local editable install removed (not portable); see https://github.com/EleutherAI/lm-evaluation-harness
 lmdb==1.6.2
 loguru==0.7.3
-logzero==1.7.0
-lunr==0.8.0
-lxml @ file:///Users/runner/miniforge3/conda-bld/lxml_1671013771134/work
+lxml
 macholib==1.16.3
 Mako==1.3.5
 Markdown==3.6
@@ -491,14 +461,12 @@ matplotlib==3.10.3
 matplotlib-inline==0.1.6
 mbstrdecoder==1.1.3
 mdurl==0.1.2
-mdutils==1.8.0
 mecab-python3==1.0.10
 mediapy==1.1.6
 meilisearch==0.28.2
-menuinst @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_26a7xsau78/croot/menuinst_1706732941263/work
+menuinst
 # Editable install with no version control (mergekit==0.0.4.1)
-# -e /Users/christianstrobele/Downloads/mergekit  # local editable install (not portable); see https://github.com/arcee-ai/mergekit
-micloud==0.6
+# mergekit: local editable install removed (not portable); see https://github.com/arcee-ai/mergekit
 MIDIUtil==1.2.1
 milvus-lite==2.4.12
 misaki==0.9.4
@@ -514,13 +482,10 @@ mlx-whisper==0.4.1
 mlx_embedding_models==0.0.11
 mlx_llm==1.0.9
 mmh3==4.1.0
-mnemonic==0.21
 mobi==0.3.3
 monotonic==1.6
 more-itertools==10.1.0
 mpmath==1.3.0
-mpy-cross-v5==1.1.1
-mpy-cross-v6==1.1.1
 msg-parser==1.2.0
 msgpack==1.1.0
 msgpack-numpy==0.4.8
@@ -533,32 +498,29 @@ multiprocess==0.70.16
 murmurhash==1.0.10
 mutagen==1.47.0
 mypy-extensions==1.0.0
-Naked==0.1.32
 namex==0.0.7
 natsort==8.4.0
 nbclient==0.10.0
 nbconvert==7.16.4
 nbformat==5.10.4
 nest-asyncio==1.6.0
-netifaces==0.11.0
 networkx==2.8.8
 ninja==1.11.1.1
 nltk==3.9.1
-nodeenv==1.9.1
 notebook==7.1.3
 notebook_shim==0.2.4
 num2words==0.5.14
 numba==0.61.2
 numexpr==2.10.2
-numpy==1.26.4
+numpy==2.2.6
 nvidia-ml-py==12.575.51
 oauth2client==4.1.3
 oauthlib==3.2.2
 ocrmypdf==16.10.0
 odfpy==1.4.1
 olefile==0.46
-oletools @ file:///home/conda/feedstock_root/build_artifacts/oletools_1643648364003/work
-ollama==0.5.1
+oletools
+ollama==0.4.7
 omegaconf==2.3.0
 onnx==1.16.1
 onnxruntime==1.21.0
@@ -607,26 +569,22 @@ paper-qa==5.0.0
 parsel==1.10.0
 parso==0.8.3
 partial-json-parser==0.2.1.1.post5
-path==17.1.0
-pathlib==1.0.1
-pathspec==0.12.1
 pathvalidate==3.2.0
 pbkdf2==1.3
 pcodedmp==1.2.6
 pdf2image==1.17.0
 pdfminer==20191125
-pdfminer.six @ file:///home/conda/feedstock_root/build_artifacts/pdfminer.six_1720352529635/work
+pdfminer.six
 pdfplumber==0.11.5
 pdftext==0.5.1
 peft==0.10.0
 pendulum==3.0.0
 pexpect==4.9.0
-phonemizer==3.3.0
 phonemizer-fork==3.3.2
 pi_heif==0.21.0
 piexif==1.1.3
 pikepdf==8.15.1
-pillow==11.2.1
+pillow==11.1.0
 pillow_heif==0.16.0
 pip-licenses==4.4.0
 piper-tts==1.2.0
@@ -635,14 +593,13 @@ pipx==1.6.0
 pkgconfig==1.5.5
 plac==1.4.5
 platformdirs==4.3.8
-playwright==1.52.0
+playwright==1.44.0
 plotly==5.18.0
 pluggy==1.5.0
 polars==0.20.22
 pooch==1.8.2
 portalocker==2.8.2
 posthog==3.3.4
-pre_commit==4.3.0
 preshed==3.0.9
 prettytable==3.10.0
 primefac==2.0.12
@@ -675,21 +632,19 @@ pyasn1==0.4.8
 pyasn1-modules==0.3.0
 pybase64==1.0.2
 pybind11==2.12.0
-pybricks==3.6.1
-pybricksdev==2.0.1
 pybtex==0.24.0
 pycares==4.3.0
-pycld3 @ file:///Users/christianstrobele/code/EQ-Bench/data/pycld3
+pycld3
 pyclipper==1.3.0.post6
 pycocotools==2.0.7
-pycosat @ file:///Users/cbousseau/work/recipes/ci_py311/pycosat_1677933552468/work
+pycosat
 pycountry==23.12.11
-pycparser @ file:///tmp/build/80754af9/pycparser_1636541352034/work
+pycparser
 pycryptodome==3.20.0
 pycryptodomex==3.21.0
-pydantic==2.10.6
+pydantic==2.11.4
 pydantic-settings==2.5.2
-pydantic_core==2.27.2
+pydantic_core==2.33.2
 pydeck==0.8.1b0
 PyDispatcher==2.0.7
 pydot==2.0.0
@@ -879,7 +834,7 @@ pyobjc-framework-WebKit==11.0
 pyonmttok==1.37.1
 pyOpenSSL==25.0.0
 pypandoc==1.13
-pyparsing==2.4.7
+pyparsing==3.0.9
 pypdf==5.4.0
 PyPDF2==3.0.1
 pypdfium2==4.30.0
@@ -892,10 +847,9 @@ PyQt6==6.7.1
 PyQt6-Qt6==6.7.3
 PyQt6_sip==13.8.0
 pyreadstat==1.2.7
-PyRTF3==0.47.5
 pysbd==0.3.4
 pyserial==3.5
-PySocks @ file:///Users/cbousseau/work/recipes/ci_py311/pysocks_1677906386870/work
+PySocks
 pystoi==0.4.1
 pytablewriter==1.2.0
 pytesseract==0.3.13
@@ -907,20 +861,17 @@ python-bidi==0.6.3
 python-bricklink-api==0.3.1
 python-chess==1.999
 python-crfsuite==0.9.11
-python-crontab==3.2.0
 python-dateutil==2.8.2
 python-doctr==0.11.0
 python-docx==1.1.2
 python-dotenv==1.0.1
 python-ev3dev2==2.1.0.post1
-python-frontmatter==1.1.0
 python-gflags==3.1.2
 python-iso639==2024.4.27
 python-jose==3.4.0
 python-json-logger==2.0.7
 python-keycloak-client==0.2.3
 python-magic==0.4.27
-python-miio==0.5.12
 python-multipart==0.0.20
 python-pptx==0.6.18
 python-socks==2.4.3
@@ -945,7 +896,6 @@ randomname==0.2.1
 RapidFuzz==3.13.0
 rawdog-ai==0.1.1
 rdflib==7.1.4
-reactivex==4.0.4
 readchar==4.0.5
 redis==5.0.1
 referencing==0.33.0
@@ -957,23 +907,21 @@ requests-iap==0.2.0
 requests-oauthlib==1.3.1
 requests-toolbelt==1.0.0
 resampy==0.4.3
-resemble-perth==1.0.1
 responses==0.18.0
 rfc3339-validator==0.1.4
 rfc3986==1.5.0
 rfc3986-validator==0.1.1
-rich==13.9.4
+rich==14.0.0
 rich-toolkit==0.13.2
 rouge-score==0.1.2
 rpds-py==0.17.1
 rsa==4.7.2
-RTFDE @ file:///home/conda/feedstock_root/build_artifacts/rtfde_1701943537480/work
+RTFDE
 ruamel.yaml==0.18.6
 ruamel.yaml.clib==0.2.8
 ruff==0.11.2
 runs==1.2.2
 s3-extend==1.30
-s3tokenizer==0.2.0
 s3transfer==0.10.2
 sacrebleu==2.4.1
 sacremoses==0.1.1
@@ -996,7 +944,6 @@ service-identity==24.2.0
 setproctitle==1.3.6
 sgmllib3k==1.0.0
 shapely==2.0.7
-shellescape==3.8.1
 shellingham==1.5.4
 shtab==1.7.0
 Sickle==0.7.0
@@ -1011,7 +958,7 @@ sniffio==1.3.0
 sortedcontainers==2.4.0
 sounddevice==0.5.2
 soundfile==0.13.1
-soupsieve @ file:///home/conda/feedstock_root/build_artifacts/soupsieve_1693929250441/work
+soupsieve
 sox==1.5.0
 soxr==0.5.0.post1
 spacy==3.8.4
@@ -1022,7 +969,6 @@ speechbrain==1.0.1
 SpeechRecognition==3.8.1
 SQLAlchemy==2.0.25
 sqlitedict==2.1.0
-sqlparse==0.5.3
 srsly==2.4.8
 srt==3.5.3
 srupy==0.1.1
@@ -1036,7 +982,6 @@ StrEnum==0.4.15
 striprtf==0.0.26
 structlog==24.4.0
 SudachiDict-core==20250515
-SudachiDict-full==20250515
 SudachiPy==0.6.10
 summa_embed==0.20.2
 supervision==0.25.1
@@ -1065,7 +1010,7 @@ terminado==0.18.1
 tesseract==0.1.3
 text-unidecode==1.3
 texterrors==0.5.1
-textract @ file:///Users/christianstrobele/Documents/texte/textract_fix/textract-1.6.5
+textract
 tf-keras==2.15.0
 thinc==8.3.4
 thread-task==0.9.7
@@ -1080,12 +1025,12 @@ tinycss2==1.3.0
 tldextract==5.1.2
 tmx-pico-aio==1.3
 together==1.1.5
-tokenizers==0.21.4
+tokenizers==0.20.3
 tokentrim==0.1.13
 toml==0.10.2
 tomli==2.2.1
 tomlkit==0.12.0
-toolz @ file:///Users/cbousseau/work/recipes/ci_py311/toolz_1677925870232/work
+toolz
 torch==2.7.0
 torch-audiomentations==0.11.1
 torch-stoi==0.2.3
@@ -1103,12 +1048,12 @@ tqdm==4.67.1
 tqdm-multiprocess==0.0.11
 trainer==0.0.36
 traitlets==5.14.1
-transformers==4.51.3
+transformers==4.45.2
 transformers-stream-generator==0.0.5
 trio==0.25.0
 trio-websocket==0.11.1
 trl==0.8.6
-truststore @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_42mm7e6j06/croot/truststore_1695244298716/work
+truststore
 TTS==0.22.0
 twilio==9.3.8
 Twisted==22.10.0
@@ -1116,7 +1061,6 @@ typeguard==4.4.2
 typepy==1.3.2
 typer==0.12.5
 types-python-dateutil==2.9.0.20240316
-types-requests==2.32.0.20250602
 typing-inspect==0.9.0
 typing-inspection==0.4.0
 typing_extensions==4.13.2
@@ -1139,18 +1083,15 @@ urllib3==2.4.0
 uroman==1.3.1.1
 userpath==1.9.2
 uuid==1.30
-uv==0.7.8
 uvicorn==0.27.1
 uvloop==0.19.0
 validators==0.22.0
 vector-quantize-pytorch==1.17.8
-virtualenv==20.34.0
 vllm==0.8.5.post1
 vocos==0.1.0
-vocos-mlx==0.0.7
 w3lib==2.3.1
 wait_for2==0.3.2
-waitress==3.0.2
+waitress==3.0.0
 wandb==0.19.11
 wasabi==1.1.2
 watchdog==6.0.0
@@ -1165,7 +1106,6 @@ webencodings==0.5.1
 webrtcvad==2.0.10
 websocket-client==1.7.0
 websockets==11.0.3
-webvtt-py==0.5.1
 Werkzeug==3.0.2
 wget==3.2
 whisper==1.1.10
@@ -1173,14 +1113,13 @@ whisper_jax @ git+https://github.com/sanchit-gandhi/whisper-jax.git@f983178a80ad
 widgetsnbextension==4.0.10
 word2number==1.1
 wrapt==1.14.1
-WsgiDAV==4.3.3
 wsproto==1.2.0
 wurlitzer==3.1.1
 x-transformers==2.3.5
 xcodec2==0.1.5
 xformers==0.0.29.post3
 xlrd==1.2.0
-XlsxWriter @ file:///home/conda/feedstock_root/build_artifacts/xlsxwriter_1723277104680/work
+XlsxWriter
 xmod==1.8.1
 xxhash==3.4.1
 yarl==1.9.4
@@ -1188,10 +1127,8 @@ yaz==1.1.2
 youtokentome==1.0.6
 youtube-dl==2021.12.17
 youtube-transcript-api==0.6.2
-yt-dlp==2025.5.22
-zeroconf==0.147.0
+yt-dlp==2025.3.21
 zipp==3.17.0
--e git+https://github.com/Zyphra/Zonos@bc40d98e1e1ab54fc65c483be127a90e3c7c0645#egg=zonos
 zope.interface==7.2
 zstandard==0.23.0
 zxing-cpp==2.2.0
