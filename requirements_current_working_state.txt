@@ -442,11 +442,11 @@ llama_cpp_python==0.3.9
 llava @ https://h2o-release.s3.amazonaws.com/h2ogpt/llava-1.7.0.dev0-py3-none-any.whl#sha256=3799d074143f86041934874bc882b884d71d892d3781e90dd8d745ff29e7cd7d
 llguidance==0.7.20
 # Editable install with no version control (llmtuner==0.7.0)
--e /Users/christianstrobele/code/LLaMA-Factory
+# -e /Users/christianstrobele/code/LLaMA-Factory  # local editable install (not portable); see https://github.com/hiyouga/LLaMA-Factory
 llvmlite==0.44.0
 lm-format-enforcer==0.10.11
 # Editable install with no version control (lm_eval==0.4.2)
--e /Users/christianstrobele/code/lm-evaluation-harness
+# -e /Users/christianstrobele/code/lm-evaluation-harness  # local editable install (not portable); see https://github.com/EleutherAI/lm-evaluation-harness
 lmdb==1.6.2
 loguru==0.7.3
 lxml @ file:///Users/runner/miniforge3/conda-bld/lxml_1671013771134/work
@@ -466,7 +466,7 @@ mediapy==1.1.6
 meilisearch==0.28.2
 menuinst @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_26a7xsau78/croot/menuinst_1706732941263/work
 # Editable install with no version control (mergekit==0.0.4.1)
--e /Users/christianstrobele/Downloads/mergekit
+# -e /Users/christianstrobele/Downloads/mergekit  # local editable install (not portable); see https://github.com/arcee-ai/mergekit
 MIDIUtil==1.2.1
 milvus-lite==2.4.12
 misaki==0.9.4
