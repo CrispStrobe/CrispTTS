@@ -29,7 +29,7 @@ EbookLib>=0.17
 
 # TTS Engines - Core Working Set
 edge-tts>=6.0
-chatterbox-tts==0.1.2
+chatterbox-tts==0.1.7
 diffusers>=0.29.0
 resemble-perth>=1.0.0
 
