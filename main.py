@@ -606,6 +606,20 @@ def run_synthesis(args):
         logger.info(f"Zero-shot model '{args.model_id}': proceeding without voice ID (zero-shot synthesis)")
         effective_voice_id = None
 
+    # --- Inject CLI synthesis overrides into handler config ---
+    if getattr(args, 'speech_speed', 1.0) != 1.0:
+        current_config_for_handler["_cli_speech_speed"] = args.speech_speed
+    if getattr(args, 'trim_silence', False):
+        current_config_for_handler["_cli_trim_silence"] = True
+    if getattr(args, 'tts_steps', None) is not None:
+        current_config_for_handler["_cli_tts_steps"] = args.tts_steps
+    if getattr(args, 'tts_language', None):
+        current_config_for_handler["language"] = args.tts_language  # override config language
+    if getattr(args, 'pitch_shift', 0.0) != 0.0:
+        current_config_for_handler["_cli_pitch_shift"] = args.pitch_shift
+    if getattr(args, 'instruct', None):
+        current_config_for_handler["instruct"] = args.instruct  # override config instruct
+
     handler_key = current_config_for_handler.get("handler_function_key", args.model_id)
     handler_func = current_all_handlers.get(handler_key)
 
@@ -629,6 +643,12 @@ def run_synthesis(args):
         try:
             handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
                 args.output_file, args.play_direct)
+
+            # --- Post-synthesis silence trimming (Python fallback for non-crispasr) ---
+            if getattr(args, 'trim_silence', False) and args.output_file and os.path.isfile(args.output_file):
+                if handler_key != "crispasr":  # crispasr handles it via --tts-trim-silence
+                    from utils import trim_silence_file
+                    trim_silence_file(args.output_file)
 
             # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
             if _is_voice_cloning and args.output_file and os.path.isfile(args.output_file):
@@ -705,6 +725,18 @@ def main_cli_entrypoint():
         help="Override default voice/speaker for the selected model.")
     synth_group.add_argument("--model-params", type=str,
         help="JSON string of model-specific parameters (e.g., '{\"temperature\":0.7}').")
+    synth_group.add_argument("--speech-speed", type=float, default=1.0,
+        help="Speech rate multiplier (>1 = faster, <1 = slower, default: 1.0).")
+    synth_group.add_argument("--trim-silence", action="store_true",
+        help="Trim leading/trailing silence from synthesized audio.")
+    synth_group.add_argument("--tts-steps", type=int, default=None, metavar="N",
+        help="DPM-Solver++ inference steps for diffusion models (default: backend-specific).")
+    synth_group.add_argument("--tts-language", type=str, default=None, metavar="LANG",
+        help="Override language for multilingual models (e.g., de, en, zh, ja).")
+    synth_group.add_argument("--pitch-shift", type=float, default=0.0, metavar="HZ",
+        help="Pitch shift in Hz (positive = higher, negative = lower, default: 0).")
+    synth_group.add_argument("--instruct", type=str, default=None, metavar="TEXT",
+        help="Natural-language voice/style description for VoiceDesign models (e.g., qwen3-tts).")
 
     # CrispASR integration options
     crispasr_group = parser.add_argument_group(title="CrispASR Integration")

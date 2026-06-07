@@ -409,6 +409,56 @@ def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=Fals
     except Exception as e:
         logger.error(f"Error saving audio to {output_filepath}: {e}", exc_info=True)
 
+def trim_silence(pcm: np.ndarray, threshold_db: float = -40.0, min_silence_samples: int = 1000) -> np.ndarray:
+    """Trim leading and trailing silence from float32 PCM audio.
+
+    Args:
+        pcm: 1-D float32 array of audio samples.
+        threshold_db: RMS threshold in dB below which audio is considered silence.
+        min_silence_samples: Minimum number of samples to consider as silence region.
+
+    Returns:
+        Trimmed copy of the PCM array.
+    """
+    if len(pcm) == 0:
+        return pcm
+    threshold = 10 ** (threshold_db / 20.0)
+    frame_len = min(min_silence_samples, len(pcm))
+    # Find first non-silent sample
+    start = 0
+    for i in range(0, len(pcm) - frame_len, frame_len):
+        rms = np.sqrt(np.mean(pcm[i:i + frame_len] ** 2))
+        if rms > threshold:
+            start = max(0, i - frame_len)  # keep a little context
+            break
+    # Find last non-silent sample
+    end = len(pcm)
+    for i in range(len(pcm) - frame_len, start, -frame_len):
+        rms = np.sqrt(np.mean(pcm[i:i + frame_len] ** 2))
+        if rms > threshold:
+            end = min(len(pcm), i + 2 * frame_len)
+            break
+    return pcm[start:end]
+
+
+def trim_silence_file(filepath: str | Path, threshold_db: float = -40.0) -> None:
+    """Trim leading/trailing silence from a WAV file in place."""
+    filepath = Path(filepath)
+    if not SOUNDFILE_AVAILABLE or not filepath.exists():
+        return
+    try:
+        data, sr = sf.read(str(filepath), dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        trimmed = trim_silence(data, threshold_db)
+        if len(trimmed) < len(data):
+            sf.write(str(filepath), trimmed, sr, subtype="PCM_16")
+            logger.info("Trimmed silence: %d → %d samples (%.1fs → %.1fs)",
+                        len(data), len(trimmed), len(data) / sr, len(trimmed) / sr)
+    except Exception as e:
+        logger.warning("Silence trimming failed for %s: %s", filepath, e)
+
+
 def play_audio(audio_path_or_data, is_path=True, input_format=None, sample_rate=None):
     if is_path:
         if not PYDUB_AVAILABLE:

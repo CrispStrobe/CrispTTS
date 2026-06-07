@@ -204,6 +204,22 @@ def synthesize_with_crispasr(
     if language:
         cmd.extend(["-l", language])
 
+    # --- CLI-injected synthesis flags (from main.py) ---
+    cli_speed = crisptts_model_config.get("_cli_speech_speed")
+    if cli_speed and cli_speed != 1.0:
+        cmd.extend(["--pace", str(cli_speed)])
+
+    if crisptts_model_config.get("_cli_trim_silence"):
+        cmd.append("--tts-trim-silence")
+
+    cli_steps = crisptts_model_config.get("_cli_tts_steps")
+    if cli_steps is not None:
+        cmd.extend(["--tts-steps", str(cli_steps)])
+
+    cli_pitch = crisptts_model_config.get("_cli_pitch_shift")
+    if cli_pitch and cli_pitch != 0.0:
+        cmd.extend(["--pitch-shift", str(cli_pitch)])
+
     # Parse model params override
     if model_params_override:
         try:
@@ -222,6 +238,8 @@ def synthesize_with_crispasr(
             "exaggeration": "--exaggeration",
             "length_scale": "--length-scale",
             "speaker_name": "--speaker-name",
+            "speech_speed": "--pace",
+            "pitch_shift": "--pitch-shift",
         }
         for key, flag in param_map.items():
             if key in params:

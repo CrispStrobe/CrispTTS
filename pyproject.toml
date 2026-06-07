@@ -64,7 +64,7 @@ select = ["E", "F", "W", "I", "B", "S"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*.py" = ["S101", "S108"]  # assert + /tmp paths are fine in tests
+"tests/*.py" = ["S101", "S108", "S603"]  # assert + /tmp paths + subprocess in tests
 
 [tool.bandit]
 skips = ["B101"]  # assert used in tests
