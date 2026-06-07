@@ -171,10 +171,34 @@ Each phase: implement → unit test → live test → commit → push.
 
 ---
 
-## Verification
+## Status: ALL PHASES COMPLETE
 
-After each phase:
-1. `python -m pytest tests/ -v` — all unit tests pass
-2. `python -m ruff check .` — no lint issues
-3. Live test with actual crispasr binary: `python main.py --model-id crispasr_kokoro --input-text "Test" --output-file /tmp/test.wav`
-4. Verify new flags work: `python main.py --model-id crispasr_kokoro --input-text "Test" --speech-speed 1.3 --trim-silence --output-file /tmp/test_fast.wav`
+All 5 phases implemented, tested, and pushed.
+
+| Phase | Commit | Tests |
+|-------|--------|-------|
+| 1 | `bb5e451` | 26 pass |
+| 2 | `8ae7f6f` | 34 pass |
+| 3 | `c3f6691` | 46 pass |
+| 4 | `1b4aee0` | 48 pass |
+| 5 | `0f734d2` | 51 pass |
+
+### Live test results (2026-06-07)
+
+End-to-end pipeline verified with Kokoro backend:
+
+```
+pip install py-espeak-ng  # required for Kokoro phonemization
+CRISPASR_EXECUTABLE=/mnt/volume1/CrispASR/build/bin/crispasr \
+  python main.py --model-id crispasr_kokoro \
+  --input-text "Hallo Welt, dies ist ein Live-Test der Sprachsynthese." \
+  --german-voice-id ~/.cache/crispasr/kokoro-voice-af_heart.gguf \
+  --output-file /tmp/full_pipeline_test.wav --trim-silence
+```
+
+Result:
+- Synthesis: 3.73s audio @ 24 kHz (Kokoro, af_heart voice)
+- Watermark: spread-spectrum applied (confidence 0.49)
+- Metadata: LIST/INFO with "AI-generated audio" provenance
+- Silence trimming: applied
+- Pipeline: CrispTTS → crispasr binary → watermarked WAV ✓

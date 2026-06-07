@@ -464,6 +464,19 @@ Response: audio bytes with appropriate Content-Type header. All output is automa
 
 ## Troubleshooting & Notes
 
+**espeak-ng for Kokoro**: The Kokoro backend requires `espeak-ng` for phonemization. Install via:
+```bash
+pip install py-espeak-ng     # installs espeak-ng CLI to ~/.local/bin
+# or system-wide: apt install espeak-ng
+```
+
+**CrispASR voice paths**: The CrispASR binary auto-downloads models but voice packs need full paths for older binary versions. Use the cached path directly:
+```bash
+python main.py --model-id crispasr_kokoro \
+  --german-voice-id ~/.cache/crispasr/kokoro-voice-af_heart.gguf \
+  --input-text "Test" --output-file out.wav
+```
+
 **Missing Libraries**: If a specific TTS engine fails, ensure you have installed all its required libraries via `pip install -r requirements.txt` and any extra steps mentioned in their documentation.
 
 **mlx-audio Bark Specifics**:
