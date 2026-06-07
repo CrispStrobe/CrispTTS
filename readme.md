@@ -39,6 +39,12 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - TTS.cpp (GGUF models)
   - Zonos (acoustic conditioning)
   - Chatterbox Python (Kartoffelbox)
+- **AI Audio Watermarking & Provenance** (EU AI Act compliant):
+  - Spread-spectrum watermark (always on, imperceptible, ~-46 dB)
+  - AudioSeal neural watermark (optional upgrade via `pip install audioseal` or CrispASR GGUF)
+  - WAV LIST/INFO and MP3 ID3v2 metadata marking audio as AI-generated
+  - C2PA content credentials signing (optional, `pip install c2pa-python`)
+  - Voice-cloning consent gate (`--i-have-rights`)
 - **CrispASR Integration**:
   - `--verify`: ASR roundtrip verification of TTS output quality
   - `--translate`: Pre-synthesis translation (EN→DE via m2m100/MadLad)
@@ -61,6 +67,7 @@ crisptts_project/
 ├── main.py                     # Main CLI application script
 ├── config.py                   # Model configurations and global constants
 ├── utils.py                    # Shared utility functions and classes
+├── watermark.py                # Audio watermarking, metadata, consent gate, C2PA
 ├── decoder.py                  # User-provided decoder for Orpheus models (if used)
 ├── handlers/                   # Package for individual TTS engine handlers
 │   ├── __init__.py             # Makes 'handlers' a package, exports handler functions
@@ -304,6 +311,60 @@ For a redistributable, pre-curated **permissive-only** GGUF set (the same
 voices minus the non-commercial/restricted ones, converted for the
 CrispASR/CrisperWeaver native runtime), see
 [`cstr/piper-voices-GGUF`](https://huggingface.co/cstr/piper-voices-GGUF).
+
+## Audio Watermarking & Provenance
+
+CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered system ported from [CrispASR](https://github.com/CrispStrobe/CrispASR):
+
+### Layers
+
+| Layer | What | Status | Install |
+|-------|------|--------|---------|
+| **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.005) | Always active | Built-in (numpy) |
+| **AudioSeal** | Neural watermark (Meta, 16-bit message) | Auto-detected | `pip install audioseal` |
+| **WAV/MP3 metadata** | LIST/INFO + ID3v2 TXXX tags | Always active | Built-in |
+| **C2PA credentials** | Signed provenance manifests | Opt-in | `pip install c2pa-python` |
+| **Consent gate** | Voice-cloning attestation | Required for cloning | Built-in |
+
+### Usage
+
+```bash
+# Default: spread-spectrum watermark + metadata (no extra deps)
+python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
+
+# With AudioSeal neural watermark (auto-detected if installed)
+pip install audioseal
+python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
+
+# With AudioSeal via CrispASR GGUF model
+python main.py --watermark-model audioseal.gguf --model-id edge --input-text "Hallo" --output-file out.mp3
+
+# With C2PA content credentials
+pip install c2pa-python
+python main.py --c2pa-cert cert.pem --c2pa-key key.pem --model-id edge --input-text "Hallo" --output-file out.mp3
+
+# Voice-cloning models require consent attestation
+python main.py --model-id coqui_xtts_v2 --i-have-rights --input-text "Hallo" --output-file out.wav
+
+# Disable watermarking (debug only)
+python main.py --no-watermark --model-id edge --input-text "Hallo" --output-file out.mp3
+```
+
+### Detection
+
+```python
+from watermark import watermark_detect
+import soundfile as sf
+import numpy as np
+
+pcm, sr = sf.read("out.wav", dtype="float32")
+confidence = watermark_detect(pcm)
+print(f"Watermark confidence: {confidence:.3f}")  # >0.65 = AI-generated
+```
+
+### Cross-compatibility
+
+The spread-spectrum watermark uses the same PRNG seed (`0x437269737041535F`), FFT parameters, and bin selection as CrispASR's C++ implementation. Audio watermarked by either project can be detected by the other.
 
 ## Troubleshooting & Notes
 

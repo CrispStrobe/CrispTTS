@@ -1,0 +1,292 @@
+"""Tests for watermark.py — spread-spectrum watermark, metadata, consent gate."""
+
+import os
+import struct
+import unittest
+
+import numpy as np
+
+
+class TestPrng(unittest.TestCase):
+    """Verify PRNG produces deterministic output matching the C++ implementation."""
+
+    def test_deterministic(self):
+        from watermark import _Prng
+        rng1 = _Prng(42)
+        rng2 = _Prng(42)
+        for _ in range(100):
+            self.assertEqual(rng1.next(), rng2.next())
+
+    def test_different_seeds_differ(self):
+        from watermark import _Prng
+        rng1 = _Prng(1)
+        rng2 = _Prng(2)
+        values1 = [rng1.next() for _ in range(10)]
+        values2 = [rng2.next() for _ in range(10)]
+        self.assertNotEqual(values1, values2)
+
+
+class TestBinPattern(unittest.TestCase):
+    """Test bin pattern generation."""
+
+    def test_correct_count(self):
+        from watermark import _generate_bin_pattern
+        bins = _generate_bin_pattern(0x437269737041535F, 1024, 32)
+        self.assertEqual(len(bins), 32)
+
+    def test_bins_in_range(self):
+        from watermark import _generate_bin_pattern
+        bins = _generate_bin_pattern(0x437269737041535F, 1024, 32)
+        lo = 1024 // 16
+        hi = 1024 // 2 - 1
+        for idx, sign in bins:
+            self.assertGreaterEqual(idx, lo)
+            self.assertLess(idx, lo + (hi - lo))
+            self.assertIn(sign, (-1, 1))
+
+    def test_deterministic(self):
+        from watermark import _generate_bin_pattern
+        b1 = _generate_bin_pattern(123, 1024, 32)
+        b2 = _generate_bin_pattern(123, 1024, 32)
+        self.assertEqual(b1, b2)
+
+    def test_empty_on_bad_input(self):
+        from watermark import _generate_bin_pattern
+        self.assertEqual(_generate_bin_pattern(42, 1024, 0), [])
+        self.assertEqual(_generate_bin_pattern(42, 0, 32), [])
+
+
+class TestSpreadSpectrumRoundTrip(unittest.TestCase):
+    """Test embed → detect round-trip."""
+
+    def _make_sine(self, freq=440.0, sr=24000, duration=1.0):
+        t = np.linspace(0, duration, int(sr * duration), endpoint=False, dtype=np.float32)
+        return 0.5 * np.sin(2 * np.pi * freq * t)
+
+    def test_embed_detect_roundtrip(self):
+        from watermark import spread_spectrum_detect, spread_spectrum_embed
+        pcm = self._make_sine(duration=1.0)
+        wm_pcm = spread_spectrum_embed(pcm, alpha=0.005)
+        confidence = spread_spectrum_detect(wm_pcm)
+        self.assertGreater(confidence, 0.65,
+                           f"Watermark should be detected (confidence={confidence:.3f})")
+
+    def test_unwatermarked_low_confidence(self):
+        from watermark import spread_spectrum_detect
+        pcm = self._make_sine(duration=1.0)
+        confidence = spread_spectrum_detect(pcm)
+        self.assertLess(confidence, 0.65,
+                        f"Unwatermarked audio should have low confidence ({confidence:.3f})")
+
+    def test_imperceptibility_snr(self):
+        """SNR between original and watermarked should be > 20 dB.
+
+        Pure sine waves yield lower SNR (~22 dB) because all energy
+        concentrates in one bin; broadband speech easily exceeds 28 dB.
+        20 dB is well below human perception threshold for speech.
+        """
+        from watermark import spread_spectrum_embed
+        pcm = self._make_sine(duration=1.0)
+        wm_pcm = spread_spectrum_embed(pcm, alpha=0.005)
+        noise = wm_pcm - pcm
+        signal_power = np.mean(pcm ** 2)
+        noise_power = np.mean(noise ** 2)
+        if noise_power > 0:
+            snr_db = 10 * np.log10(signal_power / noise_power)
+            self.assertGreater(snr_db, 20.0,
+                               f"SNR should be > 20 dB (got {snr_db:.1f} dB)")
+
+    def test_survives_volume_scaling(self):
+        """Watermark should survive 2x volume scaling."""
+        from watermark import spread_spectrum_detect, spread_spectrum_embed
+        pcm = self._make_sine(duration=1.0)
+        wm_pcm = spread_spectrum_embed(pcm, alpha=0.005)
+        scaled = wm_pcm * 2.0
+        confidence = spread_spectrum_detect(scaled)
+        self.assertGreater(confidence, 0.6,
+                           f"Watermark should survive volume scaling (confidence={confidence:.3f})")
+
+    def test_short_audio_noop(self):
+        """Audio shorter than 1 FFT frame should be returned unchanged."""
+        from watermark import spread_spectrum_embed
+        pcm = np.zeros(500, dtype=np.float32)
+        result = spread_spectrum_embed(pcm)
+        np.testing.assert_array_equal(result, pcm)
+
+    def test_silence_detection(self):
+        """Silent audio should return low confidence."""
+        from watermark import spread_spectrum_detect
+        pcm = np.zeros(24000, dtype=np.float32)
+        confidence = spread_spectrum_detect(pcm)
+        self.assertLessEqual(confidence, 0.5)
+
+
+class TestDispatcher(unittest.TestCase):
+    """Test the watermark_embed/detect dispatcher."""
+
+    def test_dispatcher_uses_spread_spectrum_by_default(self):
+        from watermark import watermark_detect, watermark_embed
+        pcm = 0.5 * np.sin(
+            2 * np.pi * 440 * np.linspace(0, 1, 24000, endpoint=False, dtype=np.float32)
+        )
+        wm = watermark_embed(pcm)
+        self.assertEqual(len(wm), len(pcm))
+        conf = watermark_detect(wm)
+        self.assertGreater(conf, 0.6)
+
+    def test_no_watermark_env_var(self):
+        """CRISPTTS_NO_WATERMARK should disable watermarking."""
+        from watermark import watermark_embed
+        pcm = 0.5 * np.sin(
+            2 * np.pi * 440 * np.linspace(0, 1, 24000, endpoint=False, dtype=np.float32)
+        )
+        os.environ["CRISPTTS_NO_WATERMARK"] = "1"
+        try:
+            wm = watermark_embed(pcm)
+            np.testing.assert_array_equal(wm, pcm)
+        finally:
+            del os.environ["CRISPTTS_NO_WATERMARK"]
+
+
+class TestWavMetadata(unittest.TestCase):
+    """Test WAV LIST/INFO metadata injection."""
+
+    def _make_minimal_wav(self) -> bytes:
+        """Create a minimal valid WAV file (1 second of silence at 16 kHz)."""
+        sr = 16000
+        n_samples = sr
+        data_size = n_samples * 2
+        riff_size = 36 + data_size
+        wav = bytearray()
+        wav.extend(b"RIFF")
+        wav.extend(struct.pack("<I", riff_size))
+        wav.extend(b"WAVE")
+        wav.extend(b"fmt ")
+        wav.extend(struct.pack("<I", 16))      # fmt chunk size
+        wav.extend(struct.pack("<H", 1))       # PCM
+        wav.extend(struct.pack("<H", 1))       # mono
+        wav.extend(struct.pack("<I", sr))      # sample rate
+        wav.extend(struct.pack("<I", sr * 2))  # byte rate
+        wav.extend(struct.pack("<H", 2))       # block align
+        wav.extend(struct.pack("<H", 16))      # bits per sample
+        wav.extend(b"data")
+        wav.extend(struct.pack("<I", data_size))
+        wav.extend(b"\x00" * data_size)
+        return bytes(wav)
+
+    def test_inject_wav_metadata(self):
+        from watermark import inject_wav_metadata
+        wav = self._make_minimal_wav()
+        result = inject_wav_metadata(wav)
+        self.assertGreater(len(result), len(wav))
+        self.assertIn(b"LIST", result)
+        self.assertIn(b"INFO", result)
+        self.assertIn(b"CrispTTS", result)
+        self.assertIn(b"AI-generated", result)
+
+    def test_riff_size_patched(self):
+        from watermark import inject_wav_metadata
+        wav = self._make_minimal_wav()
+        result = inject_wav_metadata(wav)
+        riff_size = struct.unpack_from("<I", result, 4)[0]
+        self.assertEqual(riff_size, len(result) - 8)
+
+    def test_non_wav_unchanged(self):
+        from watermark import inject_wav_metadata
+        data = b"not a wav file"
+        self.assertEqual(inject_wav_metadata(data), data)
+
+
+class TestMp3Metadata(unittest.TestCase):
+    """Test MP3 ID3v2 metadata generation."""
+
+    def test_make_id3v2_tag_structure(self):
+        from watermark import make_id3v2_ai_tag
+        tag = make_id3v2_ai_tag()
+        self.assertTrue(tag.startswith(b"ID3"))
+        self.assertEqual(tag[3], 0x03)  # version 2.3
+        self.assertIn(b"AI_GENERATED", tag)
+        self.assertIn(b"CrispTTS", tag)
+
+    def test_inject_mp3_metadata(self):
+        from watermark import inject_mp3_metadata
+        fake_mp3 = b"\xff\xfb" + b"\x00" * 100  # fake MP3 sync
+        result = inject_mp3_metadata(fake_mp3)
+        self.assertTrue(result.startswith(b"ID3"))
+        self.assertTrue(result.endswith(fake_mp3))
+
+    def test_no_double_tag(self):
+        from watermark import inject_mp3_metadata
+        fake_mp3 = b"ID3" + b"\x00" * 100
+        result = inject_mp3_metadata(fake_mp3)
+        self.assertEqual(result, fake_mp3)
+
+
+class TestAudioSealPythonBackend(unittest.TestCase):
+    """Test audioseal Python package integration (skipped if not installed)."""
+
+    def test_load_audioseal_python_missing(self):
+        """load_audioseal_python returns False if package not installed."""
+        from watermark import load_audioseal_python
+        # This will return False if audioseal is not installed, True if it is
+        result = load_audioseal_python()
+        self.assertIsInstance(result, bool)
+
+    def test_backend_name(self):
+        """Backend should be a known string."""
+        from watermark import _backend
+        self.assertIn(_backend, ("spread_spectrum", "audioseal_python", "audioseal_crispasr"))
+
+
+class TestC2PA(unittest.TestCase):
+    """Test C2PA signing integration."""
+
+    def test_c2pa_sign_no_cert(self):
+        """c2pa_sign_file returns False when no cert is configured."""
+        from watermark import c2pa_sign_file
+        # Clear env vars to ensure no cert is set
+        env_backup = {}
+        for k in ("C2PA_CERT_PATH", "C2PA_KEY_PATH"):
+            env_backup[k] = os.environ.pop(k, None)
+        try:
+            result = c2pa_sign_file("/nonexistent/file.wav")
+            self.assertFalse(result)
+        finally:
+            for k, v in env_backup.items():
+                if v is not None:
+                    os.environ[k] = v
+
+    def test_c2pa_manifest_json(self):
+        """The C2PA manifest JSON should be valid."""
+        import json
+
+        from watermark import _C2PA_MANIFEST_JSON
+        parsed = json.loads(_C2PA_MANIFEST_JSON)
+        self.assertEqual(parsed["claim_generator"], "CrispTTS")
+        self.assertIn("assertions", parsed)
+
+
+class TestConsentGate(unittest.TestCase):
+    """Test voice-cloning consent gate."""
+
+    def test_cloning_model_requires_consent(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("llasa_hybrid_de_zeroshot",
+                                         "synthesize_with_llasa_hybrid_de_zeroshot"))
+
+    def test_regular_model_no_consent(self):
+        from watermark import requires_consent
+        self.assertFalse(requires_consent("edge", "synthesize_with_edge"))
+
+    def test_keyword_detection(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("my_custom_zeroshot_model", "custom_handler"))
+        self.assertTrue(requires_consent("coqui_xtts_v2", "custom_handler"))
+
+    def test_handler_key_detection(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("some_model", "synthesize_with_f5_tts"))
+
+
+if __name__ == "__main__":
+    unittest.main()

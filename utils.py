@@ -251,6 +251,93 @@ def get_text_from_input(input_text_direct: str | None, input_file_path_str: str 
     return None
 
 
+# --- Audio Watermarking ---
+# Lazy import to avoid circular deps; the watermark module is pure numpy.
+_watermark_mod = None
+
+def _get_watermark():
+    global _watermark_mod
+    if _watermark_mod is None:
+        try:
+            import watermark as wm
+            _watermark_mod = wm
+        except ImportError:
+            logger.debug("watermark module not available — audio will not be watermarked.")
+    return _watermark_mod
+
+
+def _watermark_audio_bytes(audio_bytes: bytes, fmt: str, sr: int | None) -> bytes:
+    """Apply watermark + metadata to audio bytes before writing to disk.
+
+    Handles WAV (watermark PCM + LIST/INFO metadata) and MP3 (ID3v2 tags).
+    For other formats, returns the input unchanged.
+    """
+    wm = _get_watermark()
+    if wm is None:
+        return audio_bytes
+
+    if fmt == "wav" and len(audio_bytes) >= 44:
+        try:
+            from io import BytesIO
+            # Decode WAV → float32 PCM, watermark, re-encode
+            if SOUNDFILE_AVAILABLE:
+                data, samplerate = sf.read(BytesIO(audio_bytes), dtype="float32")
+                if data.ndim > 1:
+                    data = data[:, 0]  # mono
+                data = wm.watermark_embed(data)
+                buf = BytesIO()
+                sf.write(buf, data, samplerate, format="WAV", subtype="PCM_16")
+                audio_bytes = buf.getvalue()
+            # Inject LIST/INFO metadata
+            audio_bytes = wm.inject_wav_metadata(audio_bytes)
+        except Exception as e:
+            logger.warning("WAV watermarking failed: %s", e)
+
+    elif fmt == "mp3":
+        try:
+            audio_bytes = wm.inject_mp3_metadata(audio_bytes)
+        except Exception as e:
+            logger.warning("MP3 metadata injection failed: %s", e)
+
+    return audio_bytes
+
+
+def _watermark_file_in_place(filepath: Path, fmt: str) -> None:
+    """Apply watermarking to an already-written audio file."""
+    wm = _get_watermark()
+    if wm is None:
+        return
+
+    if fmt == "wav":
+        try:
+            if SOUNDFILE_AVAILABLE:
+                data, samplerate = sf.read(str(filepath), dtype="float32")
+                if data.ndim > 1:
+                    data = data[:, 0]
+                data = wm.watermark_embed(data)
+                sf.write(str(filepath), data, samplerate, subtype="PCM_16")
+            # Inject metadata
+            raw = filepath.read_bytes()
+            patched = wm.inject_wav_metadata(raw)
+            filepath.write_bytes(patched)
+        except Exception as e:
+            logger.warning("WAV file watermarking failed for %s: %s", filepath, e)
+
+    elif fmt == "mp3":
+        try:
+            raw = filepath.read_bytes()
+            patched = wm.inject_mp3_metadata(raw)
+            filepath.write_bytes(patched)
+        except Exception as e:
+            logger.warning("MP3 file metadata injection failed for %s: %s", filepath, e)
+
+    # C2PA signing (optional, requires c2pa-python + certificate)
+    try:
+        wm.c2pa_sign_file(str(filepath))
+    except Exception as e:
+        logger.debug("C2PA signing skipped for %s: %s", filepath, e)
+
+
 # --- Audio Handling Utilities ---
 def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=False, input_format=None, sample_rate=None):
     output_filepath = Path(output_filepath_str)
@@ -304,6 +391,8 @@ def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=Fals
             else:
                 logger.error(f"Cannot save audio bytes of format '{fmt}' to '{target_format}'. Pydub or Soundfile (for WAV) needed.")  # noqa: E501
                 return
+        # Apply watermarking to the saved file
+        _watermark_file_in_place(output_filepath, target_format)
         logger.info(f"Audio saved to {output_filepath}")
     except Exception as e:
         logger.error(f"Error saving audio to {output_filepath}: {e}", exc_info=True)

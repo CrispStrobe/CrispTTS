@@ -30,6 +30,12 @@ ml = [
     "transformers>=4.46.0",
     "soundfile>=0.12.0",
 ]
+watermark = [
+    "audioseal>=0.2.0",
+]
+provenance = [
+    "c2pa-python>=0.6.0",
+]
 text-extraction = [
     "pypdfium2>=4.0.0",
     "ebooklib>=0.18",
@@ -44,7 +50,7 @@ crisptts = "main:main_cli_entrypoint"
 # Explicit discovery prevents setuptools from tripping over tests/ and local
 # scratch dirs (e.g. tts_test_outputs/) during the build.
 [tool.setuptools]
-py-modules = ["main", "config", "utils", "decoder"]
+py-modules = ["main", "config", "utils", "decoder", "watermark"]
 
 [tool.setuptools.packages.find]
 include = ["handlers*"]

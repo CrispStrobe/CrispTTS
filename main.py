@@ -597,6 +597,18 @@ def run_synthesis(args):
     handler_func = current_all_handlers.get(handler_key)
 
     if handler_func:
+        # --- Voice-cloning consent gate ---
+        try:
+            from watermark import requires_consent
+            if requires_consent(args.model_id, handler_key) and not getattr(args, 'i_have_rights', False):
+                logger.error(
+                    "Model '%s' involves voice cloning. You must pass --i-have-rights to attest "
+                    "that you have the consent of the speaker whose voice this clones, "
+                    "or that it is your own voice.", args.model_id)
+                return
+        except ImportError:
+            pass  # watermark module missing — skip consent check
+
         try:
             handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
                 args.output_file, args.play_direct)
@@ -675,6 +687,20 @@ def main_cli_entrypoint():
     crispasr_group.add_argument("--translate-backend", type=str, default="m2m100",
         help="Translation backend for --translate (default: m2m100).")
 
+    # Watermarking / provenance options
+    wm_group = parser.add_argument_group(title="Watermarking & Provenance")
+    wm_group.add_argument("--no-watermark", action="store_true",
+        help="Disable audio watermarking (debug only — not recommended for production).")
+    wm_group.add_argument("--watermark-model", type=str, metavar="GGUF_PATH",
+        help="Path to AudioSeal GGUF model for neural watermarking (optional upgrade).")
+    wm_group.add_argument("--i-have-rights", action="store_true",
+        help="Attest that you have consent of the speaker whose voice is being cloned,\n"
+             "or that it is your own voice. Required for voice-cloning models.")
+    wm_group.add_argument("--c2pa-cert", type=str, metavar="PEM_PATH",
+        help="Path to X.509 PEM certificate for C2PA content credentials signing.")
+    wm_group.add_argument("--c2pa-key", type=str, metavar="PEM_PATH",
+        help="Path to PEM private key for C2PA content credentials signing.")
+
     parser.add_argument("--loglevel", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set console logging level (default: INFO).")
 
@@ -741,6 +767,31 @@ def main_cli_entrypoint():
     logger.info(f"Effective logging level for CrispTTS and sub-loggers set to: {args.loglevel.upper()}")
     _main_mp_logger.debug(f"Monkey patch logger effective level is: {logging.getLevelName(_main_mp_logger.getEffectiveLevel())}")  # noqa: E501
 
+
+    # --- Watermarking setup ---
+    if args.no_watermark:
+        os.environ["CRISPTTS_NO_WATERMARK"] = "1"
+        logger.warning("Audio watermarking disabled via --no-watermark.")
+    else:
+        try:
+            from watermark import load_audioseal_model, load_audioseal_python
+            # Priority: --watermark-model (GGUF) > audioseal Python > spread-spectrum
+            if args.watermark_model:
+                if load_audioseal_model(args.watermark_model):
+                    logger.info("AudioSeal neural watermark active (crispasr GGUF).")
+                else:
+                    logger.info("GGUF load failed; trying audioseal Python package.")
+                    load_audioseal_python()  # best-effort
+            else:
+                load_audioseal_python()  # auto-detect; silent fallback to spread-spectrum
+        except ImportError:
+            logger.debug("watermark module not available.")
+
+    # C2PA certificate setup
+    if getattr(args, 'c2pa_cert', None):
+        os.environ["C2PA_CERT_PATH"] = args.c2pa_cert
+    if getattr(args, 'c2pa_key', None):
+        os.environ["C2PA_KEY_PATH"] = args.c2pa_key
 
     if args.list_models:
         list_available_models(GERMAN_TTS_MODELS)
