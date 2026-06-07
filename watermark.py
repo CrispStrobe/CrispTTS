@@ -96,12 +96,12 @@ def _generate_bin_pattern(key: int, n_fft: int, n_bins: int):
 # Spread-spectrum embed (mirrors crispasr_watermark_embed_impl)
 # ---------------------------------------------------------------------------
 
-def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.02) -> np.ndarray:
+def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.08) -> np.ndarray:
     """Embed a spread-spectrum watermark into float32 mono PCM.
 
     Args:
         pcm: 1-D float32 array of audio samples.
-        alpha: Watermark strength (0.02 = ~-49 dB SNR, imperceptible on speech).
+        alpha: Watermark strength (0.08 = ~38 dB SNR, imperceptible on speech).
 
     Returns:
         Watermarked copy of the PCM array.
@@ -155,6 +155,11 @@ def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.02) -> np.ndarray:
 def spread_spectrum_detect(pcm: np.ndarray) -> float:
     """Detect spread-spectrum watermark in float32 mono PCM.
 
+    Uses averaged-spectrum detection: computes the mean magnitude spectrum
+    across all frames, then correlates the watermark bin pattern against
+    the averaged spectrum. This is significantly more robust on tonal/speech
+    signals than per-frame detection because frame-level noise averages out.
+
     Returns:
         Confidence in [0, 1].  >0.65 = watermark present, <0.4 = absent.
     """
@@ -167,38 +172,47 @@ def spread_spectrum_detect(pcm: np.ndarray) -> float:
         return 0.0
 
     window = np.hanning(_FFT_SIZE).astype(np.float32)
-    n_frames = 0
-    correlation = 0.0
+    n_fft_half = _FFT_SIZE // 2
 
+    # Phase 1: Accumulate magnitude spectra across all frames
+    all_mags = []
     for start in range(0, n - _FFT_SIZE + 1, _HOP):
         frame = pcm[start:start + _FFT_SIZE] * window
         spectrum = np.fft.rfft(frame)
-        mags = np.abs(spectrum[:_FFT_SIZE // 2]).astype(np.float64)
+        all_mags.append(np.abs(spectrum[:n_fft_half]).astype(np.float64))
 
-        for b_idx, b_sign in bins:
-            if b_idx >= len(mags):
-                continue
-            # Local mean of ±2 neighbours (excluding self)
-            neighbours = []
-            for d in range(-2, 3):
-                nb = b_idx + d
-                if 1 <= nb < len(mags) and d != 0:
-                    neighbours.append(mags[nb])
-            if not neighbours:
-                continue
-            local_mean = sum(neighbours) / len(neighbours)
-            if local_mean < 1e-12 and mags[b_idx] < 1e-12:
-                continue
-            ref = max(local_mean, 1e-12)
-            delta = (mags[b_idx] - local_mean) / ref
-            correlation += (1.0 if delta > 0 else -1.0) * b_sign
-        n_frames += 1
-
-    if n_frames == 0:
+    if not all_mags:
         return 0.0
 
-    max_corr = n_frames * len(bins)
-    score = (correlation / max_corr + 1.0) / 2.0
+    # Phase 2: Average spectrum (cancels per-frame noise, preserves watermark)
+    avg_mags = np.mean(all_mags, axis=0)
+
+    # Phase 3: Correlate watermark pattern against averaged spectrum
+    correlation = 0.0
+    valid_bins = 0
+    for b_idx, b_sign in bins:
+        if b_idx >= len(avg_mags):
+            continue
+        # Local mean of ±2 neighbours (excluding self)
+        neighbours = []
+        for d in range(-2, 3):
+            nb = b_idx + d
+            if 1 <= nb < len(avg_mags) and d != 0:
+                neighbours.append(avg_mags[nb])
+        if not neighbours:
+            continue
+        local_mean = sum(neighbours) / len(neighbours)
+        if local_mean < 1e-12 and avg_mags[b_idx] < 1e-12:
+            continue
+        ref = max(local_mean, 1e-12)
+        delta = (avg_mags[b_idx] - local_mean) / ref
+        correlation += (1.0 if delta > 0 else -1.0) * b_sign
+        valid_bins += 1
+
+    if valid_bins == 0:
+        return 0.0
+
+    score = (correlation / valid_bins + 1.0) / 2.0
     return float(max(0.0, min(1.0, score)))
 
 
@@ -307,7 +321,7 @@ def _detect_audioseal_python(pcm: np.ndarray, sample_rate: int = 24000) -> float
     return float(result.mean().item())
 
 
-def watermark_embed(pcm: np.ndarray, alpha: float = 0.02, sample_rate: int = 24000) -> np.ndarray:
+def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 24000) -> np.ndarray:
     """Embed AI-generated watermark. Dispatches to the best available backend.
 
     Priority: audioseal (Python) > crispasr (C/GGUF) > spread-spectrum.

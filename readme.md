@@ -365,7 +365,7 @@ CrispTTS automatically marks all synthesized audio as AI-generated using a multi
 
 | Layer | What | Status | Install |
 |-------|------|--------|---------|
-| **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.02, ~49 dB SNR) | Always active | Built-in (numpy) |
+| **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.08, ~38 dB SNR) | Always active | Built-in (numpy) |
 | **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
 | **WAV/MP3 metadata** | LIST/INFO + ID3v2 TXXX tags | Always active | Built-in |
 | **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) | Opt-in | `pip install c2pa-python` |
