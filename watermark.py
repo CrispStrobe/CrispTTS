@@ -53,8 +53,12 @@ class _Prng:
     __slots__ = ("s0", "s1")
 
     def __init__(self, seed: int):
-        seed, self.s0 = _splitmix64(seed)
-        _, self.s1 = _splitmix64(self.s0)
+        # Must match C++ semantics: splitmix takes arg by reference.
+        # prng(seed): s[0] = splitmix(seed); s[1] = splitmix(s[0]);
+        # The second call MUTATES s[0] (pass-by-ref), so s[0] ends up
+        # as the intermediate state (original_s0 + K), not the hash.
+        _, s0_initial = _splitmix64(seed)
+        self.s0, self.s1 = _splitmix64(s0_initial)  # s0 = state after K added, s1 = hash
 
     def next(self) -> int:
         s0, s1 = self.s0, self.s1
@@ -92,12 +96,12 @@ def _generate_bin_pattern(key: int, n_fft: int, n_bins: int):
 # Spread-spectrum embed (mirrors crispasr_watermark_embed_impl)
 # ---------------------------------------------------------------------------
 
-def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.005) -> np.ndarray:
+def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.02) -> np.ndarray:
     """Embed a spread-spectrum watermark into float32 mono PCM.
 
     Args:
         pcm: 1-D float32 array of audio samples.
-        alpha: Watermark strength (0.005 = ~-46 dB, imperceptible).
+        alpha: Watermark strength (0.02 = ~-49 dB SNR, imperceptible on speech).
 
     Returns:
         Watermarked copy of the PCM array.
@@ -303,7 +307,7 @@ def _detect_audioseal_python(pcm: np.ndarray, sample_rate: int = 24000) -> float
     return float(result.mean().item())
 
 
-def watermark_embed(pcm: np.ndarray, alpha: float = 0.005, sample_rate: int = 24000) -> np.ndarray:
+def watermark_embed(pcm: np.ndarray, alpha: float = 0.02, sample_rate: int = 24000) -> np.ndarray:
     """Embed AI-generated watermark. Dispatches to the best available backend.
 
     Priority: audioseal (Python) > crispasr (C/GGUF) > spread-spectrum.
