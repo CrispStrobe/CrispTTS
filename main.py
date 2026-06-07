@@ -651,6 +651,22 @@ def run_synthesis(args):
                     from utils import trim_silence_file
                     trim_silence_file(args.output_file)
 
+            # --- Post-synthesis resampling ---
+            if getattr(args, 'output_sample_rate', None) and args.output_file and os.path.isfile(args.output_file):
+                try:
+                    import soundfile as sf_rs
+
+                    from utils import resample_audio
+                    data, sr = sf_rs.read(args.output_file, dtype="float32")
+                    if data.ndim > 1:
+                        data = data[:, 0]
+                    if sr != args.output_sample_rate:
+                        data = resample_audio(data, sr, args.output_sample_rate)
+                        sf_rs.write(args.output_file, data, args.output_sample_rate, subtype="PCM_16")
+                        logger.info("Resampled output: %d Hz → %d Hz", sr, args.output_sample_rate)
+                except Exception as e_rs:
+                    logger.warning("Could not resample output: %s", e_rs)
+
             # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
             if _is_voice_cloning and args.output_file and os.path.isfile(args.output_file):
                 try:
@@ -738,6 +754,8 @@ def main_cli_entrypoint():
         help="Pitch shift in Hz (positive = higher, negative = lower, default: 0).")
     synth_group.add_argument("--instruct", type=str, default=None, metavar="TEXT",
         help="Natural-language voice/style description for VoiceDesign models (e.g., qwen3-tts).")
+    synth_group.add_argument("--output-sample-rate", type=int, default=None, metavar="HZ",
+        help="Resample output audio to this sample rate (e.g., 16000, 22050, 44100).")
 
     # CrispASR integration options
     crispasr_group = parser.add_argument_group(title="CrispASR Integration")

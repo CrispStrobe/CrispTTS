@@ -50,7 +50,7 @@ crisptts = "main:main_cli_entrypoint"
 # Explicit discovery prevents setuptools from tripping over tests/ and local
 # scratch dirs (e.g. tts_test_outputs/) during the build.
 [tool.setuptools]
-py-modules = ["main", "config", "utils", "decoder", "watermark"]
+py-modules = ["main", "config", "utils", "decoder", "watermark", "chunking"]
 
 [tool.setuptools.packages.find]
 include = ["handlers*"]

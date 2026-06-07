@@ -409,6 +409,32 @@ def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=Fals
     except Exception as e:
         logger.error(f"Error saving audio to {output_filepath}: {e}", exc_info=True)
 
+def resample_audio(pcm: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
+    """Resample float32 mono PCM using linear interpolation.
+
+    For high-quality resampling, install scipy (uses polyphase filter).
+    Falls back to linear interpolation (lightweight, no extra deps).
+    """
+    if from_sr == to_sr:
+        return pcm
+    try:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+        g = gcd(to_sr, from_sr)
+        return resample_poly(pcm, to_sr // g, from_sr // g).astype(np.float32)
+    except ImportError:
+        pass
+    # Linear interpolation fallback
+    ratio = to_sr / from_sr
+    new_len = int(len(pcm) * ratio)
+    indices = np.arange(new_len, dtype=np.float64) / ratio
+    idx_floor = np.clip(np.floor(indices).astype(int), 0, len(pcm) - 1)
+    idx_ceil = np.clip(idx_floor + 1, 0, len(pcm) - 1)
+    frac = (indices - idx_floor).astype(np.float32)
+    return pcm[idx_floor] * (1.0 - frac) + pcm[idx_ceil] * frac
+
+
 def trim_silence(pcm: np.ndarray, threshold_db: float = -40.0, min_silence_samples: int = 1000) -> np.ndarray:
     """Trim leading and trailing silence from float32 PCM audio.
 

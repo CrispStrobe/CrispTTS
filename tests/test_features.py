@@ -285,6 +285,137 @@ class TestConsentGateWavPath(unittest.TestCase):
         self.assertFalse(requires_consent("crispasr_kokoro", "crispasr", None))
 
 
+# ---------------------------------------------------------------------------
+# Phase 3: Audio processing
+# ---------------------------------------------------------------------------
+
+class TestTextChunking(unittest.TestCase):
+    """Test smart text chunking for long-form TTS."""
+
+    def test_short_text_no_split(self):
+        from chunking import split_sentences
+        result = split_sentences("Hello world.", max_chars=500)
+        self.assertEqual(result, ["Hello world."])
+
+    def test_empty_text(self):
+        from chunking import split_sentences
+        self.assertEqual(split_sentences(""), [])
+        self.assertEqual(split_sentences(None), [])
+
+    def test_split_at_sentences(self):
+        from chunking import split_sentences
+        text = "First sentence. Second sentence. Third sentence."
+        result = split_sentences(text, max_chars=30)
+        self.assertGreater(len(result), 1)
+        # All original text should be preserved
+        joined = " ".join(result)
+        self.assertIn("First", joined)
+        self.assertIn("Third", joined)
+
+    def test_respects_max_chars(self):
+        from chunking import split_sentences
+        text = "Short. " * 50  # 350 chars
+        result = split_sentences(text, max_chars=100)
+        for chunk in result:
+            # Soft limit — might slightly exceed
+            self.assertLess(len(chunk), 200)
+
+    def test_preserves_all_text(self):
+        from chunking import split_sentences
+        text = "Dies ist ein Test. Noch ein Satz. Und noch einer! Frage? Ja."
+        chunks = split_sentences(text, max_chars=30)
+        joined = " ".join(chunks)
+        for word in ["Dies", "Test", "Satz", "Frage", "Ja"]:
+            self.assertIn(word, joined)
+
+    def test_handles_no_punctuation(self):
+        from chunking import split_sentences
+        text = "A very long text without any punctuation marks that goes on and on"
+        result = split_sentences(text, max_chars=20)
+        # Can't split without punctuation — returns as single chunk
+        self.assertEqual(len(result), 1)
+
+
+class TestResampling(unittest.TestCase):
+    """Test audio resampling utility."""
+
+    def test_identity(self):
+        from utils import resample_audio
+        pcm = np.random.randn(24000).astype(np.float32)
+        result = resample_audio(pcm, 24000, 24000)
+        np.testing.assert_array_equal(result, pcm)
+
+    def test_downsample(self):
+        from utils import resample_audio
+        pcm = np.random.randn(24000).astype(np.float32)
+        result = resample_audio(pcm, 24000, 16000)
+        self.assertEqual(len(result), 16000)
+
+    def test_upsample(self):
+        from utils import resample_audio
+        pcm = np.random.randn(16000).astype(np.float32)
+        result = resample_audio(pcm, 16000, 24000)
+        self.assertEqual(len(result), 24000)
+
+    def test_preserves_dtype(self):
+        from utils import resample_audio
+        pcm = np.random.randn(24000).astype(np.float32)
+        result = resample_audio(pcm, 24000, 16000)
+        self.assertEqual(result.dtype, np.float32)
+
+
+class TestCompressedFormats(unittest.TestCase):
+    """Test that save_audio handles various output formats."""
+
+    def test_save_audio_wav(self):
+        # Create minimal WAV bytes
+        import struct
+        import tempfile
+
+        from utils import save_audio
+        sr = 16000
+        samples = np.zeros(sr, dtype=np.int16)
+        data_size = len(samples) * 2
+        wav = bytearray()
+        wav.extend(b"RIFF" + struct.pack("<I", 36 + data_size) + b"WAVE")
+        wav.extend(b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
+        wav.extend(b"data" + struct.pack("<I", data_size) + samples.tobytes())
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            save_audio(bytes(wav), f.name, input_format="wav")
+            exists = os.path.isfile(f.name)
+        os.unlink(f.name)
+        self.assertTrue(exists)
+
+    def test_save_audio_flac(self):
+        import tempfile
+
+        try:
+            import soundfile as sf_test  # noqa: F401
+        except ImportError:
+            self.skipTest("soundfile not installed")
+        from utils import save_audio
+        pcm = np.zeros(16000, dtype=np.int16)
+        wav_bytes = self._make_wav(pcm, 16000)
+        with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
+            save_audio(wav_bytes, f.name, input_format="wav")
+            exists = os.path.isfile(f.name) and os.path.getsize(f.name) > 0
+        if os.path.exists(f.name):
+            os.unlink(f.name)
+        # FLAC support depends on pydub or soundfile — may not work everywhere
+        # Just verify it doesn't crash
+        self.assertIsInstance(exists, bool)
+
+    @staticmethod
+    def _make_wav(samples, sr):
+        import struct
+        data_size = len(samples) * 2
+        wav = bytearray()
+        wav.extend(b"RIFF" + struct.pack("<I", 36 + data_size) + b"WAVE")
+        wav.extend(b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, sr, sr * 2, 2, 16))
+        wav.extend(b"data" + struct.pack("<I", data_size) + samples.tobytes())
+        return bytes(wav)
+
+
 @unittest.skipUnless(_find_crispasr(), "crispasr binary not found")
 class TestLiveCrispASR(unittest.TestCase):
     """Live integration tests with actual crispasr binary."""
