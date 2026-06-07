@@ -252,24 +252,58 @@ def load_audioseal_model(gguf_path: str) -> bool:
         return False
 
 
-def _embed_audioseal_python(pcm: np.ndarray) -> np.ndarray:
-    """Embed watermark using the audioseal Python package."""
+def _resample_linear(pcm: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
+    """Linear interpolation resampling (matches CrispASR's dispatcher)."""
+    if from_sr == to_sr:
+        return pcm
+    ratio = to_sr / from_sr
+    new_len = int(len(pcm) * ratio)
+    indices = np.arange(new_len, dtype=np.float64) / ratio
+    idx_floor = np.clip(np.floor(indices).astype(int), 0, len(pcm) - 1)
+    idx_ceil = np.clip(idx_floor + 1, 0, len(pcm) - 1)
+    frac = (indices - idx_floor).astype(np.float32)
+    return pcm[idx_floor] * (1.0 - frac) + pcm[idx_ceil] * frac
+
+
+def _embed_audioseal_python(pcm: np.ndarray, sample_rate: int = 24000) -> np.ndarray:
+    """Embed watermark using the audioseal Python package.
+
+    Resamples to 16 kHz if needed (AudioSeal's native rate), embeds the
+    watermark, then resamples the delta back to the original rate.
+    """
     import torch
-    tensor = torch.from_numpy(pcm).unsqueeze(0).unsqueeze(0)  # (1, 1, T)
+    # Resample to 16 kHz if needed
+    if sample_rate != 16000:
+        pcm_16k = _resample_linear(pcm, sample_rate, 16000)
+    else:
+        pcm_16k = pcm
+    tensor = torch.from_numpy(pcm_16k).unsqueeze(0).unsqueeze(0)  # (1, 1, T)
     watermark = _audioseal_generator.get_watermark(tensor, sample_rate=16000)
+    if sample_rate != 16000:
+        # Upsample the watermark delta back to original rate and add
+        wm_delta = watermark.squeeze().detach().numpy().astype(np.float32)
+        wm_delta_native = _resample_linear(wm_delta, 16000, sample_rate)
+        # Trim/pad to match original length
+        if len(wm_delta_native) > len(pcm):
+            wm_delta_native = wm_delta_native[:len(pcm)]
+        elif len(wm_delta_native) < len(pcm):
+            wm_delta_native = np.pad(wm_delta_native, (0, len(pcm) - len(wm_delta_native)))
+        return pcm + wm_delta_native
     result = tensor + watermark
     return result.squeeze().detach().numpy().astype(np.float32)
 
 
-def _detect_audioseal_python(pcm: np.ndarray) -> float:
+def _detect_audioseal_python(pcm: np.ndarray, sample_rate: int = 24000) -> float:
     """Detect watermark using the audioseal Python package."""
     import torch
+    if sample_rate != 16000:
+        pcm = _resample_linear(pcm, sample_rate, 16000)
     tensor = torch.from_numpy(pcm).unsqueeze(0).unsqueeze(0)  # (1, 1, T)
     result, _ = _audioseal_detector.detect_watermark(tensor, sample_rate=16000)
     return float(result.mean().item())
 
 
-def watermark_embed(pcm: np.ndarray, alpha: float = 0.005) -> np.ndarray:
+def watermark_embed(pcm: np.ndarray, alpha: float = 0.005, sample_rate: int = 24000) -> np.ndarray:
     """Embed AI-generated watermark. Dispatches to the best available backend.
 
     Priority: audioseal (Python) > crispasr (C/GGUF) > spread-spectrum.
@@ -277,6 +311,7 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.005) -> np.ndarray:
     Args:
         pcm: 1-D float32 mono PCM array.
         alpha: Strength for spread-spectrum (ignored when AudioSeal active).
+        sample_rate: Audio sample rate (needed for AudioSeal resampling).
 
     Returns:
         Watermarked PCM (new array, input unchanged).
@@ -286,7 +321,7 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.005) -> np.ndarray:
 
     if _backend == "audioseal_python" and _audioseal_generator is not None:
         try:
-            result = _embed_audioseal_python(pcm)
+            result = _embed_audioseal_python(pcm, sample_rate)
             logger.debug("AudioSeal (Python) watermark embedded (%d samples).", len(pcm))
             return result
         except Exception as e:
@@ -306,11 +341,11 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.005) -> np.ndarray:
     return result
 
 
-def watermark_detect(pcm: np.ndarray) -> float:
+def watermark_detect(pcm: np.ndarray, sample_rate: int = 24000) -> float:
     """Detect AI-generated watermark. Returns confidence [0, 1]."""
     if _backend == "audioseal_python" and _audioseal_detector is not None:
         try:
-            return _detect_audioseal_python(pcm)
+            return _detect_audioseal_python(pcm, sample_rate)
         except Exception as e:
             logger.warning("AudioSeal Python detect failed, trying next backend: %s", e)
 
@@ -321,6 +356,19 @@ def watermark_detect(pcm: np.ndarray) -> float:
             logger.warning("AudioSeal crispasr detect failed, falling back to spread-spectrum: %s", e)
 
     return spread_spectrum_detect(pcm)
+
+
+def watermark_verify_file(filepath: str) -> float | None:
+    """Read a WAV file and verify its watermark. Returns confidence or None on error."""
+    try:
+        import soundfile as sf_verify
+        data, sr = sf_verify.read(filepath, dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        return watermark_detect(data, sample_rate=sr)
+    except Exception as e:
+        logger.warning("Watermark verification failed for %s: %s", filepath, e)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +490,117 @@ def requires_consent(model_id: str, handler_key: str) -> bool:
         return True
     model_lower = model_id.lower()
     return any(kw in model_lower for kw in VOICE_CLONING_MODEL_KEYWORDS)
+
+
+def log_consent_attestation(model_id: str, voice_id: str | None = None) -> None:
+    """Log a consent attestation to stderr for audit trail.
+
+    Format matches CrispASR: [CONSENT] ts=ISO8601 model=X voice=Y attestation="..."
+    """
+    import sys
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
+    voice_str = voice_id or "default"
+    msg = f'[CONSENT] ts={ts} model={model_id} voice={voice_str} attestation="CLI --i-have-rights flag"\n'
+    sys.stderr.write(msg)
+    sys.stderr.flush()
+    logger.info("Consent attestation logged for model=%s voice=%s", model_id, voice_str)
+
+
+# ---------------------------------------------------------------------------
+# Spoken AI disclaimer for voice-cloned audio (EU AI Act Art. 50(4))
+# ---------------------------------------------------------------------------
+
+DISCLAIMER_TEXT = "This audio was generated by artificial intelligence."
+_DISCLAIMER_SILENCE_SEC = 0.3  # 300ms gap between disclaimer and content
+
+
+def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
+    """Generate a spoken AI disclaimer using a non-cloning TTS backend.
+
+    Tries Edge TTS first (cloud, no voice cloning), then falls back to
+    a simple tone-based marker if no TTS backend is available.
+
+    Returns float32 PCM array at the given sample rate, or None on failure.
+    """
+    # Try edge-tts (cloud, lightweight, no voice cloning concerns)
+    try:
+        import asyncio
+        import tempfile
+
+        import edge_tts
+
+        async def _synth():
+            communicate = edge_tts.Communicate(DISCLAIMER_TEXT, "en-US-AriaNeural")
+            fd, tmp = tempfile.mkstemp(suffix=".mp3")
+            os.close(fd)
+            try:
+                await communicate.save(tmp)
+                try:
+                    import soundfile as sf_disc
+                    data, sr = sf_disc.read(tmp, dtype="float32")
+                    if sr != sample_rate:
+                        data = _resample_linear(data, sr, sample_rate)
+                    return data
+                except ImportError:
+                    from pydub import AudioSegment
+                    seg = AudioSegment.from_file(tmp)
+                    seg = seg.set_frame_rate(sample_rate).set_channels(1).set_sample_width(2)
+                    raw = np.frombuffer(seg.raw_data, dtype=np.int16).astype(np.float32) / 32767.0
+                    return raw
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_synth())
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.debug("Edge TTS disclaimer generation failed: %s", e)
+
+    # Fallback: generate a simple beep pattern (3 short beeps) as a
+    # machine-readable audio marker that something precedes the content
+    try:
+        duration = 0.15  # each beep
+        gap = 0.08
+        freq = 880.0
+        t_beep = np.linspace(0, duration, int(sample_rate * duration), endpoint=False, dtype=np.float32)
+        beep = 0.3 * np.sin(2 * np.pi * freq * t_beep)
+        # Fade in/out to avoid clicks
+        fade_len = int(sample_rate * 0.01)
+        beep[:fade_len] *= np.linspace(0, 1, fade_len, dtype=np.float32)
+        beep[-fade_len:] *= np.linspace(1, 0, fade_len, dtype=np.float32)
+        silence_gap = np.zeros(int(sample_rate * gap), dtype=np.float32)
+        marker = np.concatenate([beep, silence_gap, beep, silence_gap, beep])
+        logger.info("Using beep marker as spoken disclaimer fallback.")
+        return marker
+    except Exception as e:
+        logger.warning("Disclaimer generation failed entirely: %s", e)
+        return None
+
+
+# Cache the disclaimer audio to avoid re-synthesizing
+_disclaimer_cache: dict[int, np.ndarray] = {}
+
+
+def prepend_disclaimer(pcm: np.ndarray, sample_rate: int = 24000) -> np.ndarray:
+    """Prepend an AI-generated spoken disclaimer to voice-cloned audio.
+
+    Matches CrispASR's approach: disclaimer + 300ms silence + original audio.
+    The disclaimer is cached after first generation.
+    """
+    if sample_rate not in _disclaimer_cache:
+        disclaimer = generate_spoken_disclaimer(sample_rate)
+        if disclaimer is not None:
+            _disclaimer_cache[sample_rate] = disclaimer
+        else:
+            return pcm  # can't generate disclaimer, return original
+
+    disclaimer = _disclaimer_cache[sample_rate]
+    silence = np.zeros(int(sample_rate * _DISCLAIMER_SILENCE_SEC), dtype=np.float32)
+    return np.concatenate([disclaimer, silence, pcm])
 
 
 # ---------------------------------------------------------------------------

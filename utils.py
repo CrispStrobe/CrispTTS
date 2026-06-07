@@ -337,6 +337,18 @@ def _watermark_file_in_place(filepath: Path, fmt: str) -> None:
     except Exception as e:
         logger.debug("C2PA signing skipped for %s: %s", filepath, e)
 
+    # Post-embed verification: read back and check watermark is detectable
+    if fmt == "wav":
+        try:
+            confidence = wm.watermark_verify_file(str(filepath))
+            if confidence is not None and confidence < 0.6:
+                logger.warning("Watermark verification LOW for %s (confidence=%.3f). "
+                               "The watermark may not survive downstream processing.", filepath, confidence)
+            elif confidence is not None:
+                logger.debug("Watermark verified for %s (confidence=%.3f).", filepath, confidence)
+        except Exception as e:
+            logger.debug("Watermark verification skipped for %s: %s", filepath, e)
+
 
 # --- Audio Handling Utilities ---
 def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=False, input_format=None, sample_rate=None):

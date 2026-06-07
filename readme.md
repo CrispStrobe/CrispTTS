@@ -312,19 +312,37 @@ voices minus the non-commercial/restricted ones, converted for the
 CrispASR/CrisperWeaver native runtime), see
 [`cstr/piper-voices-GGUF`](https://huggingface.co/cstr/piper-voices-GGUF).
 
-## Audio Watermarking & Provenance
+## Audio Watermarking & Provenance (EU AI Act Art. 50)
 
-CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered system ported from [CrispASR](https://github.com/CrispStrobe/CrispASR):
+CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered provenance system ported from [CrispASR](https://github.com/CrispStrobe/CrispASR). Article 50 transparency obligations take effect **2 August 2026**.
 
 ### Layers
 
 | Layer | What | Status | Install |
 |-------|------|--------|---------|
 | **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.005) | Always active | Built-in (numpy) |
-| **AudioSeal** | Neural watermark (Meta, 16-bit message) | Auto-detected | `pip install audioseal` |
+| **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
 | **WAV/MP3 metadata** | LIST/INFO + ID3v2 TXXX tags | Always active | Built-in |
-| **C2PA credentials** | Signed provenance manifests | Opt-in | `pip install c2pa-python` |
-| **Consent gate** | Voice-cloning attestation | Required for cloning | Built-in |
+| **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) | Opt-in | `pip install c2pa-python` |
+| **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio | Auto for cloning | Built-in |
+| **Consent gate** | Voice-cloning attestation + audit logging | Required for cloning | Built-in |
+| **Post-embed verification** | Watermark detection after file write | Always active | Built-in |
+
+### Compliance comparison across the Crisp ecosystem
+
+| Feature | CrispTTS | CrispASR | CrisperWeaver |
+|---------|----------|----------|---------------|
+| Spread-spectrum watermark | numpy (Python) | C++ header-only | Dart LSB + native FFI |
+| AudioSeal neural watermark | Python + crispasr GGUF | C++ ggml (GGUF) | via CrispASR FFI |
+| WAV LIST/INFO metadata | ISFT + ICMT | ISFT + ICMT | ISFT + ICMT + IART + ICRD |
+| MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | — |
+| C2PA content credentials | c2pa-python (optional) | c2pa-c (compile-time) | — |
+| Spoken AI disclaimer | Edge TTS / beep fallback | Native TTS (cached) | — |
+| Voice-cloning consent gate | `--i-have-rights` CLI | `--i-have-rights` CLI + server JSON | GDPR Art. 9(2)(a) consent files |
+| Consent audit logging | `[CONSENT]` stderr | `[CONSENT]` stderr | `.consent.json` per speaker |
+| Post-embed verification | detect after save | — | — |
+| Watermark detection CLI | `--detect-watermark` | — (API only) | detect in service |
+| Cross-project detection | Yes (shared PRNG key) | Yes (shared PRNG key) | Yes (via CrispASR FFI) |
 
 ### Usage
 
@@ -336,35 +354,34 @@ python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 pip install audioseal
 python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 
-# With AudioSeal via CrispASR GGUF model
-python main.py --watermark-model audioseal.gguf --model-id edge --input-text "Hallo" --output-file out.mp3
-
 # With C2PA content credentials
 pip install c2pa-python
 python main.py --c2pa-cert cert.pem --c2pa-key key.pem --model-id edge --input-text "Hallo" --output-file out.mp3
 
-# Voice-cloning models require consent attestation
+# Voice-cloning models require consent attestation (spoken disclaimer auto-prepended)
 python main.py --model-id coqui_xtts_v2 --i-have-rights --input-text "Hallo" --output-file out.wav
+
+# Detect watermark in existing audio
+python main.py --detect-watermark out.wav
 
 # Disable watermarking (debug only)
 python main.py --no-watermark --model-id edge --input-text "Hallo" --output-file out.mp3
 ```
 
-### Detection
+### Detection (Python API)
 
 ```python
 from watermark import watermark_detect
 import soundfile as sf
-import numpy as np
 
 pcm, sr = sf.read("out.wav", dtype="float32")
-confidence = watermark_detect(pcm)
+confidence = watermark_detect(pcm, sample_rate=sr)
 print(f"Watermark confidence: {confidence:.3f}")  # >0.65 = AI-generated
 ```
 
 ### Cross-compatibility
 
-The spread-spectrum watermark uses the same PRNG seed (`0x437269737041535F`), FFT parameters, and bin selection as CrispASR's C++ implementation. Audio watermarked by either project can be detected by the other.
+The spread-spectrum watermark uses the same PRNG seed (`0x437269737041535F`), FFT parameters, and bin selection as CrispASR's C++ implementation and CrisperWeaver's native FFI path. Audio watermarked by any project in the ecosystem can be detected by the others.
 
 ## Troubleshooting & Notes
 

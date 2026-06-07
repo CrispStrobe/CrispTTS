@@ -436,6 +436,19 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
 
             logger.info(f"\n>>> Testing Model: {model_id} (Voice/Speaker: {voice_id_for_test}) <<<")
 
+            # Voice-cloning consent gate in test mode
+            try:
+                from watermark import requires_consent as _test_requires_consent
+                if _test_requires_consent(model_id, handler_key) and not getattr(cli_args, 'i_have_rights', False):
+                    current_model_status = "SKIPPED (Consent Required)"
+                    logger.info(f"Skipping voice-cloning model '{model_id}': --i-have-rights not set.")
+                    benchmark_results.append({"model_id": model_id, "voice_id": current_voice_id_tested,
+                        "status": current_model_status, "gen_time_sec": "N/A", "file_size_bytes": "N/A",
+                        "audio_duration_sec": "N/A", "output_file": "N/A"})
+                    continue
+            except ImportError:
+                pass
+
             start_time_model_test = time.time()
             current_gen_time_sec = None
             current_file_size_bytes = None
@@ -598,20 +611,39 @@ def run_synthesis(args):
 
     if handler_func:
         # --- Voice-cloning consent gate ---
+        _is_voice_cloning = False
         try:
-            from watermark import requires_consent
-            if requires_consent(args.model_id, handler_key) and not getattr(args, 'i_have_rights', False):
+            from watermark import log_consent_attestation, requires_consent
+            _is_voice_cloning = requires_consent(args.model_id, handler_key)
+            if _is_voice_cloning and not getattr(args, 'i_have_rights', False):
                 logger.error(
                     "Model '%s' involves voice cloning. You must pass --i-have-rights to attest "
                     "that you have the consent of the speaker whose voice this clones, "
                     "or that it is your own voice.", args.model_id)
                 return
+            if _is_voice_cloning:
+                log_consent_attestation(args.model_id, effective_voice_id)
         except ImportError:
             pass  # watermark module missing — skip consent check
 
         try:
             handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
                 args.output_file, args.play_direct)
+
+            # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
+            if _is_voice_cloning and args.output_file and os.path.isfile(args.output_file):
+                try:
+                    import soundfile as sf_disc
+
+                    from watermark import prepend_disclaimer
+                    data, sr = sf_disc.read(args.output_file, dtype="float32")
+                    if data.ndim > 1:
+                        data = data[:, 0]
+                    data_with_disclaimer = prepend_disclaimer(data, sample_rate=sr)
+                    sf_disc.write(args.output_file, data_with_disclaimer, sr, subtype="PCM_16")
+                    logger.info("AI disclaimer prepended to voice-cloned output.")
+                except Exception as e_disc:
+                    logger.warning("Could not prepend spoken disclaimer: %s", e_disc)
 
             # --- Post-synthesis ASR verification (CrispASR integration) ---
             if getattr(args, 'verify', False) and args.output_file and os.path.isfile(args.output_file):
@@ -653,6 +685,8 @@ def main_cli_entrypoint():
         help="Test all models with ALL configured voices. Requires --input-text or --input-file.")
     action_group.add_argument("--skip-models", type=str, nargs='*', default=[],
         help="List of model IDs (space-separated) to skip during --test-all or --test-all-speakers.")
+    action_group.add_argument("--detect-watermark", type=str, metavar="AUDIO_FILE",
+        help="Detect AI-generated watermark in a WAV file and report confidence.")
 
 
     synth_group = parser.add_argument_group(title="Synthesis Options (used with --model-id or --test-all*)")
@@ -792,6 +826,25 @@ def main_cli_entrypoint():
         os.environ["C2PA_CERT_PATH"] = args.c2pa_cert
     if getattr(args, 'c2pa_key', None):
         os.environ["C2PA_KEY_PATH"] = args.c2pa_key
+
+    if args.detect_watermark:
+        try:
+            from watermark import watermark_verify_file
+            confidence = watermark_verify_file(args.detect_watermark)
+            if confidence is None:
+                print(f"Could not read audio file: {args.detect_watermark}")
+            else:
+                print(f"File: {args.detect_watermark}")
+                print(f"Watermark confidence: {confidence:.4f}")
+                if confidence > 0.65:
+                    print("Result: AI-GENERATED WATERMARK DETECTED")
+                elif confidence > 0.4:
+                    print("Result: UNCERTAIN (possible watermark)")
+                else:
+                    print("Result: No watermark detected")
+        except ImportError:
+            logger.error("watermark module not available.")
+        return
 
     if args.list_models:
         list_available_models(GERMAN_TTS_MODELS)

@@ -288,5 +288,101 @@ class TestConsentGate(unittest.TestCase):
         self.assertTrue(requires_consent("some_model", "synthesize_with_f5_tts"))
 
 
+class TestResampling(unittest.TestCase):
+    """Test linear interpolation resampling for AudioSeal."""
+
+    def test_identity(self):
+        from watermark import _resample_linear
+        pcm = np.random.randn(1000).astype(np.float32)
+        result = _resample_linear(pcm, 16000, 16000)
+        np.testing.assert_array_equal(result, pcm)
+
+    def test_downsample_length(self):
+        from watermark import _resample_linear
+        pcm = np.random.randn(24000).astype(np.float32)
+        result = _resample_linear(pcm, 24000, 16000)
+        self.assertEqual(len(result), 16000)
+
+    def test_upsample_length(self):
+        from watermark import _resample_linear
+        pcm = np.random.randn(16000).astype(np.float32)
+        result = _resample_linear(pcm, 16000, 24000)
+        self.assertEqual(len(result), 24000)
+
+
+class TestConsentLogging(unittest.TestCase):
+    """Test consent attestation logging."""
+
+    def test_log_consent_attestation(self):
+        import io
+        import sys
+
+        from watermark import log_consent_attestation
+        captured = io.StringIO()
+        old_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            log_consent_attestation("test_model", "test_voice")
+        finally:
+            sys.stderr = old_stderr
+        output = captured.getvalue()
+        self.assertIn("[CONSENT]", output)
+        self.assertIn("test_model", output)
+        self.assertIn("test_voice", output)
+        self.assertIn("--i-have-rights", output)
+
+
+class TestSpokenDisclaimer(unittest.TestCase):
+    """Test spoken disclaimer generation."""
+
+    def test_generate_spoken_disclaimer_returns_audio(self):
+        from watermark import generate_spoken_disclaimer
+        # Should at minimum return beep fallback even without edge-tts
+        result = generate_spoken_disclaimer(sample_rate=24000)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, np.ndarray)
+        self.assertGreater(len(result), 0)
+
+    def test_prepend_disclaimer(self):
+        from watermark import prepend_disclaimer
+        pcm = np.random.randn(24000).astype(np.float32)
+        result = prepend_disclaimer(pcm, sample_rate=24000)
+        # Result should be longer than original (disclaimer + silence + original)
+        self.assertGreater(len(result), len(pcm))
+        # Original audio should be at the end
+        np.testing.assert_array_equal(result[-len(pcm):], pcm)
+
+
+class TestWatermarkVerification(unittest.TestCase):
+    """Test post-embed watermark verification."""
+
+    def test_verify_file(self):
+        import tempfile
+
+        from watermark import spread_spectrum_detect, spread_spectrum_embed
+        try:
+            import soundfile as sf_test
+        except ImportError:
+            self.skipTest("soundfile not installed")
+        pcm = 0.5 * np.sin(
+            2 * np.pi * 440 * np.linspace(0, 1, 24000, endpoint=False, dtype=np.float32)
+        )
+        wm_pcm = spread_spectrum_embed(pcm)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            sf_test.write(f.name, wm_pcm, 24000)
+            # Read back and verify with spread-spectrum detector directly
+            # (watermark_verify_file may dispatch to AudioSeal which
+            # can't detect spread-spectrum watermarks)
+            data, sr = sf_test.read(f.name, dtype="float32")
+        os.unlink(f.name)
+        confidence = spread_spectrum_detect(data)
+        self.assertGreater(confidence, 0.6)
+
+    def test_verify_nonexistent_file(self):
+        from watermark import watermark_verify_file
+        result = watermark_verify_file("/nonexistent/file.wav")
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
