@@ -57,7 +57,7 @@ synthesize_with_fastpitch_nemo = None
 try:
     from .nemo_handler import synthesize_with_fastpitch_nemo
     logger.debug("NeMo FastPitch handler imported.")
-except ImportError as e:
+except (ImportError, TypeError, Exception) as e:
     logger.warning(f"Could not import NeMo FastPitch handler (nemo_handler.py): {e}. This handler will be unavailable.")
 
 synthesize_with_mlx_audio = None # General handler for all mlx-audio models
