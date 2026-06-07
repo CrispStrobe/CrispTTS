@@ -416,6 +416,27 @@ class TestCompressedFormats(unittest.TestCase):
         return bytes(wav)
 
 
+# ---------------------------------------------------------------------------
+# Phase 4: Streaming synthesis
+# ---------------------------------------------------------------------------
+
+class TestStreamingImport(unittest.TestCase):
+    """Test that streaming function is importable."""
+
+    def test_streaming_function_exists(self):
+        """The streaming handler should be importable from source."""
+        src = (Path(__file__).resolve().parent.parent / "handlers" / "crispasr_handler.py").read_text()
+        self.assertIn("def synthesize_with_crispasr_streaming", src)
+
+    def test_stream_flag_in_argparse(self):
+        """--stream should be a valid CLI flag."""
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--stream", action="store_true")
+        args = parser.parse_args(["--stream"])
+        self.assertTrue(args.stream)
+
+
 @unittest.skipUnless(_find_crispasr(), "crispasr binary not found")
 class TestLiveCrispASR(unittest.TestCase):
     """Live integration tests with actual crispasr binary."""

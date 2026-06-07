@@ -282,6 +282,148 @@ def synthesize_with_crispasr(
         logger.error("CrispASR TTS: Unexpected error: %s", e, exc_info=True)
 
 
+def synthesize_with_crispasr_streaming(
+    crisptts_model_config: dict,
+    text: str,
+    voice_id_or_path_override: str | None,
+    model_params_override: str | None,
+    output_file_str: str | None,
+    play_direct: bool,
+):
+    """Streaming TTS: plays audio as crispasr generates it.
+
+    Runs crispasr with --tts-output pointing to a temp file, then
+    starts playback as soon as the file appears while synthesis may
+    still be running. Falls back to non-streaming if sounddevice
+    is unavailable.
+    """
+    import struct
+    import tempfile
+    import threading
+
+    try:
+        import sounddevice as sd
+    except ImportError:
+        logger.warning("sounddevice not installed — falling back to non-streaming synthesis.")
+        return synthesize_with_crispasr(
+            crisptts_model_config, text, voice_id_or_path_override,
+            model_params_override, output_file_str, play_direct,
+        )
+
+    model_id = crisptts_model_config.get("crisptts_model_id", "crispasr_unknown")
+    backend = crisptts_model_config.get("crispasr_backend")
+    logger.info("CrispASR TTS (streaming): Starting for '%s' (backend: %s)", model_id, backend)
+
+    exe = _find_crispasr()
+    if not exe:
+        logger.error("CrispASR binary not found.")
+        return
+
+    model_path = crisptts_model_config.get("crispasr_model_path", "auto")
+
+    # Use temp file for output, will stream-read it
+    fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+
+    cmd = [
+        exe, "-m", model_path,
+        "--tts", text,
+        "--tts-output", tmp_wav,
+        "-t", str(min(os.cpu_count() or 4, 8)),
+        "--auto-download",
+    ]
+
+    if backend:
+        cmd.extend(["--backend", backend])
+    voice = voice_id_or_path_override or crisptts_model_config.get("default_voice_id")
+    if voice:
+        cmd.extend(["--voice", voice])
+    codec_model = crisptts_model_config.get("crispasr_codec_model")
+    if codec_model:
+        cmd.extend(["--codec-model", codec_model])
+    language = crisptts_model_config.get("language")
+    if language:
+        cmd.extend(["-l", language])
+
+    logger.info("CrispASR TTS (streaming): Running: %s", " ".join(cmd))
+
+    synthesis_done = threading.Event()
+    synth_error = [None]
+
+    def _run_synthesis():
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # noqa: S603
+            if result.returncode != 0:
+                synth_error[0] = result.stderr[-500:] if result.stderr else "unknown error"
+        except Exception as e:
+            synth_error[0] = str(e)
+        finally:
+            synthesis_done.set()
+
+    synth_thread = threading.Thread(target=_run_synthesis, daemon=True)
+    synth_thread.start()
+
+    # Wait for the WAV file to appear (synthesis started writing)
+    import time as _time
+    for _ in range(600):  # up to 60 seconds
+        if os.path.isfile(tmp_wav) and os.path.getsize(tmp_wav) > 44:
+            break
+        if synthesis_done.is_set():
+            break
+        _time.sleep(0.1)
+
+    # Stream playback: read WAV header, then stream PCM chunks
+    try:
+        if os.path.isfile(tmp_wav) and os.path.getsize(tmp_wav) > 44:
+            with open(tmp_wav, "rb") as f:
+                header = f.read(44)
+                if len(header) >= 28:
+                    sr = struct.unpack_from("<I", header, 24)[0]
+                else:
+                    sr = 24000
+                logger.info("CrispASR TTS (streaming): Playing at %d Hz...", sr)
+                stream = sd.OutputStream(samplerate=sr, channels=1, dtype="int16")
+                stream.start()
+                try:
+                    while not synthesis_done.is_set() or f.tell() < os.path.getsize(tmp_wav):
+                        chunk = f.read(4096)
+                        if chunk:
+                            import numpy as np
+                            samples = np.frombuffer(chunk, dtype=np.int16)
+                            stream.write(samples.reshape(-1, 1))
+                        elif not synthesis_done.is_set():
+                            _time.sleep(0.05)
+                        else:
+                            # Read any remaining data
+                            remaining = f.read()
+                            if remaining:
+                                samples = np.frombuffer(remaining, dtype=np.int16)
+                                stream.write(samples.reshape(-1, 1))
+                            break
+                finally:
+                    stream.stop()
+                    stream.close()
+    except Exception as e:
+        logger.warning("Streaming playback error: %s", e)
+
+    synth_thread.join(timeout=10)
+
+    if synth_error[0]:
+        logger.error("CrispASR TTS (streaming): Synthesis error: %s", synth_error[0])
+
+    # Copy to final output if requested
+    if output_file_str and os.path.isfile(tmp_wav):
+        import shutil
+        shutil.copy2(tmp_wav, output_file_str)
+        logger.info("CrispASR TTS (streaming): Output saved to %s", output_file_str)
+
+    # Cleanup temp
+    try:
+        os.unlink(tmp_wav)
+    except OSError:
+        pass
+
+
 def verify_tts_with_asr(
     audio_path: str,
     original_text: str,

@@ -642,8 +642,15 @@ def run_synthesis(args):
             pass  # watermark module missing — skip consent check
 
         try:
-            handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
-                args.output_file, args.play_direct)
+            # Use streaming handler if --stream and crispasr backend
+            if getattr(args, 'stream', False) and handler_key == "crispasr":
+                from handlers.crispasr_handler import synthesize_with_crispasr_streaming
+                synthesize_with_crispasr_streaming(
+                    current_config_for_handler, text_to_synthesize, effective_voice_id,
+                    args.model_params, args.output_file, args.play_direct)
+            else:
+                handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
+                    args.output_file, args.play_direct)
 
             # --- Post-synthesis silence trimming (Python fallback for non-crispasr) ---
             if getattr(args, 'trim_silence', False) and args.output_file and os.path.isfile(args.output_file):
@@ -756,6 +763,8 @@ def main_cli_entrypoint():
         help="Natural-language voice/style description for VoiceDesign models (e.g., qwen3-tts).")
     synth_group.add_argument("--output-sample-rate", type=int, default=None, metavar="HZ",
         help="Resample output audio to this sample rate (e.g., 16000, 22050, 44100).")
+    synth_group.add_argument("--stream", action="store_true",
+        help="Stream audio playback during synthesis (crispasr backends only).")
 
     # CrispASR integration options
     crispasr_group = parser.add_argument_group(title="CrispASR Integration")
