@@ -437,6 +437,75 @@ class TestStreamingImport(unittest.TestCase):
         self.assertTrue(args.stream)
 
 
+# ---------------------------------------------------------------------------
+# Phase 5: OpenAI-compatible API server
+# ---------------------------------------------------------------------------
+
+class TestServerImport(unittest.TestCase):
+    """Test that server module is importable and has expected structure."""
+
+    def test_server_importable(self):
+        from server import TTSRequestHandler, run_server
+        self.assertTrue(callable(run_server))
+        self.assertTrue(hasattr(TTSRequestHandler, "do_GET"))
+        self.assertTrue(hasattr(TTSRequestHandler, "do_POST"))
+
+    def test_server_models_endpoint(self):
+        """Simulate a GET /v1/audio/models request."""
+        import io
+        from unittest.mock import MagicMock
+
+        from server import TTSRequestHandler
+
+        # Create a mock request
+        handler = TTSRequestHandler.__new__(TTSRequestHandler)
+        handler.path = "/v1/audio/models"
+        handler.headers = {}
+        handler.wfile = io.BytesIO()
+        handler.requestline = "GET /v1/audio/models HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
+        handler.client_address = ("127.0.0.1", 0)
+        handler.server = MagicMock()
+        handler.command = "GET"
+
+        # Capture response
+        responses = []
+        handler.send_response = lambda code: responses.append(code)
+        handler.send_header = lambda *a: None
+        handler.end_headers = lambda: None
+
+        handler.do_GET()
+        self.assertEqual(responses[0], 200)
+
+    def test_server_health_endpoint(self):
+        import io
+        from unittest.mock import MagicMock
+
+        from server import TTSRequestHandler
+
+        handler = TTSRequestHandler.__new__(TTSRequestHandler)
+        handler.path = "/health"
+        handler.headers = {}
+        handler.wfile = io.BytesIO()
+        handler.requestline = "GET /health HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
+        handler.client_address = ("127.0.0.1", 0)
+        handler.server = MagicMock()
+        handler.command = "GET"
+
+        responses = []
+        handler.send_response = lambda code: responses.append(code)
+        handler.send_header = lambda *a: None
+        handler.end_headers = lambda: None
+
+        handler.do_GET()
+        self.assertEqual(responses[0], 200)
+
+
+# ---------------------------------------------------------------------------
+# Live tests
+# ---------------------------------------------------------------------------
+
 @unittest.skipUnless(_find_crispasr(), "crispasr binary not found")
 class TestLiveCrispASR(unittest.TestCase):
     """Live integration tests with actual crispasr binary."""

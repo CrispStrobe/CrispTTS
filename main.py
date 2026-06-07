@@ -731,6 +731,12 @@ def main_cli_entrypoint():
         help="List of model IDs (space-separated) to skip during --test-all or --test-all-speakers.")
     action_group.add_argument("--detect-watermark", type=str, metavar="AUDIO_FILE",
         help="Detect AI-generated watermark in a WAV file and report confidence.")
+    action_group.add_argument("--server", action="store_true",
+        help="Run as HTTP server with OpenAI-compatible /v1/audio/speech endpoint.")
+    action_group.add_argument("--server-host", type=str, default="127.0.0.1",
+        help="Server bind address (default: 127.0.0.1).")
+    action_group.add_argument("--server-port", type=int, default=8880,
+        help="Server port (default: 8880).")
 
 
     synth_group = parser.add_argument_group(title="Synthesis Options (used with --model-id or --test-all*)")
@@ -886,6 +892,11 @@ def main_cli_entrypoint():
         os.environ["C2PA_CERT_PATH"] = args.c2pa_cert
     if getattr(args, 'c2pa_key', None):
         os.environ["C2PA_KEY_PATH"] = args.c2pa_key
+
+    if args.server:
+        from server import run_server
+        run_server(args.server_host, args.server_port)
+        return
 
     if args.detect_watermark:
         try:
