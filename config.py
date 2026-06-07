@@ -708,6 +708,18 @@ GERMAN_TTS_MODELS = {
         "sample_rate": 24000,
         "notes": "CrispASR Qwen3-TTS (C++ ggml). Requires --voice or --instruct. Apache 2.0.",
     },
+    "crispasr_qwen3_tts_voicedesign": {
+        "crisptts_model_id": "crispasr_qwen3_tts_voicedesign",
+        "handler_function_key": "crispasr",
+        "crispasr_backend": "qwen3-tts",
+        "crispasr_model_path": "auto",
+        "crispasr_codec_model": "auto",
+        "default_voice_id": None,
+        "available_voices": [],
+        "instruct": "A young woman with a clear, warm voice speaking at a moderate pace",
+        "sample_rate": 24000,
+        "notes": "CrispASR Qwen3-TTS VoiceDesign. Voice descriptions via --instruct. Apache 2.0.",
+    },
     "crispasr_chatterbox": {
         "crisptts_model_id": "crispasr_chatterbox",
         "handler_function_key": "crispasr",

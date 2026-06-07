@@ -232,6 +232,59 @@ def _find_crispasr():
     return None
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: Model config & voice features
+# ---------------------------------------------------------------------------
+
+class TestModelConfig(unittest.TestCase):
+    """Test model configuration entries."""
+
+    def test_voicedesign_model_exists(self):
+        from config import GERMAN_TTS_MODELS
+        self.assertIn("crispasr_qwen3_tts_voicedesign", GERMAN_TTS_MODELS)
+        cfg = GERMAN_TTS_MODELS["crispasr_qwen3_tts_voicedesign"]
+        self.assertEqual(cfg["crispasr_backend"], "qwen3-tts")
+        self.assertIn("instruct", cfg)
+        self.assertIsInstance(cfg["instruct"], str)
+
+    def test_orpheus_de_has_19_speakers(self):
+        from config import GERMAN_TTS_MODELS
+        cfg = GERMAN_TTS_MODELS["crispasr_orpheus_de"]
+        self.assertEqual(len(cfg["available_voices"]), 19)
+
+    def test_voxcpm2_supports_cloning(self):
+        """VoxCPM2 notes should mention voice cloning."""
+        from config import GERMAN_TTS_MODELS
+        cfg = GERMAN_TTS_MODELS["crispasr_voxcpm2"]
+        self.assertIn("cloning", cfg["notes"].lower())
+
+    def test_all_crispasr_models_have_backend(self):
+        from config import GERMAN_TTS_MODELS
+        for mid, cfg in GERMAN_TTS_MODELS.items():
+            if mid.startswith("crispasr_"):
+                self.assertIn("crispasr_backend", cfg, f"Model {mid} missing crispasr_backend")
+
+
+class TestConsentGateWavPath(unittest.TestCase):
+    """Test consent gate detects .wav voice paths as voice cloning."""
+
+    def test_wav_voice_requires_consent(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_kokoro", "crispasr", "speaker.wav"))
+
+    def test_wav_voice_case_insensitive(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_kokoro", "crispasr", "Speaker.WAV"))
+
+    def test_non_wav_voice_no_consent(self):
+        from watermark import requires_consent
+        self.assertFalse(requires_consent("crispasr_kokoro", "crispasr", "af_heart"))
+
+    def test_none_voice_no_consent(self):
+        from watermark import requires_consent
+        self.assertFalse(requires_consent("crispasr_kokoro", "crispasr", None))
+
+
 @unittest.skipUnless(_find_crispasr(), "crispasr binary not found")
 class TestLiveCrispASR(unittest.TestCase):
     """Live integration tests with actual crispasr binary."""

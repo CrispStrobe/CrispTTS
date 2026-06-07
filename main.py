@@ -439,7 +439,8 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
             # Voice-cloning consent gate in test mode
             try:
                 from watermark import requires_consent as _test_requires_consent
-                if _test_requires_consent(model_id, handler_key) and not getattr(cli_args, 'i_have_rights', False):
+                _voice_str = str(voice_id_for_test) if voice_id_for_test else None
+                if _test_requires_consent(model_id, handler_key, _voice_str) and not getattr(cli_args, 'i_have_rights', False):  # noqa: E501
                     current_model_status = "SKIPPED (Consent Required)"
                     logger.info(f"Skipping voice-cloning model '{model_id}': --i-have-rights not set.")
                     benchmark_results.append({"model_id": model_id, "voice_id": current_voice_id_tested,
@@ -628,7 +629,7 @@ def run_synthesis(args):
         _is_voice_cloning = False
         try:
             from watermark import log_consent_attestation, requires_consent
-            _is_voice_cloning = requires_consent(args.model_id, handler_key)
+            _is_voice_cloning = requires_consent(args.model_id, handler_key, effective_voice_id)
             if _is_voice_cloning and not getattr(args, 'i_have_rights', False):
                 logger.error(
                     "Model '%s' involves voice cloning. You must pass --i-have-rights to attest "

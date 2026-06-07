@@ -484,12 +484,22 @@ VOICE_CLONING_MODEL_KEYWORDS = frozenset({
 })
 
 
-def requires_consent(model_id: str, handler_key: str) -> bool:
-    """Check whether a model/handler involves voice cloning."""
+def requires_consent(model_id: str, handler_key: str, voice_id: str | None = None) -> bool:
+    """Check whether a model/handler involves voice cloning.
+
+    Also detects voice cloning when a .wav file is passed as voice_id
+    to any backend (including crispasr), since that implies the user
+    is cloning a voice from a reference recording.
+    """
     if handler_key in VOICE_CLONING_HANDLER_KEYS:
         return True
     model_lower = model_id.lower()
-    return any(kw in model_lower for kw in VOICE_CLONING_MODEL_KEYWORDS)
+    if any(kw in model_lower for kw in VOICE_CLONING_MODEL_KEYWORDS):
+        return True
+    # .wav voice path = voice cloning on any backend
+    if voice_id and isinstance(voice_id, str) and voice_id.lower().endswith(".wav"):
+        return True
+    return False
 
 
 def log_consent_attestation(model_id: str, voice_id: str | None = None) -> None:
