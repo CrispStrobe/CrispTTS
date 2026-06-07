@@ -48,14 +48,27 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **CrispASR Integration**:
   - `--verify`: ASR roundtrip verification of TTS output quality
   - `--translate`: Pre-synthesis translation (EN→DE via m2m100/MadLad)
+  - `--speech-speed`: Rate multiplier (maps to CrispASR `--pace`)
+  - `--trim-silence`: Remove leading/trailing silence from output
+  - `--tts-steps`: Diffusion model inference steps (quality vs speed)
+  - `--tts-language`: Override language for multilingual models
+  - `--pitch-shift`: Pitch shift in Hz for FastPitch backends
+  - `--instruct`: Natural-language voice descriptions (Qwen3-TTS VoiceDesign)
+  - `--stream`: Stream audio playback during synthesis
+  - `--output-sample-rate`: Resample output to target sample rate
+- **OpenAI-Compatible API Server** (`--server`):
+  - `POST /v1/audio/speech` — drop-in replacement for OpenAI TTS
+  - `GET /v1/audio/models` — list all configured models
 - **Text Input Flexibility**: Synthesize from CLI, `.txt`, `.md`, `.html`, `.pdf`, `.epub`
-- **Customizable Output**: Save audio to `.wav` or `.mp3`
+- **Smart Text Chunking**: Automatic sentence-boundary splitting for long texts
+- **Customizable Output**: Save audio to `.wav`, `.mp3`, `.flac`, or `.opus`
 - **Direct Playback**: Play synthesized audio immediately
 - **Voice Selection**: Override default voices/speakers for most models
 - **Model Parameter Tuning**: JSON-formatted parameters for fine-tuning
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
+  - 160+ unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -68,6 +81,8 @@ crisptts_project/
 ├── config.py                   # Model configurations and global constants
 ├── utils.py                    # Shared utility functions and classes
 ├── watermark.py                # Audio watermarking, metadata, consent gate, C2PA
+├── chunking.py                 # Smart sentence-boundary text splitting
+├── server.py                   # OpenAI-compatible HTTP API server
 ├── decoder.py                  # User-provided decoder for Orpheus models (if used)
 ├── handlers/                   # Package for individual TTS engine handlers
 │   ├── __init__.py             # Makes 'handlers' a package, exports handler functions
@@ -231,6 +246,36 @@ python main.py --input-text "Dies ist ein kurzer Test für alle Modelle." --test
 python main.py --input-text "Ein Test für alle Stimmen." --test-all-speakers --output-dir ./test_results_all_speakers
 ```
 
+**Speech speed and pitch control:**
+```bash
+python main.py --model-id crispasr_kokoro --input-text "Schneller sprechen." --speech-speed 1.3 --output-file fast.wav
+python main.py --model-id crispasr_kokoro --input-text "Höher." --pitch-shift 50 --output-file high.wav
+```
+
+**Silence trimming and resampling:**
+```bash
+python main.py --model-id crispasr_kokoro --input-text "Test." --trim-silence --output-sample-rate 16000 --output-file trimmed_16k.wav
+```
+
+**VoiceDesign — generate voices from text descriptions:**
+```bash
+python main.py --model-id crispasr_qwen3_tts_voicedesign --instruct "A calm elderly man" --input-text "Hallo" --output-file calm.wav
+```
+
+**Streaming playback (hear audio while it generates):**
+```bash
+python main.py --model-id crispasr_kokoro --input-text "Dies wird sofort abgespielt." --stream
+```
+
+**Run as OpenAI-compatible API server:**
+```bash
+python main.py --server --server-port 8880
+# Then: curl -X POST http://localhost:8880/v1/audio/speech \
+#   -H "Content-Type: application/json" \
+#   -d '{"model":"crispasr_kokoro","input":"Hallo Welt","voice":"af_heart"}' \
+#   --output speech.wav
+```
+
 **Change Logging Level (for debugging):**
 ```bash
 python main.py --model-id edge --input-text "Debug Test." --loglevel DEBUG
@@ -335,13 +380,13 @@ CrispTTS automatically marks all synthesized audio as AI-generated using a multi
 | Spread-spectrum watermark | numpy (Python) | C++ header-only | Dart LSB + native FFI |
 | AudioSeal neural watermark | Python + crispasr GGUF | C++ ggml (GGUF) | via CrispASR FFI |
 | WAV LIST/INFO metadata | ISFT + ICMT | ISFT + ICMT | ISFT + ICMT + IART + ICRD |
-| MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | — |
+| MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) |
 | C2PA content credentials | c2pa-python (optional) | c2pa-c (compile-time) | — |
-| Spoken AI disclaimer | Edge TTS / beep fallback | Native TTS (cached) | — |
+| Spoken AI disclaimer | Edge TTS / beep fallback | Native TTS (cached) | Beep marker |
 | Voice-cloning consent gate | `--i-have-rights` CLI | `--i-have-rights` CLI + server JSON | GDPR Art. 9(2)(a) consent files |
-| Consent audit logging | `[CONSENT]` stderr | `[CONSENT]` stderr | `.consent.json` per speaker |
-| Post-embed verification | detect after save | — | — |
-| Watermark detection CLI | `--detect-watermark` | — (API only) | detect in service |
+| Consent audit logging | `[CONSENT]` stderr | `[CONSENT]` stderr | `[CONSENT]` log + `.consent.json` |
+| Post-embed verification | detect after save | detect after save | detect after embed |
+| Watermark detection CLI | `--detect-watermark` | `--detect-watermark` | detect in service |
 | Cross-project detection | Yes (shared PRNG key) | Yes (shared PRNG key) | Yes (via CrispASR FFI) |
 
 ### Usage
@@ -382,6 +427,40 @@ print(f"Watermark confidence: {confidence:.3f}")  # >0.65 = AI-generated
 ### Cross-compatibility
 
 The spread-spectrum watermark uses the same PRNG seed (`0x437269737041535F`), FFT parameters, and bin selection as CrispASR's C++ implementation and CrisperWeaver's native FFI path. Audio watermarked by any project in the ecosystem can be detected by the others.
+
+## API Server
+
+CrispTTS includes an OpenAI-compatible HTTP server for integration with applications that use the OpenAI TTS SDK.
+
+```bash
+# Start the server
+python main.py --server --server-port 8880
+
+# Or run directly
+python server.py --host 0.0.0.0 --port 8880
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/audio/speech` | Synthesize audio (OpenAI-compatible) |
+| GET | `/v1/audio/models` | List available models and voices |
+| GET | `/health` | Health check |
+
+### Request format (POST /v1/audio/speech)
+
+```json
+{
+  "model": "crispasr_kokoro",
+  "input": "Hallo, wie geht es Ihnen?",
+  "voice": "af_heart",
+  "response_format": "wav",
+  "speed": 1.0
+}
+```
+
+Response: audio bytes with appropriate Content-Type header. All output is automatically watermarked.
 
 ## Troubleshooting & Notes
 
