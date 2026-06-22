@@ -1,9 +1,13 @@
 # CrispTTS/handlers/crispasr_handler.py
-"""CrispASR TTS handler — access 7 C++ TTS engines via the crispasr binary.
+"""CrispASR TTS handler — access 10 C++ TTS engines via the crispasr binary.
 
 Supported engines: kokoro, orpheus, qwen3-tts, chatterbox, vibevoice-tts,
-indextts, voxcpm2-tts. Each runs as native C++ inference through ggml,
-offering fast synthesis without Python ML dependencies.
+indextts, voxcpm2-tts, f5-tts, melotts, piper. Each runs as native C++
+inference through ggml, offering fast synthesis without Python ML dependencies.
+
+The binary automatically embeds a spread-spectrum watermark (EU AI Act
+Art. 50 compliant) into all TTS output — no additional watermarking
+needed on the Python side for these backends.
 
 Requires the crispasr binary on PATH, at CRISPASR_EXECUTABLE, or at
 a common build location. Auto-downloads if not found.
@@ -140,7 +144,7 @@ def synthesize_with_crispasr(
     """Synthesize audio using CrispASR's native C++ TTS engines.
 
     Supported backends: kokoro, orpheus, qwen3-tts, chatterbox,
-    vibevoice-tts, indextts, voxcpm2-tts.
+    vibevoice-tts, indextts, voxcpm2-tts, f5-tts, melotts, piper.
     """
     model_id = crisptts_model_config.get("crisptts_model_id", "crispasr_unknown")
     backend = crisptts_model_config.get("crispasr_backend")

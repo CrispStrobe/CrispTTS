@@ -760,6 +760,38 @@ GERMAN_TTS_MODELS = {
         "sample_rate": 48000,
         "notes": "CrispASR VoxCPM2 TTS (C++ ggml). 48 kHz, 30 langs, voice cloning. Apache 2.0.",
     },
+    # --- Additional CrispASR native C++ TTS engines ---
+    "crispasr_f5_tts": {
+        "crisptts_model_id": "crispasr_f5_tts",
+        "handler_function_key": "crispasr",
+        "crispasr_backend": "f5-tts",
+        "crispasr_model_path": "auto",
+        "default_voice_id": None,
+        "available_voices": [],
+        "sample_rate": 24000,
+        "notes": "CrispASR F5-TTS (C++ ggml, flow-matching). Voice cloning via --voice ref.wav. Apache 2.0.",
+    },
+    "crispasr_melotts": {
+        "crisptts_model_id": "crispasr_melotts",
+        "handler_function_key": "crispasr",
+        "crispasr_backend": "melotts",
+        "crispasr_model_path": "auto",
+        "default_voice_id": None,
+        "available_voices": [],
+        "sample_rate": 44100,
+        "notes": "CrispASR MeloTTS (C++ ggml, VITS2). High-quality 44.1 kHz. MIT license.",
+    },
+    "crispasr_piper": {
+        "crisptts_model_id": "crispasr_piper",
+        "handler_function_key": "crispasr",
+        "crispasr_backend": "piper",
+        "crispasr_model_path": "auto",
+        "default_voice_id": None,
+        "available_voices": [],
+        "language": "de",
+        "sample_rate": 22050,
+        "notes": "CrispASR Piper TTS (C++ ggml VITS). 250+ community voices, 30+ langs. Faster than Python Piper.",
+    },
     # --- experimental (not yet working) models ---
     "mlx_audio_dia_clone": {
         "crisptts_model_id": "mlx_audio_dia_clone", # Add this for better logging

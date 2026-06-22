@@ -217,10 +217,90 @@ def spread_spectrum_detect(pcm: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------------
+# WavMark neural watermark (MIT license — fully free for commercial use)
+# ---------------------------------------------------------------------------
+
+_wavmark_model = None
+
+
+def load_wavmark() -> bool:
+    """Load the WavMark neural watermark model (MIT license).
+
+    WavMark embeds a 16-bit payload into 16 kHz mono audio with >38 dB SNR.
+    Robust against Gaussian noise, MP3 compression, low-pass filter, and
+    speed variation. Fully MIT licensed (code + model weights).
+
+    Requires: pip install wavmark
+    Returns True on success.
+    """
+    global _backend, _wavmark_model
+    try:
+        import torch
+        import wavmark
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        _wavmark_model = wavmark.load_model().to(device)
+        _backend = "wavmark"
+        logger.info("WavMark neural watermark loaded (MIT license).")
+        return True
+    except ImportError:
+        logger.debug("wavmark package not installed.")
+        return False
+    except Exception as e:
+        logger.warning("Failed to load WavMark model: %s", e)
+        return False
+
+
+# CrispTTS AI-generated marker: fixed 16-bit payload for WavMark
+# Encodes "CT" (0x43, 0x54) in binary = 0100_0011_0101_0100
+_WAVMARK_PAYLOAD = np.array(
+    [0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0], dtype=np.float64
+)
+
+
+def _embed_wavmark(pcm: np.ndarray, sample_rate: int = 24000) -> np.ndarray:
+    """Embed watermark using WavMark (MIT license)."""
+    import wavmark
+    # WavMark requires 16 kHz mono
+    if sample_rate != 16000:
+        pcm_16k = _resample_linear(pcm, sample_rate, 16000)
+    else:
+        pcm_16k = pcm
+    watermarked_16k, _ = wavmark.encode_watermark(
+        _wavmark_model, pcm_16k.astype(np.float64), _WAVMARK_PAYLOAD,
+        show_progress=False,
+    )
+    if sample_rate != 16000:
+        # Compute delta at 16 kHz and resample it back
+        delta_16k = (watermarked_16k - pcm_16k).astype(np.float32)
+        delta_native = _resample_linear(delta_16k, 16000, sample_rate)
+        if len(delta_native) > len(pcm):
+            delta_native = delta_native[:len(pcm)]
+        elif len(delta_native) < len(pcm):
+            delta_native = np.pad(delta_native, (0, len(pcm) - len(delta_native)))
+        return pcm + delta_native
+    return watermarked_16k.astype(np.float32)
+
+
+def _detect_wavmark(pcm: np.ndarray, sample_rate: int = 24000) -> float:
+    """Detect WavMark watermark. Returns confidence [0, 1]."""
+    import wavmark
+    if sample_rate != 16000:
+        pcm = _resample_linear(pcm, sample_rate, 16000)
+    payload_decoded, info = wavmark.decode_watermark(
+        _wavmark_model, pcm.astype(np.float64), show_progress=False,
+    )
+    if payload_decoded is None:
+        return 0.0
+    # Compare decoded payload against our fixed marker
+    match_ratio = float(np.mean(payload_decoded[:16] == _WAVMARK_PAYLOAD))
+    return match_ratio
+
+
+# ---------------------------------------------------------------------------
 # AudioSeal dispatcher (multiple backends)
 # ---------------------------------------------------------------------------
 
-# Backend priority: audioseal (Python) > crispasr (C binding) > spread-spectrum
+# Backend priority: wavmark (MIT) > audioseal (Python) > crispasr (C) > spread-spectrum
 _backend = "spread_spectrum"  # active backend name
 _audioseal_generator = None   # audioseal Python generator model
 _audioseal_detector = None    # audioseal Python detector model
@@ -324,18 +404,26 @@ def _detect_audioseal_python(pcm: np.ndarray, sample_rate: int = 24000) -> float
 def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 24000) -> np.ndarray:
     """Embed AI-generated watermark. Dispatches to the best available backend.
 
-    Priority: audioseal (Python) > crispasr (C/GGUF) > spread-spectrum.
+    Priority: wavmark (MIT) > audioseal (Python) > crispasr (C/GGUF) > spread-spectrum.
 
     Args:
         pcm: 1-D float32 mono PCM array.
-        alpha: Strength for spread-spectrum (ignored when AudioSeal active).
-        sample_rate: Audio sample rate (needed for AudioSeal resampling).
+        alpha: Strength for spread-spectrum (ignored when neural backends active).
+        sample_rate: Audio sample rate (needed for neural backend resampling).
 
     Returns:
         Watermarked PCM (new array, input unchanged).
     """
     if os.environ.get("CRISPTTS_NO_WATERMARK"):
         return pcm.copy()
+
+    if _backend == "wavmark" and _wavmark_model is not None:
+        try:
+            result = _embed_wavmark(pcm, sample_rate)
+            logger.debug("WavMark (MIT) watermark embedded (%d samples).", len(pcm))
+            return result
+        except Exception as e:
+            logger.warning("WavMark embed failed, trying next backend: %s", e)
 
     if _backend == "audioseal_python" and _audioseal_generator is not None:
         try:
@@ -360,7 +448,19 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 240
 
 
 def watermark_detect(pcm: np.ndarray, sample_rate: int = 24000) -> float:
-    """Detect AI-generated watermark. Returns confidence [0, 1]."""
+    """Detect AI-generated watermark. Returns confidence [0, 1].
+
+    Tries all available backends in priority order: wavmark > audioseal > spread-spectrum.
+    """
+    if _backend == "wavmark" and _wavmark_model is not None:
+        try:
+            score = _detect_wavmark(pcm, sample_rate)
+            if score > 0.4:  # WavMark found something
+                return score
+            # Fall through to spread-spectrum (may have been watermarked by CrispASR binary)
+        except Exception as e:
+            logger.warning("WavMark detect failed, trying next backend: %s", e)
+
     if _backend == "audioseal_python" and _audioseal_detector is not None:
         try:
             return _detect_audioseal_python(pcm, sample_rate)
