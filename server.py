@@ -102,6 +102,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
         voice = body.get("voice")
         response_format = body.get("response_format", "wav")
         speed = body.get("speed", 1.0)
+        i_have_rights = body.get("i_have_rights", False)
 
         if not model:
             self._send_error(400, "Missing 'model' field")
@@ -122,6 +123,24 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             self._send_error(500, f"No handler available for model: {model}")
             return
 
+        # --- Voice-cloning consent gate (EU AI Act Art. 50) ---
+        effective_voice = voice or model_config.get("default_voice_id")
+        _is_voice_cloning = False
+        try:
+            from watermark import log_consent_attestation, requires_consent
+            _is_voice_cloning = requires_consent(model, handler_key, effective_voice)
+            if _is_voice_cloning and not i_have_rights:
+                self._send_error(403,
+                    f"Model '{model}' involves voice cloning. Include "
+                    '"i_have_rights": true in the request body to attest '
+                    "that you have the consent of the speaker whose voice "
+                    "is being cloned, or that it is your own voice.")
+                return
+            if _is_voice_cloning:
+                log_consent_attestation(model, effective_voice, source="API i_have_rights field")
+        except ImportError:
+            pass
+
         # Apply speed
         if speed and speed != 1.0:
             model_config["_cli_speech_speed"] = speed
@@ -135,7 +154,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             handler_func(
                 model_config,
                 text,
-                voice or model_config.get("default_voice_id"),
+                effective_voice,
                 json.dumps({"speech_speed": speed}) if speed != 1.0 else None,
                 tmp_path,
                 False,
@@ -145,11 +164,27 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(500, "Synthesis produced no output")
                 return
 
+            # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
+            if _is_voice_cloning and tmp_path.endswith(".wav"):
+                try:
+                    import soundfile as sf_disc
+
+                    from watermark import prepend_disclaimer
+                    data_disc, sr_disc = sf_disc.read(tmp_path, dtype="float32")
+                    if data_disc.ndim > 1:
+                        data_disc = data_disc[:, 0]
+                    data_disc = prepend_disclaimer(data_disc, sample_rate=sr_disc)
+                    sf_disc.write(tmp_path, data_disc, sr_disc, subtype="PCM_16")
+                except Exception as e_disc:
+                    logger.warning("Server disclaimer prepend failed: %s", e_disc)
+
             # --- EU AI Act Art. 50: Watermark & metadata injection ---
             if not os.environ.get("CRISPTTS_NO_WATERMARK"):
                 try:
                     from watermark import (
+                        inject_flac_metadata,
                         inject_mp3_metadata,
+                        inject_opus_metadata,
                         inject_wav_metadata,
                         watermark_embed,
                     )
@@ -176,6 +211,10 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                         mp3_b = inject_mp3_metadata(mp3_b)
                         with open(tmp_path, "wb") as f_srv:
                             f_srv.write(mp3_b)
+                    elif tmp_path.endswith(".flac"):
+                        inject_flac_metadata(tmp_path)
+                    elif tmp_path.endswith(".opus"):
+                        inject_opus_metadata(tmp_path)
                 except ImportError:
                     logger.debug("watermark module not available in server.")
                 except Exception as e_wm:

@@ -235,7 +235,7 @@ class TestAudioSealPythonBackend(unittest.TestCase):
     def test_backend_name(self):
         """Backend should be a known string."""
         from watermark import _backend
-        self.assertIn(_backend, ("spread_spectrum", "audioseal_python", "audioseal_crispasr"))
+        self.assertIn(_backend, ("spread_spectrum", "audioseal_python", "audioseal_crispasr", "wavmark"))
 
 
 class TestC2PA(unittest.TestCase):
@@ -382,6 +382,131 @@ class TestWatermarkVerification(unittest.TestCase):
         from watermark import watermark_verify_file
         result = watermark_verify_file("/nonexistent/file.wav")
         self.assertIsNone(result)
+
+
+class TestWavMarkBackend(unittest.TestCase):
+    """Test WavMark (MIT) neural watermark integration."""
+
+    def test_load_wavmark(self):
+        """load_wavmark returns a bool."""
+        from watermark import load_wavmark
+        result = load_wavmark()
+        self.assertIsInstance(result, bool)
+
+    def test_wavmark_payload_is_16bit(self):
+        """The fixed WavMark payload should be exactly 16 bits."""
+        from watermark import _WAVMARK_PAYLOAD
+        self.assertEqual(len(_WAVMARK_PAYLOAD), 16)
+        for bit in _WAVMARK_PAYLOAD:
+            self.assertIn(int(bit), (0, 1))
+
+    def test_wavmark_payload_encodes_ct(self):
+        """Payload should encode 'CT' = 0x43 0x54."""
+        from watermark import _WAVMARK_PAYLOAD
+        # C = 0x43 = 0100_0011, T = 0x54 = 0101_0100
+        expected = [0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0]
+        for i, (got, exp) in enumerate(zip(_WAVMARK_PAYLOAD, expected, strict=True)):
+            self.assertEqual(int(got), exp, f"Bit {i}: expected {exp}, got {int(got)}")
+
+
+class TestVoiceCloningKeywords(unittest.TestCase):
+    """Test expanded voice-cloning detection for CrispASR backends."""
+
+    def test_crispasr_cloning_backends_detected(self):
+        from watermark import requires_consent
+        for model_id in ("crispasr_vibevoice_tts", "crispasr_indextts",
+                         "crispasr_voxcpm2", "crispasr_qwen3_tts"):
+            self.assertTrue(requires_consent(model_id, "crispasr"),
+                            f"{model_id} should require consent")
+
+    def test_wav_voice_path_triggers_consent(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_kokoro", "crispasr", "/path/to/ref.wav"))
+
+    def test_non_cloning_crispasr_no_consent(self):
+        from watermark import requires_consent
+        # kokoro with a named voice (not a .wav path) is not cloning
+        self.assertFalse(requires_consent("crispasr_kokoro", "crispasr", "af_heart"))
+
+
+class TestPersistentAuditLog(unittest.TestCase):
+    """Test that consent attestations are written to a persistent log file."""
+
+    def test_audit_log_written(self):
+        import io
+        import sys
+
+        from watermark import _CONSENT_LOG_PATH, log_consent_attestation
+
+        old_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+        try:
+            log_consent_attestation("test_audit_model", "test_voice", source="unit test")
+        finally:
+            sys.stderr = old_stderr
+
+        self.assertTrue(os.path.isfile(_CONSENT_LOG_PATH),
+                        f"Audit log should exist at {_CONSENT_LOG_PATH}")
+        with open(_CONSENT_LOG_PATH) as f:
+            content = f.read()
+        self.assertIn("test_audit_model", content)
+        self.assertIn("unit test", content)
+
+
+class TestFlacMetadata(unittest.TestCase):
+    """Test FLAC Vorbis comment metadata injection."""
+
+    def test_inject_flac_returns_bool(self):
+        from watermark import inject_flac_metadata
+        # Should return False for nonexistent file (graceful failure)
+        result = inject_flac_metadata("/nonexistent/file.flac")
+        self.assertIsInstance(result, bool)
+        self.assertFalse(result)
+
+
+class TestOpusMetadata(unittest.TestCase):
+    """Test Opus/OGG Vorbis comment metadata injection."""
+
+    def test_inject_opus_returns_bool(self):
+        from watermark import inject_opus_metadata
+        # Should return False for nonexistent file (graceful failure)
+        result = inject_opus_metadata("/nonexistent/file.opus")
+        self.assertIsInstance(result, bool)
+        self.assertFalse(result)
+
+
+class TestWatermarkEmbedDispatcher(unittest.TestCase):
+    """Test the full watermark_embed dispatcher with different sample rates."""
+
+    def _make_sine(self, sr=24000, duration=1.0):
+        t = np.linspace(0, duration, int(sr * duration), endpoint=False, dtype=np.float32)
+        return 0.5 * np.sin(2 * np.pi * 440 * t)
+
+    def test_embed_preserves_length(self):
+        from watermark import watermark_embed
+        pcm = self._make_sine(sr=24000)
+        result = watermark_embed(pcm, sample_rate=24000)
+        self.assertEqual(len(result), len(pcm))
+
+    def test_embed_at_16khz(self):
+        from watermark import watermark_embed
+        pcm = self._make_sine(sr=16000)
+        result = watermark_embed(pcm, sample_rate=16000)
+        self.assertEqual(len(result), len(pcm))
+
+    def test_embed_at_44100(self):
+        from watermark import watermark_embed
+        pcm = self._make_sine(sr=44100)
+        result = watermark_embed(pcm, sample_rate=44100)
+        self.assertEqual(len(result), len(pcm))
+
+    def test_embed_returns_new_array(self):
+        """watermark_embed should return a new array, not modify in place."""
+        from watermark import watermark_embed
+        pcm = self._make_sine()
+        original = pcm.copy()
+        _ = watermark_embed(pcm)
+        np.testing.assert_array_equal(pcm, original)
 
 
 if __name__ == "__main__":

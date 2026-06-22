@@ -580,6 +580,64 @@ def inject_mp3_metadata(mp3_bytes: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# FLAC Vorbis comment metadata (AI-provenance)
+# ---------------------------------------------------------------------------
+
+def inject_flac_metadata(filepath: str) -> bool:
+    """Inject AI-provenance Vorbis comments into a FLAC file.
+
+    Uses mutagen if available. Returns True on success, False otherwise.
+    """
+    try:
+        from mutagen.flac import FLAC
+        audio = FLAC(filepath)
+        audio["AI_GENERATED"] = "true"
+        audio["GENERATOR"] = "CrispTTS"
+        audio["COMMENT"] = (
+            "This audio was synthesized by an AI text-to-speech model. "
+            "It is not a recording of a human speaker."
+        )
+        audio.save()
+        logger.debug("FLAC AI-provenance metadata injected: %s", filepath)
+        return True
+    except ImportError:
+        logger.debug("mutagen not installed — FLAC metadata injection skipped.")
+        return False
+    except Exception as e:
+        logger.warning("FLAC metadata injection failed: %s", e)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Opus/OGG Vorbis comment metadata (AI-provenance)
+# ---------------------------------------------------------------------------
+
+def inject_opus_metadata(filepath: str) -> bool:
+    """Inject AI-provenance Vorbis comments into an Opus/OGG file.
+
+    Uses mutagen if available. Returns True on success, False otherwise.
+    """
+    try:
+        from mutagen.oggopus import OggOpus
+        audio = OggOpus(filepath)
+        audio["AI_GENERATED"] = "true"
+        audio["GENERATOR"] = "CrispTTS"
+        audio["COMMENT"] = (
+            "This audio was synthesized by an AI text-to-speech model. "
+            "It is not a recording of a human speaker."
+        )
+        audio.save()
+        logger.debug("Opus AI-provenance metadata injected: %s", filepath)
+        return True
+    except ImportError:
+        logger.debug("mutagen not installed — Opus metadata injection skipped.")
+        return False
+    except Exception as e:
+        logger.warning("Opus metadata injection failed: %s", e)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Voice-cloning consent gate
 # ---------------------------------------------------------------------------
 
@@ -599,6 +657,7 @@ VOICE_CLONING_HANDLER_KEYS = frozenset({
 
 VOICE_CLONING_MODEL_KEYWORDS = frozenset({
     "zeroshot", "xtts", "clone", "f5_tts", "zonos", "chatterbox",
+    "vibevoice", "indextts", "voxcpm2", "qwen3_tts",
 })
 
 
@@ -620,18 +679,37 @@ def requires_consent(model_id: str, handler_key: str, voice_id: str | None = Non
     return False
 
 
-def log_consent_attestation(model_id: str, voice_id: str | None = None) -> None:
-    """Log a consent attestation to stderr for audit trail.
+_CONSENT_LOG_PATH = os.path.join(os.path.expanduser("~"), ".cache", "crisptts", "consent_audit.log")
+
+
+def log_consent_attestation(
+    model_id: str,
+    voice_id: str | None = None,
+    source: str = "CLI --i-have-rights flag",
+) -> None:
+    """Log a consent attestation to stderr AND a persistent audit log file.
 
     Format matches CrispASR: [CONSENT] ts=ISO8601 model=X voice=Y attestation="..."
+
+    The persistent log at ~/.cache/crisptts/consent_audit.log ensures the
+    audit trail survives even when stderr is not captured.
     """
     import sys
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
     voice_str = voice_id or "default"
-    msg = f'[CONSENT] ts={ts} model={model_id} voice={voice_str} attestation="CLI --i-have-rights flag"\n'
+    msg = f'[CONSENT] ts={ts} model={model_id} voice={voice_str} attestation="{source}"\n'
     sys.stderr.write(msg)
     sys.stderr.flush()
+
+    # Persistent audit log
+    try:
+        os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
+        with open(_CONSENT_LOG_PATH, "a") as f_audit:
+            f_audit.write(msg)
+    except OSError as e:
+        logger.debug("Could not write consent audit log: %s", e)
+
     logger.info("Consent attestation logged for model=%s voice=%s", model_id, voice_str)
 
 
@@ -646,11 +724,42 @@ _DISCLAIMER_SILENCE_SEC = 0.3  # 300ms gap between disclaimer and content
 def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
     """Generate a spoken AI disclaimer using a non-cloning TTS backend.
 
-    Tries Edge TTS first (cloud, no voice cloning), then falls back to
-    a simple tone-based marker if no TTS backend is available.
+    Priority: CrispASR kokoro (local, fast) > Edge TTS (cloud) > beep marker.
 
     Returns float32 PCM array at the given sample rate, or None on failure.
     """
+    # Try CrispASR kokoro (local, no internet, no voice cloning)
+    try:
+        import shutil
+        import subprocess
+        import tempfile
+
+        exe = shutil.which("crispasr") or os.environ.get("CRISPASR_EXECUTABLE")
+        if exe:
+            fd, tmp_wav = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            try:
+                result = subprocess.run(  # noqa: S603
+                    [exe, "-m", "auto", "--backend", "kokoro",
+                     "--tts", DISCLAIMER_TEXT, "--tts-output", tmp_wav,
+                     "--auto-download", "-t", "4"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode == 0 and os.path.isfile(tmp_wav) and os.path.getsize(tmp_wav) > 100:
+                    import soundfile as sf_disc
+                    data, sr = sf_disc.read(tmp_wav, dtype="float32")
+                    if data.ndim > 1:
+                        data = data[:, 0]
+                    if sr != sample_rate:
+                        data = _resample_linear(data, sr, sample_rate)
+                    logger.info("Spoken disclaimer generated via CrispASR kokoro.")
+                    return data
+            finally:
+                if os.path.exists(tmp_wav):
+                    os.unlink(tmp_wav)
+    except Exception as e:
+        logger.debug("CrispASR disclaimer generation failed: %s", e)
+
     # Try edge-tts (cloud, lightweight, no voice cloning concerns)
     try:
         import asyncio

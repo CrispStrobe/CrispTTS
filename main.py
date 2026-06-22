@@ -724,7 +724,9 @@ def run_synthesis(args):
                     try:
                         from watermark import (
                             c2pa_sign_file,
+                            inject_flac_metadata,
                             inject_mp3_metadata,
+                            inject_opus_metadata,
                             inject_wav_metadata,
                             watermark_embed,
                         )
@@ -757,6 +759,10 @@ def run_synthesis(args):
                             with open(args.output_file, "wb") as f_wm:
                                 f_wm.write(mp3_bytes)
                             logger.debug("MP3 AI-provenance metadata injected.")
+                        elif out_lower.endswith(".flac"):
+                            inject_flac_metadata(args.output_file)
+                        elif out_lower.endswith(".opus") or out_lower.endswith(".ogg"):
+                            inject_opus_metadata(args.output_file)
 
                         # C2PA content credentials (if configured)
                         c2pa_cert = getattr(args, 'c2pa_cert', None) or os.environ.get("C2PA_CERT_PATH")
