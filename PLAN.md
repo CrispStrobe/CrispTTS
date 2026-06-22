@@ -185,9 +185,9 @@ All 5 phases implemented, tested, and pushed.
 
 ---
 
-## Phase 6: EU AI Act Art. 50 Compliance (v0.4.0)
+## Phase 6: Watermarking & Voice Cloning Safety (v0.4.0)
 
-Implemented 2026-06-22. Deadline: 2026-08-02.
+Implemented 2026-06-22.
 
 ### 6.1 Watermark embedding on all outputs
 

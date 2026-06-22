@@ -42,14 +42,14 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - TTS.cpp (GGUF models)
   - Zonos (acoustic conditioning)
   - Chatterbox Python (Kartoffelbox)
-- **AI Audio Watermarking & Provenance** (EU AI Act Art. 50 compliant):
+- **AI Audio Watermarking & Provenance**:
   - WavMark neural watermark (MIT license — code + model weights; `pip install wavmark`)
   - Spread-spectrum watermark (always on, imperceptible, ~38 dB SNR)
   - AudioSeal neural watermark (optional upgrade via `pip install audioseal` or CrispASR GGUF)
   - WAV LIST/INFO, MP3 ID3v2, FLAC Vorbis comment, and Opus/OGG metadata marking audio as AI-generated
   - C2PA content credentials signing (optional, `pip install c2pa-python`)
   - Voice-cloning consent gate (`--i-have-rights` CLI / `"i_have_rights": true` API)
-  - Spoken AI disclaimer prepended to voice-cloned audio (Art. 50(4))
+  - Spoken AI disclaimer prepended to voice-cloned audio
   - Persistent consent audit log at `~/.cache/crisptts/consent_audit.log`
 - **CrispASR Integration**:
   - `--verify`: ASR roundtrip verification of TTS output quality
@@ -215,6 +215,95 @@ All interactions are done through `main.py` from your project's root directory.
 
 ```bash
 python main.py [ACTION_FLAG | --model-id <MODEL_ID> [OPTIONS]]
+```
+
+### CLI Reference
+
+#### Primary Actions
+
+| Flag | Description |
+|------|-------------|
+| `--list-models` | List all configured TTS models with their notes |
+| `--voice-info MODEL_ID` | Show available voices/speakers for a model |
+| `--test-all` | Test all models with default voices (requires `--input-text` or `--input-file`) |
+| `--test-all-speakers` | Test all models with ALL configured voices |
+| `--skip-models M1 M2 ...` | Skip specific model IDs during `--test-all` / `--test-all-speakers` |
+| `--detect-watermark FILE` | Detect AI-generated watermark in a WAV file and report confidence |
+| `--server` | Run as HTTP server with OpenAI-compatible endpoints |
+
+#### Synthesis Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model-id MODEL_ID` | — | TTS model to use (see `--list-models` for choices) |
+| `--input-text TEXT` | — | Text to synthesize (mutually exclusive with `--input-file`) |
+| `--input-file PATH` | — | Input file: `.txt`, `.md`, `.html`, `.pdf`, `.epub` |
+| `--output-file PATH` | — | Save audio to file (format detected from extension: `.wav`, `.mp3`, `.flac`, `.opus`) |
+| `--output-dir DIR` | `tts_test_outputs` | Output directory for `--test-all` / `--test-all-speakers` |
+| `--play-direct` | off | Play audio immediately after synthesis |
+| `--german-voice-id ID` | model default | Override voice/speaker (name, ID, or path to `.wav` for cloning) |
+| `--model-params JSON` | — | JSON string of model-specific parameters, e.g. `'{"temperature":0.7}'` |
+| `--speech-speed FLOAT` | `1.0` | Speech rate multiplier (>1 = faster, <1 = slower) |
+| `--trim-silence` | off | Remove leading/trailing silence from output |
+| `--tts-steps N` | backend default | Diffusion/flow-matching inference steps (quality vs. speed) |
+| `--tts-language LANG` | model default | Override language code for multilingual models (e.g. `de`, `en`, `zh`, `ja`) |
+| `--pitch-shift HZ` | `0` | Pitch offset in Hz (positive = higher, negative = lower) |
+| `--instruct TEXT` | — | Natural-language voice description for VoiceDesign models (Qwen3-TTS) |
+| `--output-sample-rate HZ` | native | Resample output to target sample rate (e.g. `16000`, `22050`, `44100`) |
+| `--stream` | off | Stream audio playback during synthesis (CrispASR backends only) |
+
+#### CrispASR Integration
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--verify` | off | Run ASR on output for roundtrip quality verification |
+| `--verify-backend NAME` | `parakeet` | ASR backend for `--verify` (e.g. `parakeet`, `whisper`) |
+| `--translate` | off | Translate input text before synthesis |
+| `--translate-from LANG` | `en` | Source language for translation |
+| `--translate-to LANG` | `de` | Target language for translation |
+| `--translate-backend NAME` | `m2m100` | Translation backend (`m2m100` or `madlad`) |
+
+#### Watermarking & Provenance
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--no-watermark` | off | Disable watermarking (debug only — not recommended) |
+| `--watermark-model PATH` | — | Path to AudioSeal GGUF model for neural watermarking |
+| `--i-have-rights` | off | Consent attestation for voice-cloning models (required) |
+| `--c2pa-cert PEM` | — | X.509 PEM certificate for C2PA content credentials |
+| `--c2pa-key PEM` | — | PEM private key for C2PA content credentials |
+
+#### Server Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--server` | off | Start the HTTP API server |
+| `--server-host ADDR` | `127.0.0.1` | Server bind address |
+| `--server-port PORT` | `8880` | Server port |
+
+#### Model-Specific Parameters (`--model-params`)
+
+Parameters are passed as a JSON string. Available keys depend on the backend:
+
+| Key | Backends | Description |
+|-----|----------|-------------|
+| `temperature` | Most LLM-based | Sampling temperature (higher = more varied) |
+| `seed` | All CrispASR | Random seed for reproducible output |
+| `top_p` | LLM-based | Nucleus sampling threshold |
+| `repetition_penalty` | LLM-based | Penalize token repetition |
+| `tts_steps` | Diffusion/flow | Number of inference steps |
+| `speech_speed` | CrispASR | Rate multiplier (same as `--speech-speed`) |
+| `pitch_shift` | FastPitch | Hz offset (same as `--pitch-shift`) |
+| `cfg_weight` | Chatterbox | Classifier-free guidance weight |
+| `exaggeration` | Chatterbox | Emotion exaggeration factor |
+| `length_scale` | VITS | Duration scaling factor |
+| `speaker_name` | Multi-speaker | Speaker name override |
+
+Example:
+```bash
+python main.py --model-id crispasr_chatterbox \
+  --model-params '{"cfg_weight": 3.0, "exaggeration": 0.7, "temperature": 0.8}' \
+  --input-text "Emotional speech test." --output-file chatterbox.wav
 ```
 
 ### Common Examples
@@ -395,9 +484,9 @@ voices minus the non-commercial/restricted ones, converted for the
 CrispASR/CrisperWeaver native runtime), see
 [`cstr/piper-voices-GGUF`](https://huggingface.co/cstr/piper-voices-GGUF).
 
-## Audio Watermarking & Provenance (EU AI Act Art. 50)
+## Audio Watermarking & Provenance
 
-CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered provenance system. Article 50 transparency obligations take effect **2 August 2026**.
+CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered provenance system.
 
 All outputs are watermarked — CLI, `--test-all`, and API server responses. CrispASR C++ backends watermark at the binary level; all other handlers are watermarked in Python post-synthesis.
 
