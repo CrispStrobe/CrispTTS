@@ -183,6 +183,60 @@ All 5 phases implemented, tested, and pushed.
 | 4 | `1b4aee0` | 48 pass |
 | 5 | `0f734d2` | 51 pass |
 
+---
+
+## Phase 6: EU AI Act Art. 50 Compliance (v0.4.0)
+
+Implemented 2026-06-22. Deadline: 2026-08-02.
+
+### 6.1 Watermark embedding on all outputs
+
+The critical gap: `watermark_embed()`, `inject_wav_metadata()`, `inject_mp3_metadata()`,
+and `c2pa_sign_file()` were defined in `watermark.py` but never called on synthesized audio.
+
+- **main.py**: Post-synthesis watermark + metadata injection for all handlers
+  - CrispASR handlers skipped (binary already watermarks)
+  - WAV/MP3/FLAC/Opus metadata injection on all outputs
+  - C2PA signing if cert/key configured
+  - Same pipeline in `test_all_models()` loop
+- **server.py**: Same watermark pipeline for API responses
+  - `X-CrispTTS-Watermarked: true` response header
+
+### 6.2 WavMark neural watermark (MIT license)
+
+Added as preferred neural backend over AudioSeal (CC-BY-NC model weights).
+
+- **watermark.py**: `load_wavmark()`, `_embed_wavmark()`, `_detect_wavmark()`
+- Fixed 16-bit "CT" payload for CrispTTS detection
+- Sample-rate aware (resamples to 16 kHz for WavMark, applies delta at native rate)
+- Priority: WavMark (MIT) > AudioSeal (Python) > CrispASR GGUF > spread-spectrum
+
+### 6.3 New CrispASR TTS backends
+
+- `crispasr_f5_tts` — F5-TTS flow-matching, 24 kHz, Apache 2.0
+- `crispasr_melotts` — MeloTTS VITS2, 44.1 kHz, MIT
+- `crispasr_piper` — Piper VITS via C++, 250+ voices, 30+ langs
+
+### 6.4 Voice-cloning safety
+
+- **Server consent gate**: `"i_have_rights": true` required in API request body for cloning models (returns 403 otherwise)
+- **Expanded detection**: CrispASR cloning backends (`vibevoice`, `indextts`, `voxcpm2`, `qwen3_tts`) added to keyword set
+- **Persistent audit log**: `~/.cache/crisptts/consent_audit.log` (not just stderr)
+- **Spoken disclaimer**: CrispASR kokoro (local, first) > Edge TTS (cloud) > beep
+
+### 6.5 FLAC/Opus metadata
+
+- `inject_flac_metadata()` — Vorbis comments via mutagen
+- `inject_opus_metadata()` — OggOpus tags via mutagen
+- Wired into main.py and server.py
+
+| Commit | Tests | CI |
+|--------|-------|----|
+| `01b4d41` | 199 pass | py3.10/3.11/3.12 + ruff ✓ |
+| `10becea` | 212 pass | py3.10/3.11/3.12 + ruff ✓ |
+
+Released as [v0.4.0](https://github.com/CrispStrobe/CrispTTS/releases/tag/v0.4.0).
+
 ### Live test results (2026-06-07)
 
 End-to-end pipeline verified with Kokoro backend:

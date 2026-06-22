@@ -7,16 +7,16 @@ CrispTTS is a versatile command-line Text-to-Speech (TTS) tool designed for synt
 | Project | Role |
 |---|---|
 | **[Susurrus](https://github.com/CrispStrobe/Susurrus)** | Python GUI + CLI — 30+ ASR, 12 TTS, translation |
-| **[CrispASR](https://github.com/CrispStrobe/CrispASR)** | C++ ASR/TTS engine — 24+ backends, ggml inference |
-| **CrispTTS** | This repo — Python TTS CLI with 28+ handlers |
+| **[CrispASR](https://github.com/CrispStrobe/CrispASR)** | C++ ASR/TTS engine — 26+ ASR, 14+ TTS backends, ggml inference |
+| **CrispTTS** | This repo — Python TTS CLI with 31+ handlers |
 | **[CrisperWeaver](https://github.com/CrispStrobe/CrisperWeaver)** | Flutter transcription app — desktop + mobile |
 
 NOTE: This is in experimental / work in progress state. Some Python-only models may be broken due to dependency conflicts. The CrispASR-based handlers (`crispasr_*`) are the most reliable — they use native C++ inference with no Python ML dependencies.
 
 ## Features
 
-- **28+ TTS Engine Support**:
-  - **CrispASR native C++ engines** (7 backends, auto-download, no Python ML deps):
+- **31+ TTS Engine Support**:
+  - **CrispASR native C++ engines** (10 backends, auto-download, no Python ML deps):
     - Kokoro (multilingual, Apache 2.0)
     - Orpheus + Kartoffel-Orpheus DE (19 German speakers, llama3.2 license)
     - Qwen3-TTS (voice cloning + voice design, Apache 2.0)
@@ -24,6 +24,9 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
     - VibeVoice TTS (voice cloning)
     - IndexTTS (zero-shot cloning, Apache 2.0)
     - VoxCPM2 (48 kHz, 30 languages, Apache 2.0)
+    - F5-TTS (flow-matching, voice cloning, Apache 2.0)
+    - MeloTTS (VITS2, 44.1 kHz, MIT)
+    - Piper (250+ community voices, 30+ languages — faster than Python Piper)
   - Microsoft Edge TTS (cloud-based, requires `edge-tts`)
   - Coqui TTS (XTTS v2, VITS, etc.)
   - Piper (local ONNX, requires `piper-tts`)
@@ -39,12 +42,15 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - TTS.cpp (GGUF models)
   - Zonos (acoustic conditioning)
   - Chatterbox Python (Kartoffelbox)
-- **AI Audio Watermarking & Provenance** (EU AI Act compliant):
-  - Spread-spectrum watermark (always on, imperceptible, ~-46 dB)
+- **AI Audio Watermarking & Provenance** (EU AI Act Art. 50 compliant):
+  - WavMark neural watermark (MIT license — code + model weights; `pip install wavmark`)
+  - Spread-spectrum watermark (always on, imperceptible, ~38 dB SNR)
   - AudioSeal neural watermark (optional upgrade via `pip install audioseal` or CrispASR GGUF)
-  - WAV LIST/INFO and MP3 ID3v2 metadata marking audio as AI-generated
+  - WAV LIST/INFO, MP3 ID3v2, FLAC Vorbis comment, and Opus/OGG metadata marking audio as AI-generated
   - C2PA content credentials signing (optional, `pip install c2pa-python`)
-  - Voice-cloning consent gate (`--i-have-rights`)
+  - Voice-cloning consent gate (`--i-have-rights` CLI / `"i_have_rights": true` API)
+  - Spoken AI disclaimer prepended to voice-cloned audio (Art. 50(4))
+  - Persistent consent audit log at `~/.cache/crisptts/consent_audit.log`
 - **CrispASR Integration**:
   - `--verify`: ASR roundtrip verification of TTS output quality
   - `--translate`: Pre-synthesis translation (EN→DE via m2m100/MadLad)
@@ -59,6 +65,8 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **OpenAI-Compatible API Server** (`--server`):
   - `POST /v1/audio/speech` — drop-in replacement for OpenAI TTS
   - `GET /v1/audio/models` — list all configured models
+  - Voice-cloning consent gate (returns 403 if `i_have_rights` missing)
+  - All responses watermarked + metadata-injected
 - **Text Input Flexibility**: Synthesize from CLI, `.txt`, `.md`, `.html`, `.pdf`, `.epub`
 - **Smart Text Chunking**: Automatic sentence-boundary splitting for long texts
 - **Customizable Output**: Save audio to `.wav`, `.mp3`, `.flac`, or `.opus`
@@ -68,7 +76,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
-  - 160+ unit and live tests
+  - 212 unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -86,6 +94,7 @@ crisptts_project/
 ├── decoder.py                  # User-provided decoder for Orpheus models (if used)
 ├── handlers/                   # Package for individual TTS engine handlers
 │   ├── __init__.py             # Makes 'handlers' a package, exports handler functions
+│   ├── crispasr_handler.py     # CrispASR native C++ TTS (10 backends)
 │   ├── edge_handler.py         # Edge TTS cloud service handler
 │   ├── piper_handler.py        # Piper TTS (ONNX) handler
 │   ├── orpheus_gguf_handler.py # Local Orpheus GGUF model handler
@@ -98,8 +107,13 @@ crisptts_project/
 │   ├── kokoro_onnx_handler.py  # Kokoro (multilingual but no German) ONNX handler
 │   ├── llasa_hybrid_handler.py # LLaSA Hybrid handler
 │   ├── tts_cpp_handler.py      # TTS.cpp handler supporting GGUF models
+│   ├── f5_tts_handler.py       # F5-TTS handler (MLX/PyTorch)
+│   ├── zonos_handler.py        # Zonos acoustic conditioning handler
+│   ├── chatterbox_handler.py   # Chatterbox/Kartoffelbox handler
 │   └── mlx_audio_handler.py    # Handler for mlx-audio library (e.g., Bark)
+├── tests/                      # Unit and integration tests
 ├── requirements.txt            # Python package dependencies
+├── pyproject.toml              # Project metadata and build config
 └── README.md                   # This documentation file
 ```
 
@@ -107,7 +121,7 @@ crisptts_project/
 
 ### Prerequisites
 
-- Python and `pip` for installing packages
+- Python 3.10+ and `pip` for installing packages
 - For `mlx-audio` based models: Apple Silicon Mac is required for GPU acceleration
 - For `TTS.cpp` a C++ compiler and CMake are required to build the engine
 
@@ -125,9 +139,16 @@ crisptts_project/
    ```
 
 3. **Install Dependencies**:
-   A `requirements.txt` file is provided. Install the necessary packages:
    ```bash
    pip install -r requirements.txt
+   ```
+
+   Optional feature groups:
+   ```bash
+   pip install crisptts[watermark-mit]   # WavMark neural watermark (MIT license)
+   pip install crisptts[metadata]        # FLAC/Opus metadata via mutagen
+   pip install crisptts[provenance]      # C2PA content credentials
+   pip install crisptts[dev]             # ruff, bandit, pytest
    ```
 
    > **Note**: Some libraries like PyTorch, NeMo, LlamaCPP, and `mlx-audio` can have specific installation needs depending on your OS and hardware (e.g., CUDA for Nvidia GPUs, Metal for Apple Silicon). Please refer to their official documentation if you encounter issues.
@@ -276,6 +297,19 @@ python main.py --server --server-port 8880
 #   --output speech.wav
 ```
 
+**Voice cloning (with consent attestation):**
+```bash
+# CLI
+python main.py --model-id coqui_xtts_v2_de_clone --i-have-rights \
+  --input-text "Hallo" --german-voice-id ref_voice.wav --output-file cloned.wav
+
+# API (include i_have_rights in request body)
+curl -X POST http://localhost:8880/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"crispasr_f5_tts","input":"Hallo","voice":"ref.wav","i_have_rights":true}' \
+  --output cloned.wav
+```
+
 **Change Logging Level (for debugging):**
 ```bash
 python main.py --model-id edge --input-text "Debug Test." --loglevel DEBUG
@@ -291,6 +325,7 @@ python main.py --model-id orpheus_ollama --input-text "Hallo Ollama" --ollama-ap
 
 Refer to the output of `python main.py --list-models` for the currently configured models and their notes. The script supports integration with:
 
+- CrispASR native C++ (10 backends: Kokoro, Orpheus, Qwen3-TTS, Chatterbox, VibeVoice, IndexTTS, VoxCPM2, F5-TTS, MeloTTS, Piper)
 - Microsoft Edge TTS
 - Piper TTS
 - Orpheus GGUF (via llama-cpp-python)
@@ -303,6 +338,9 @@ Refer to the output of `python main.py --list-models` for the currently configur
 - Orpheus "Kartoffel" (Transformers-based)
 - LLaSA Hybrid (Experimental MLX + PyTorch)
 - mlx-audio (e.g., Bark for Apple Silicon)
+- F5-TTS (MLX/PyTorch)
+- Zonos (acoustic conditioning)
+- Chatterbox/Kartoffelbox (Python)
 
 ## Adding New TTS Handlers
 
@@ -359,32 +397,48 @@ CrispASR/CrisperWeaver native runtime), see
 
 ## Audio Watermarking & Provenance (EU AI Act Art. 50)
 
-CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered provenance system ported from [CrispASR](https://github.com/CrispStrobe/CrispASR). Article 50 transparency obligations take effect **2 August 2026**.
+CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered provenance system. Article 50 transparency obligations take effect **2 August 2026**.
+
+All outputs are watermarked — CLI, `--test-all`, and API server responses. CrispASR C++ backends watermark at the binary level; all other handlers are watermarked in Python post-synthesis.
 
 ### Layers
 
 | Layer | What | Status | Install |
 |-------|------|--------|---------|
+| **WavMark** | Neural watermark (MIT license, 16-bit payload, >38 dB SNR) | Auto-detected (preferred) | `pip install wavmark` |
 | **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.08, ~38 dB SNR) | Always active | Built-in (numpy) |
 | **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
-| **WAV/MP3 metadata** | LIST/INFO + ID3v2 TXXX tags | Always active | Built-in |
+| **WAV/MP3/FLAC/Opus metadata** | LIST/INFO, ID3v2, Vorbis comments — `AI_GENERATED=true` | Always active | Built-in (FLAC/Opus: `pip install mutagen`) |
 | **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) | Opt-in | `pip install c2pa-python` |
 | **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio | Auto for cloning | Built-in |
-| **Consent gate** | Voice-cloning attestation + audit logging | Required for cloning | Built-in |
-| **Post-embed verification** | Watermark detection after file write | Always active | Built-in |
+| **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
+
+**Watermark backend priority**: WavMark (MIT) > AudioSeal (Python) > CrispASR GGUF > spread-spectrum (always-on fallback).
+
+### Voice cloning safety
+
+Voice-cloning models require explicit consent attestation before synthesis is allowed:
+
+- **CLI**: `--i-have-rights` flag required (synthesis blocked without it)
+- **API**: `"i_have_rights": true` in request body (returns 403 without it)
+- **Detection**: triggered by handler key, model ID keywords (`clone`, `xtts`, `zeroshot`, `vibevoice`, `indextts`, `voxcpm2`, `qwen3_tts`, `f5_tts`, `zonos`, `chatterbox`), or `.wav` voice path
+- **Audit log**: written to stderr AND `~/.cache/crisptts/consent_audit.log`
+- **Spoken disclaimer**: "This audio was generated by artificial intelligence." prepended to cloned output (generated via CrispASR kokoro, Edge TTS fallback, beep marker last resort)
 
 ### Compliance comparison across the Crisp ecosystem
 
 | Feature | CrispTTS | CrispASR | CrisperWeaver |
 |---------|----------|----------|---------------|
 | Spread-spectrum watermark | numpy (Python) | C++ header-only | Dart LSB + native FFI |
+| WavMark neural watermark (MIT) | Python (wavmark) | — | — |
 | AudioSeal neural watermark | Python + crispasr GGUF | C++ ggml (GGUF) | via CrispASR FFI |
 | WAV LIST/INFO metadata | ISFT + ICMT | ISFT + ICMT | ISFT + ICMT + IART + ICRD |
 | MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) |
+| FLAC/Opus metadata | Vorbis comments (mutagen) | — | — |
 | C2PA content credentials | c2pa-python (optional) | c2pa-c (compile-time) | — |
-| Spoken AI disclaimer | Edge TTS / beep fallback | Native TTS (cached) | Beep marker |
-| Voice-cloning consent gate | `--i-have-rights` CLI | `--i-have-rights` CLI + server JSON | GDPR Art. 9(2)(a) consent files |
-| Consent audit logging | `[CONSENT]` stderr | `[CONSENT]` stderr | `[CONSENT]` log + `.consent.json` |
+| Spoken AI disclaimer | CrispASR kokoro / Edge TTS / beep | Native TTS (cached) | Beep marker |
+| Voice-cloning consent gate | CLI + API (403) | CLI + server JSON | GDPR Art. 9(2)(a) consent files |
+| Consent audit logging | stderr + `consent_audit.log` | `[CONSENT]` stderr | `[CONSENT]` log + `.consent.json` |
 | Post-embed verification | detect after save | detect after save | detect after embed |
 | Watermark detection CLI | `--detect-watermark` | `--detect-watermark` | detect in service |
 | Cross-project detection | Yes (shared PRNG key) | Yes (shared PRNG key) | Yes (via CrispASR FFI) |
@@ -395,8 +449,8 @@ CrispTTS automatically marks all synthesized audio as AI-generated using a multi
 # Default: spread-spectrum watermark + metadata (no extra deps)
 python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 
-# With AudioSeal neural watermark (auto-detected if installed)
-pip install audioseal
+# With WavMark neural watermark (MIT, preferred)
+pip install wavmark
 python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 
 # With C2PA content credentials
@@ -404,7 +458,7 @@ pip install c2pa-python
 python main.py --c2pa-cert cert.pem --c2pa-key key.pem --model-id edge --input-text "Hallo" --output-file out.mp3
 
 # Voice-cloning models require consent attestation (spoken disclaimer auto-prepended)
-python main.py --model-id coqui_xtts_v2 --i-have-rights --input-text "Hallo" --output-file out.wav
+python main.py --model-id coqui_xtts_v2_de_clone --i-have-rights --input-text "Hallo" --output-file out.wav
 
 # Detect watermark in existing audio
 python main.py --detect-watermark out.wav
@@ -456,11 +510,14 @@ python server.py --host 0.0.0.0 --port 8880
   "input": "Hallo, wie geht es Ihnen?",
   "voice": "af_heart",
   "response_format": "wav",
-  "speed": 1.0
+  "speed": 1.0,
+  "i_have_rights": false
 }
 ```
 
-Response: audio bytes with appropriate Content-Type header. All output is automatically watermarked.
+The `i_have_rights` field is required (and must be `true`) for voice-cloning models. Omit it or set to `false` for non-cloning models.
+
+Response: audio bytes with appropriate Content-Type header. All output is automatically watermarked. Response includes `X-CrispTTS-Watermarked: true` header.
 
 ## Troubleshooting & Notes
 
