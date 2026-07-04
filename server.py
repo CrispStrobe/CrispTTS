@@ -47,6 +47,26 @@ def _load_handlers():
     return _handlers
 
 
+# --- Simple token-bucket rate limiter per client IP ---
+_rate_limit_buckets: dict[str, list[float]] = {}
+_rate_limit_max = 10  # requests per minute (configurable via run_server)
+_rate_limit_window = 60.0  # seconds
+
+
+def _check_rate_limit(client_ip: str) -> bool:
+    """Return True if request is allowed, False if rate limited."""
+    import time as _time
+    now = _time.time()
+    bucket = _rate_limit_buckets.setdefault(client_ip, [])
+    # Evict expired entries
+    _rate_limit_buckets[client_ip] = [t for t in bucket if now - t < _rate_limit_window]
+    bucket = _rate_limit_buckets[client_ip]
+    if len(bucket) >= _rate_limit_max:
+        return False
+    bucket.append(now)
+    return True
+
+
 class TTSRequestHandler(BaseHTTPRequestHandler):
     """HTTP handler for OpenAI-compatible TTS API."""
 
@@ -77,13 +97,32 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 })
             self._send_json(200, {"object": "list", "data": models})
         elif self.path == "/health" or self.path == "/":
-            self._send_json(200, {"status": "ok", "server": "CrispTTS"})
+            health = {"status": "ok", "server": "CrispTTS", "version": "0.5.0"}
+            try:
+                import resource
+                rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+                health["memory_rss_mb"] = round(rss_mb, 1)
+            except (ImportError, AttributeError):
+                pass
+            handlers = _load_handlers()
+            if handlers:
+                health["loaded_handlers"] = list(handlers.keys())
+                health["registered_handlers"] = (
+                    handlers.all_keys() if hasattr(handlers, "all_keys") else list(handlers.keys())
+                )
+            self._send_json(200, health)
         else:
             self._send_error(404, f"Not found: {self.path}")
 
     def do_POST(self):  # noqa: N802
         if self.path != "/v1/audio/speech":
             self._send_error(404, f"Not found: {self.path}")
+            return
+
+        # Rate limiting
+        client_ip = self.client_address[0]
+        if not _check_rate_limit(client_ip):
+            self._send_error(429, "Rate limit exceeded. Try again later.")
             return
 
         content_length = int(self.headers.get("Content-Length", 0))
@@ -124,8 +163,34 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             self._send_error(500, f"No handler available for model: {model}")
             return
 
-        # --- Voice-cloning consent gate (EU AI Act Art. 50) ---
         effective_voice = voice or model_config.get("default_voice_id")
+
+        # --- Synthesis cache check ---
+        try:
+            import cache as _cache
+            cached = _cache.lookup(model, effective_voice, text,
+                                   json.dumps({"speed": speed}) if speed != 1.0 else None,
+                                   f".{response_format}")
+            if cached:
+                with open(cached, "rb") as f_cached:
+                    audio_data = f_cached.read()
+                content_type = {"wav": "audio/wav", "mp3": "audio/mpeg",
+                                "flac": "audio/flac", "opus": "audio/opus"}.get(response_format, "audio/wav")
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(audio_data)))
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="tts_output.{response_format}"')
+                self.send_header("X-CrispTTS-Model", model)
+                self.send_header("X-CrispTTS-Watermarked", "true")
+                self.send_header("X-CrispTTS-Cache", "hit")
+                self.end_headers()
+                self.wfile.write(audio_data)
+                return
+        except ImportError:
+            pass
+
+        # --- Voice-cloning consent gate ---
         _is_voice_cloning = False
         try:
             from watermark import log_consent_attestation, requires_consent
@@ -226,6 +291,15 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 "opus": "audio/opus",
             }.get(response_format, "audio/wav")
 
+            # Store in cache
+            try:
+                import cache as _cache
+                _cache.store(model, effective_voice, text,
+                             json.dumps({"speed": speed}) if speed != 1.0 else None,
+                             tmp_path, f".{response_format}")
+            except ImportError:
+                pass
+
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(audio_data)))
@@ -246,8 +320,10 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 pass
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8880):
+def run_server(host: str = "127.0.0.1", port: int = 8880, rate_limit: int = 10):
     """Start the CrispTTS HTTP server."""
+    global _rate_limit_max
+    _rate_limit_max = rate_limit
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -275,5 +351,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CrispTTS API Server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8880, help="Port (default: 8880)")
+    parser.add_argument("--rate-limit", type=int, default=10,
+                        help="Max synthesis requests per minute per IP (default: 10, 0=unlimited)")
     args = parser.parse_args()
-    run_server(args.host, args.port)
+    run_server(args.host, args.port, args.rate_limit)

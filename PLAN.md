@@ -457,3 +457,89 @@ Pass custom word→phoneme mappings to CrispASR backends via
 | 9.7 Lexicon support | `3fbaf83` |
 
 224 tests passing (1 test updated for lazy-load semantics).
+
+---
+
+## Phase 10: Lazy handler registry + developer experience
+
+### 10.1 Lazy handler registry
+
+`handlers/__init__.py` eagerly imports all 21 handlers at module level.
+This loads torch, transformers, outetts, nemo, etc. — ~2 GB RAM, 6+ minute
+startup on the 8 GB VPS. Most sessions use only 1-2 handlers.
+
+**Fix**: Replace eager imports with a lazy registry. Each handler is imported
+only when its `handler_function_key` is first requested via `ALL_HANDLERS[key]`.
+
+**Design**:
+```python
+class _LazyHandlerRegistry(dict):
+    """Import handlers on first access, not at module load time."""
+    _REGISTRY = {
+        "edge": (".edge_handler", "synthesize_with_edge_tts"),
+        "crispasr": (".crispasr_handler", "synthesize_with_crispasr"),
+        ...
+    }
+    def __getitem__(self, key):
+        if key not in self._loaded:
+            module_path, func_name = self._REGISTRY[key]
+            mod = importlib.import_module(module_path, package="handlers")
+            self._loaded[key] = getattr(mod, func_name)
+        return self._loaded.get(key)
+```
+
+**Impact**:
+- Server starts instantly (imports only the requested handler)
+- `--list-models` never loads torch
+- RAM drops from ~2 GB to ~200 MB for single-handler use
+- Test suite imports complete in seconds instead of 6 minutes
+
+**Files**: `handlers/__init__.py`
+
+### 10.2 Split test suite into fast/slow
+
+Add `@pytest.mark.slow` to tests that trigger heavy imports (outetts,
+torch model loading, handler registry tests). Default `pytest` runs only
+fast tests; `pytest -m slow` or `pytest --run-slow` runs everything.
+
+**Files**: `tests/test_handlers.py`, `tests/test_cli.py`, `pyproject.toml`
+
+### 10.3 Server rate limiting
+
+Simple in-memory token bucket per client IP. Default: 10 requests/minute,
+configurable via `--rate-limit N`. Returns 429 Too Many Requests when
+exceeded.
+
+**Files**: `server.py`
+
+### 10.4 Audio crossfade for chunked synthesis
+
+When `chunking.py` splits long text, the handler synthesizes each chunk
+separately. Add a short crossfade (~50 ms) between concatenated segments
+to eliminate clicks/gaps at chunk boundaries.
+
+**Files**: `utils.py` (new `crossfade_segments()` function), integration
+in handlers that use chunking
+
+### 10.5 Synthesis result caching
+
+Hash `(model_id, voice, text, params)` → cached WAV path. Serves identical
+requests from cache. LRU eviction by total cache size (default 500 MB,
+configurable via `--cache-dir` / `--cache-max-mb`).
+
+**Files**: `main.py` or new `cache.py`, `server.py`
+
+### 10.6 Batch error recovery
+
+If one paragraph fails in `--batch` mode, log the error and continue with
+the next paragraph. Report a summary at the end showing which paragraphs
+succeeded/failed.
+
+**Files**: `main.py` (batch mode section)
+
+### 10.7 Enhanced /health endpoint
+
+Extend `/health` to report loaded handlers, memory usage (RSS), pending
+requests, and uptime. Useful for monitoring in production.
+
+**Files**: `server.py`

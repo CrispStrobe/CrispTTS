@@ -56,7 +56,7 @@ crisptts = "main:main_cli_entrypoint"
 # Explicit discovery prevents setuptools from tripping over tests/ and local
 # scratch dirs (e.g. tts_test_outputs/) during the build.
 [tool.setuptools]
-py-modules = ["main", "config", "utils", "decoder", "watermark", "chunking", "server"]
+py-modules = ["main", "config", "utils", "decoder", "watermark", "chunking", "server", "cache"]
 
 [tool.setuptools.packages.find]
 include = ["handlers*"]
@@ -81,3 +81,7 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "-v"
+markers = [
+    "slow: tests that load heavy ML dependencies (torch, outetts)",
+    "live: tests that require the CrispASR binary",
+]

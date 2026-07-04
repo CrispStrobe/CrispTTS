@@ -523,6 +523,41 @@ def trim_silence_file(filepath: str | Path, threshold_db: float = -40.0) -> None
         logger.warning("Silence trimming failed for %s: %s", filepath, e)
 
 
+def crossfade_segments(segments: list[np.ndarray], crossfade_ms: float = 50.0,
+                       sample_rate: int = 24000) -> np.ndarray:
+    """Concatenate audio segments with a short crossfade to avoid clicks.
+
+    Args:
+        segments: List of float32 mono PCM arrays.
+        crossfade_ms: Crossfade duration in milliseconds (default 50 ms).
+        sample_rate: Audio sample rate.
+
+    Returns:
+        Single concatenated float32 PCM array with crossfade applied.
+    """
+    if not segments:
+        return np.array([], dtype=np.float32)
+    if len(segments) == 1:
+        return segments[0]
+
+    fade_samples = int(sample_rate * crossfade_ms / 1000.0)
+    result = segments[0]
+
+    for seg in segments[1:]:
+        if len(result) < fade_samples or len(seg) < fade_samples:
+            # Too short for crossfade — just concatenate
+            result = np.concatenate([result, seg])
+            continue
+        # Linear crossfade
+        fade_out = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+        fade_in = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+        # Overlap region
+        overlap = result[-fade_samples:] * fade_out + seg[:fade_samples] * fade_in
+        result = np.concatenate([result[:-fade_samples], overlap, seg[fade_samples:]])
+
+    return result
+
+
 def play_audio(audio_path_or_data, is_path=True, input_format=None, sample_rate=None):
     if is_path:
         if not _ensure_pydub():

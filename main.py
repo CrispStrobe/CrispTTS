@@ -112,7 +112,7 @@ def _apply_triton_config_monkey_patch_for_vllm():
         print(f"CRITICAL MONKEY PATCH ERROR: {e_mp}", file=sys.stderr)
         _main_mp_logger.error(f"Error during Triton monkey patching: {e_mp}", exc_info=True)
 
-ALL_HANDLERS = {}
+ALL_HANDLERS = None
 _HANDLERS_LOADED = False
 
 from config import GERMAN_TTS_MODELS, LM_STUDIO_API_URL_DEFAULT, OLLAMA_API_URL_DEFAULT  # noqa: E402
@@ -127,22 +127,16 @@ logger = logging.getLogger("CrispTTS.main")
 def _load_handlers_if_needed():
     global ALL_HANDLERS, _HANDLERS_LOADED
     if not _HANDLERS_LOADED:
-        logger.debug("Attempting to dynamically load TTS handlers...")
+        logger.debug("Loading lazy handler registry...")
         try:
-            from handlers import (
-                ALL_HANDLERS as loaded_handlers_dict,  # This imports handlers/__init__.py
-            )
-            ALL_HANDLERS.update(loaded_handlers_dict)
+            from handlers import ALL_HANDLERS as lazy_registry
+            ALL_HANDLERS = lazy_registry
             _HANDLERS_LOADED = True
-            # Log at INFO that handlers are loaded, details of each handler import can be DEBUG in handlers/__init__.py
-            logger.info(f"TTS handlers dynamically loaded. Available keys: {list(ALL_HANDLERS.keys())}")
+            logger.info("Handler registry loaded (lazy — handlers import on first use).")
         except ImportError as e:
-            logger.critical(f"CRITICAL ERROR: Failed to import from 'handlers' package: {e}", exc_info=True)
-        except KeyError as e_key:
-            logger.critical(f"CRITICAL ERROR: 'ALL_HANDLERS' map not found or incomplete in handlers package: {e_key}",
-                exc_info=True)
+            logger.critical("Failed to import handlers package: %s", e, exc_info=True)
         except Exception as e_load:
-            logger.critical(f"Unexpected critical error during dynamic handler loading: {e_load}", exc_info=True)
+            logger.critical("Unexpected error loading handler registry: %s", e_load, exc_info=True)
     return ALL_HANDLERS
 
 def _apply_cli_overrides_to_config(model_config_dict, model_id_key, cli_args):
@@ -1157,14 +1151,25 @@ def main_cli_entrypoint():
         output_dir.mkdir(parents=True, exist_ok=True)
         ext = ".mp3" if args.model_id == "edge" else ".wav"
         logger.info("Batch mode: %d paragraphs → %s/", len(paragraphs), output_dir)
+        batch_ok, batch_fail = 0, 0
         for i, para in enumerate(paragraphs, 1):
             batch_args = argparse.Namespace(**vars(args))
             batch_args.input_text = para
             batch_args.output_file = str(output_dir / f"output_{i:03d}{ext}")
             batch_args.batch = False  # prevent recursion
             logger.info("Batch [%d/%d]: %s", i, len(paragraphs), para[:60])
-            run_synthesis(batch_args)
-        logger.info("Batch synthesis complete: %d files in %s/", len(paragraphs), output_dir)
+            try:
+                run_synthesis(batch_args)
+                if os.path.isfile(batch_args.output_file) and os.path.getsize(batch_args.output_file) > 100:
+                    batch_ok += 1
+                else:
+                    batch_fail += 1
+                    logger.warning("Batch [%d/%d]: no output produced.", i, len(paragraphs))
+            except Exception as e_batch:
+                batch_fail += 1
+                logger.error("Batch [%d/%d] failed: %s", i, len(paragraphs), e_batch)
+        logger.info("Batch complete: %d/%d succeeded, %d failed in %s/",
+                     batch_ok, len(paragraphs), batch_fail, output_dir)
         return
 
     run_synthesis(args)
