@@ -443,3 +443,17 @@ Pass custom word→phoneme mappings to CrispASR backends via
 `--lexicon file.tsv` for domain-specific terms (medical, legal, brand names).
 
 **Files**: `main.py` (argparse), `handlers/crispasr_handler.py` (pass-through)
+
+### Status: ALL PHASE 9 ITEMS COMPLETE
+
+| Task | Commit |
+|------|--------|
+| 9.1 Fix import hang | `3fbaf83` |
+| 9.2 --backend shortcut | `3fbaf83` |
+| 9.3 Threaded server | `3fbaf83` |
+| 9.4 Batch synthesis | `3fbaf83` |
+| 9.5 Model probe | `3fbaf83` |
+| 9.6 Config validation | `3fbaf83` |
+| 9.7 Lexicon support | `3fbaf83` |
+
+224 tests passing (1 test updated for lazy-load semantics).

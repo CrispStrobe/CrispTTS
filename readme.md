@@ -219,6 +219,8 @@ All interactions are done through `main.py` from your project's root directory.
 
 ```bash
 python main.py [ACTION_FLAG | --model-id <MODEL_ID> [OPTIONS]]
+# or using the --backend shortcut for CrispASR engines:
+python main.py --backend kokoro --input-text "Hello" --output-file out.wav
 ```
 
 ### CLI Reference
@@ -234,12 +236,14 @@ python main.py [ACTION_FLAG | --model-id <MODEL_ID> [OPTIONS]]
 | `--skip-models M1 M2 ...` | Skip specific model IDs during `--test-all` / `--test-all-speakers` |
 | `--detect-watermark FILE` | Detect AI-generated watermark in a WAV file and report confidence |
 | `--server` | Run as HTTP server with OpenAI-compatible endpoints |
+| `--check` | With `--list-models`: probe CrispASR backends for availability |
 
 #### Synthesis Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--model-id MODEL_ID` | — | TTS model to use (see `--list-models` for choices) |
+| `--backend NAME` | — | Shortcut for CrispASR backends (e.g., `kokoro`, `piper`, `dots-tts`) |
 | `--input-text TEXT` | — | Text to synthesize (mutually exclusive with `--input-file`) |
 | `--input-file PATH` | — | Input file: `.txt`, `.md`, `.html`, `.pdf`, `.epub` |
 | `--output-file PATH` | — | Save audio to file (format detected from extension: `.wav`, `.mp3`, `.flac`, `.opus`) |
@@ -257,6 +261,8 @@ python main.py [ACTION_FLAG | --model-id <MODEL_ID> [OPTIONS]]
 | `--stream` | off | Stream audio playback during synthesis (CrispASR backends only) |
 | `--ref-text TEXT` | — | Transcript of reference voice audio for inline voice cloning (TADA, dots-tts) |
 | `--no-spoken-disclaimer` | off | Skip the AI-disclosure spoken prefix on voice-cloned audio |
+| `--lexicon TSV_PATH` | — | Custom word→phoneme TSV file for CrispASR pronunciation |
+| `--batch` | off | Split input at blank lines, produce numbered output files |
 
 #### CrispASR Integration
 
