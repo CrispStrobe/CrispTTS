@@ -417,6 +417,12 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 240
     if os.environ.get("CRISPTTS_NO_WATERMARK"):
         return pcm.copy()
 
+    # Lazy-load: if no neural backend was loaded yet, try loading on first use.
+    # This avoids loading 200MB+ models at CLI startup for --list-models etc.
+    if _backend == "spread_spectrum" and _wavmark_model is None and _audioseal_generator is None:
+        if not load_wavmark():
+            load_audioseal_python()
+
     if _backend == "wavmark" and _wavmark_model is not None:
         try:
             result = _embed_wavmark(pcm, sample_rate)

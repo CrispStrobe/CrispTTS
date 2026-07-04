@@ -178,7 +178,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 except Exception as e_disc:
                     logger.warning("Server disclaimer prepend failed: %s", e_disc)
 
-            # --- EU AI Act Art. 50: Watermark & metadata injection ---
+            # --- Watermark & metadata injection ---
             if not os.environ.get("CRISPTTS_NO_WATERMARK"):
                 try:
                     from watermark import (
@@ -189,26 +189,21 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                         watermark_embed,
                     )
 
-                    # Embed audio watermark (skip for crispasr — binary already does it)
-                    if handler_key != "crispasr" and tmp_path.endswith(".wav"):
-                        import soundfile as sf_srv
-                        data_srv, sr_srv = sf_srv.read(tmp_path, dtype="float32")
-                        if data_srv.ndim > 1:
-                            data_srv = data_srv[:, 0]
-                        data_srv = watermark_embed(data_srv, sample_rate=sr_srv)
-                        sf_srv.write(tmp_path, data_srv, sr_srv, subtype="PCM_16")
-
-                    # Inject provenance metadata
                     if tmp_path.endswith(".wav"):
+                        if handler_key != "crispasr":
+                            import soundfile as sf_srv
+                            data_srv, sr_srv = sf_srv.read(tmp_path, dtype="float32")
+                            if data_srv.ndim > 1:
+                                data_srv = data_srv[:, 0]
+                            data_srv = watermark_embed(data_srv, sample_rate=sr_srv)
+                            sf_srv.write(tmp_path, data_srv, sr_srv, subtype="PCM_16")
                         with open(tmp_path, "rb") as f_srv:
-                            wav_b = f_srv.read()
-                        wav_b = inject_wav_metadata(wav_b)
+                            wav_b = inject_wav_metadata(f_srv.read())
                         with open(tmp_path, "wb") as f_srv:
                             f_srv.write(wav_b)
                     elif tmp_path.endswith(".mp3"):
                         with open(tmp_path, "rb") as f_srv:
-                            mp3_b = f_srv.read()
-                        mp3_b = inject_mp3_metadata(mp3_b)
+                            mp3_b = inject_mp3_metadata(f_srv.read())
                         with open(tmp_path, "wb") as f_srv:
                             f_srv.write(mp3_b)
                     elif tmp_path.endswith(".flac"):
@@ -220,7 +215,8 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 except Exception as e_wm:
                     logger.warning("Server watermark embedding failed: %s", e_wm)
 
-            audio_data = open(tmp_path, "rb").read()
+            with open(tmp_path, "rb") as f_out:
+                audio_data = f_out.read()
 
             content_type = {
                 "wav": "audio/wav",
@@ -232,6 +228,8 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(audio_data)))
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="tts_output.{response_format}"')
             self.send_header("X-CrispTTS-Model", model)
             self.send_header("X-CrispTTS-Watermarked", "true")
             self.end_headers()

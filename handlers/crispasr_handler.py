@@ -20,6 +20,7 @@ import os
 import platform
 import shutil
 import subprocess
+import threading
 import time
 
 from utils import play_audio
@@ -28,6 +29,7 @@ logger = logging.getLogger("CrispTTS.handlers.crispasr")
 
 _GITHUB_RELEASE_URL = "https://github.com/CrispStrobe/CrispASR/releases/latest/download"
 _CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "crisptts", "crispasr")
+_SYNTHESIS_SEMAPHORE = threading.Semaphore(4)  # Limit concurrent streaming synthesis threads
 
 
 def _find_crispasr():
@@ -270,7 +272,8 @@ def synthesize_with_crispasr(
     t0 = time.time()
     try:
         result = subprocess.run(  # noqa: S603
-            cmd, capture_output=True, text=True, timeout=300,
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            text=True, timeout=300,
         )
 
         if result.stderr:
@@ -334,8 +337,13 @@ def synthesize_with_crispasr_streaming(
     backend = crisptts_model_config.get("crispasr_backend")
     logger.info("CrispASR TTS (streaming): Starting for '%s' (backend: %s)", model_id, backend)
 
+    if not _SYNTHESIS_SEMAPHORE.acquire(timeout=30):
+        logger.error("CrispASR TTS (streaming): Too many concurrent synthesis requests.")
+        return
+
     exe = _find_crispasr()
     if not exe:
+        _SYNTHESIS_SEMAPHORE.release()
         logger.error("CrispASR binary not found.")
         return
 
@@ -442,6 +450,8 @@ def synthesize_with_crispasr_streaming(
         os.unlink(tmp_wav)
     except OSError:
         pass
+    finally:
+        _SYNTHESIS_SEMAPHORE.release()
 
 
 def verify_tts_with_asr(

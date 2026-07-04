@@ -463,28 +463,26 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                     current_model_status = "SUCCESS"
                     logger.info(f"SUCCESS: Output for {model_id} (Voice: {voice_id_for_test}) saved to {output_filename}")  # noqa: E501
 
-                    # Watermark test outputs (EU AI Act Art. 50)
+                    # Watermark test outputs
                     if not os.environ.get("CRISPTTS_NO_WATERMARK"):
                         try:
                             from watermark import inject_mp3_metadata, inject_wav_metadata, watermark_embed
                             out_ext = output_filename.suffix.lower()
-                            if handler_key != "crispasr" and out_ext == ".wav":
-                                import soundfile as sf_tw
-                                d_tw, sr_tw = sf_tw.read(str(output_filename), dtype="float32")
-                                if d_tw.ndim > 1:
-                                    d_tw = d_tw[:, 0]
-                                d_tw = watermark_embed(d_tw, sample_rate=sr_tw)
-                                sf_tw.write(str(output_filename), d_tw, sr_tw, subtype="PCM_16")
                             if out_ext == ".wav":
+                                if handler_key != "crispasr":
+                                    import soundfile as sf_tw
+                                    d_tw, sr_tw = sf_tw.read(str(output_filename), dtype="float32")
+                                    if d_tw.ndim > 1:
+                                        d_tw = d_tw[:, 0]
+                                    d_tw = watermark_embed(d_tw, sample_rate=sr_tw)
+                                    sf_tw.write(str(output_filename), d_tw, sr_tw, subtype="PCM_16")
                                 with open(str(output_filename), "rb") as f_tw:
-                                    wb = f_tw.read()
-                                wb = inject_wav_metadata(wb)
+                                    wb = inject_wav_metadata(f_tw.read())
                                 with open(str(output_filename), "wb") as f_tw:
                                     f_tw.write(wb)
                             elif out_ext == ".mp3":
                                 with open(str(output_filename), "rb") as f_tw:
-                                    mb = f_tw.read()
-                                mb = inject_mp3_metadata(mb)
+                                    mb = inject_mp3_metadata(f_tw.read())
                                 with open(str(output_filename), "wb") as f_tw:
                                     f_tw.write(mb)
                         except Exception as e_tw:
@@ -722,8 +720,10 @@ def run_synthesis(args):
                 except Exception as e_disc:
                     logger.warning("Could not prepend spoken disclaimer: %s", e_disc)
 
-            # --- EU AI Act Art. 50: Watermark embedding & metadata injection ---
-            # CrispASR binary already embeds watermarks, so skip for crispasr handlers.
+            # --- Watermark embedding & metadata injection ---
+            # CrispASR binary already embeds audio watermarks, so skip embed for crispasr.
+            # Metadata injection applies to all outputs. Minimizes file I/O by combining
+            # the watermark write and metadata injection into a single read-modify-write.
             if args.output_file and os.path.isfile(args.output_file):
                 if not os.environ.get("CRISPTTS_NO_WATERMARK"):
                     try:
@@ -738,32 +738,26 @@ def run_synthesis(args):
 
                         out_lower = args.output_file.lower()
 
-                        # Spread-spectrum / AudioSeal / WavMark watermark embedding
-                        if handler_key != "crispasr":  # crispasr binary already watermarks
-                            if out_lower.endswith(".wav"):
-                                import soundfile as sf_wm
+                        if out_lower.endswith(".wav"):
+                            import soundfile as sf_wm
+                            # Single read → watermark embed → write → metadata inject
+                            if handler_key != "crispasr":
                                 data_wm, sr_wm = sf_wm.read(args.output_file, dtype="float32")
                                 if data_wm.ndim > 1:
                                     data_wm = data_wm[:, 0]
                                 data_wm = watermark_embed(data_wm, sample_rate=sr_wm)
                                 sf_wm.write(args.output_file, data_wm, sr_wm, subtype="PCM_16")
-                                logger.info("Audio watermark embedded (EU AI Act Art. 50).")
-
-                        # Metadata injection (always — including crispasr outputs)
-                        if out_lower.endswith(".wav"):
+                                logger.info("Audio watermark embedded.")
+                            # Read the (possibly watermarked) WAV, inject metadata, write once
                             with open(args.output_file, "rb") as f_wm:
-                                wav_bytes = f_wm.read()
-                            wav_bytes = inject_wav_metadata(wav_bytes)
+                                wav_bytes = inject_wav_metadata(f_wm.read())
                             with open(args.output_file, "wb") as f_wm:
                                 f_wm.write(wav_bytes)
-                            logger.debug("WAV AI-provenance metadata injected.")
                         elif out_lower.endswith(".mp3"):
                             with open(args.output_file, "rb") as f_wm:
-                                mp3_bytes = f_wm.read()
-                            mp3_bytes = inject_mp3_metadata(mp3_bytes)
+                                mp3_bytes = inject_mp3_metadata(f_wm.read())
                             with open(args.output_file, "wb") as f_wm:
                                 f_wm.write(mp3_bytes)
-                            logger.debug("MP3 AI-provenance metadata injected.")
                         elif out_lower.endswith(".flac"):
                             inject_flac_metadata(args.output_file)
                         elif out_lower.endswith(".opus") or out_lower.endswith(".ogg"):
@@ -964,23 +958,19 @@ def main_cli_entrypoint():
 
 
     # --- Watermarking setup ---
+    # Neural watermark backends (WavMark/AudioSeal) are lazy-loaded on first
+    # watermark_embed() call to avoid 200MB+ model load on --list-models etc.
+    # Only explicit --watermark-model triggers eager loading.
     if args.no_watermark:
         os.environ["CRISPTTS_NO_WATERMARK"] = "1"
         logger.warning("Audio watermarking disabled via --no-watermark.")
-    else:
+    elif args.watermark_model:
         try:
-            from watermark import load_audioseal_model, load_audioseal_python, load_wavmark
-            # Priority: --watermark-model (GGUF) > wavmark (MIT) > audioseal Python > spread-spectrum
-            if args.watermark_model:
-                if load_audioseal_model(args.watermark_model):
-                    logger.info("AudioSeal neural watermark active (crispasr GGUF).")
-                else:
-                    logger.info("GGUF load failed; trying wavmark/audioseal.")
-                    if not load_wavmark():
-                        load_audioseal_python()
+            from watermark import load_audioseal_model
+            if load_audioseal_model(args.watermark_model):
+                logger.info("AudioSeal neural watermark active (crispasr GGUF).")
             else:
-                if not load_wavmark():
-                    load_audioseal_python()  # auto-detect; silent fallback to spread-spectrum
+                logger.info("GGUF load failed; neural watermark will lazy-load on first use.")
         except ImportError:
             logger.debug("watermark module not available.")
 
