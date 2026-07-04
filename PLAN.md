@@ -339,3 +339,44 @@ Result:
 - Metadata: LIST/INFO with "AI-generated audio" provenance
 - Silence trimming: applied
 - Pipeline: CrispTTS → crispasr binary → watermarked WAV ✓
+
+---
+
+## Phase 8: Performance optimizations (v0.5.0)
+
+Implemented 2026-07-04.
+
+### 8.1 Reduced file I/O in post-synthesis pipeline
+
+WAV watermark embed + metadata injection was 4 I/O ops (read PCM, write PCM,
+read bytes, write bytes). Combined into 3 ops by inlining the metadata read
+into a single read→transform→write pass. MP3 path similarly streamlined.
+Same fix applied to `test_all_models()` loop and `server.py`.
+
+### 8.2 Lazy watermark model loading
+
+Neural watermark backends (WavMark ~200 MB, AudioSeal ~150 MB) were loaded
+eagerly at CLI startup — even for `--list-models` or `--help`. Now they
+lazy-load on first `watermark_embed()` call via a guard in the dispatcher.
+Only explicit `--watermark-model` still triggers eager loading.
+
+### 8.3 Server fixes
+
+- File handle leak: `open()` without context manager → `with` statement
+- Added `Content-Disposition: attachment` header for proper file downloads
+
+### 8.4 Streaming concurrency limit
+
+Added `threading.Semaphore(4)` to cap concurrent streaming synthesis threads.
+Returns error after 30s wait if all slots are occupied. Prevents unbounded
+thread growth under load.
+
+### 8.5 Subprocess stdout optimization
+
+Synthesis subprocess: `capture_output=True` → `stdout=DEVNULL, stderr=PIPE`.
+Only stderr is needed for error reporting. Avoids buffering potentially large
+stdout on long synthesis runs.
+
+| Commit | Tests | CI |
+|--------|-------|----|
+| `c981f3f` | 224 pass | py3.10/3.11/3.12 + ruff ✓ |

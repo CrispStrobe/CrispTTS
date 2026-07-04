@@ -519,7 +519,7 @@ All outputs are watermarked — CLI, `--test-all`, and API server responses. Cri
 | **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio | Auto for cloning | Built-in |
 | **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
 
-**Watermark backend priority**: WavMark (MIT) > AudioSeal (Python) > CrispASR GGUF > spread-spectrum (always-on fallback).
+**Watermark backend priority**: WavMark (MIT) > AudioSeal (Python) > CrispASR GGUF > spread-spectrum (always-on fallback). Neural backends are lazy-loaded on first synthesis — `--list-models` and `--help` remain instant.
 
 ### Voice cloning safety
 
@@ -623,7 +623,7 @@ python server.py --host 0.0.0.0 --port 8880
 
 The `i_have_rights` field is required (and must be `true`) for voice-cloning models. Omit it or set to `false` for non-cloning models.
 
-Response: audio bytes with appropriate Content-Type header. All output is automatically watermarked. Response includes `X-CrispTTS-Watermarked: true` header.
+Response: audio bytes with `Content-Type` and `Content-Disposition: attachment` headers. All output is automatically watermarked (`X-CrispTTS-Watermarked: true`). Voice-cloning models return 403 unless `i_have_rights` is set. Concurrent streaming synthesis is capped at 4 threads.
 
 ## Troubleshooting & Notes
 
