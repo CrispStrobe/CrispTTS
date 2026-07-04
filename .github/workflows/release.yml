@@ -64,13 +64,18 @@ jobs:
           name: dist
           path: dist/*
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          # No --verify-tag: accept an existing pushed tag, or create the tag
-          # at the current commit when triggered via workflow_dispatch.
-          gh release create "$TAG" dist/* \
-            --title "$TAG" \
-            --generate-notes
+          # If the release already exists (e.g. created manually via gh CLI),
+          # upload the build artifacts to it. Otherwise create a new release.
+          if gh release view "$TAG" &>/dev/null; then
+            echo "Release $TAG already exists — uploading artifacts"
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" \
+              --generate-notes
+          fi
