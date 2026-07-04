@@ -231,6 +231,10 @@ def synthesize_with_crispasr(
     if crisptts_model_config.get("_cli_no_spoken_disclaimer"):
         cmd.append("--no-spoken-disclaimer")
 
+    cli_lexicon = crisptts_model_config.get("_cli_lexicon")
+    if cli_lexicon:
+        cmd.extend(["--lexicon", cli_lexicon])
+
     # Parse model params override
     if model_params_override:
         try:

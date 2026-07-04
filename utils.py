@@ -55,48 +55,86 @@ try:
 except ImportError:
     epub = None
 
-# Audio libraries
-PYDUB_AVAILABLE = False
-SOUNDDEVICE_AVAILABLE = False
+# Audio libraries — soundfile is safe to import at module level (no audio
+# hardware init).  pydub and sounddevice are deferred to first use because
+# pydub.playback imports simpleaudio/pyaudio and sounddevice wraps PortAudio,
+# both of which block indefinitely on headless machines without audio hardware.
 SOUNDFILE_AVAILABLE = False
-try:
-    from pydub import AudioSegment
-    from pydub.playback import play as pydub_play
-    PYDUB_AVAILABLE = True
-except ImportError:
-    pass
-try:
-    import sounddevice as sd
-    SOUNDDEVICE_AVAILABLE = True
-except ImportError:
-    pass
 try:
     import soundfile as sf
     SOUNDFILE_AVAILABLE = True
 except ImportError:
     pass
 
+# Lazy-loaded on first use via _ensure_pydub() / _ensure_sounddevice()
+PYDUB_AVAILABLE = None  # None = not yet checked, True/False = result
+SOUNDDEVICE_AVAILABLE = None
+AudioSegment = None
+pydub_play = None
+sd = None
+
+
+def _ensure_pydub():
+    """Lazy-load pydub on first use. Returns True if available."""
+    global PYDUB_AVAILABLE, AudioSegment, pydub_play
+    if PYDUB_AVAILABLE is None:
+        try:
+            from pydub import AudioSegment as _AS
+            from pydub.playback import play as _play
+            AudioSegment = _AS
+            pydub_play = _play
+            PYDUB_AVAILABLE = True
+        except ImportError:
+            PYDUB_AVAILABLE = False
+    return PYDUB_AVAILABLE
+
+
+def _ensure_sounddevice():
+    """Lazy-load sounddevice on first use. Returns True if available."""
+    global SOUNDDEVICE_AVAILABLE, sd
+    if SOUNDDEVICE_AVAILABLE is None:
+        try:
+            import sounddevice as _sd
+            sd = _sd
+            SOUNDDEVICE_AVAILABLE = True
+        except ImportError:
+            SOUNDDEVICE_AVAILABLE = False
+    return SOUNDDEVICE_AVAILABLE
+
 # --- Logger Setup ---
 # Assumes logging is configured in main.py. If utils is imported before, this logger might not have full config.
 logger = logging.getLogger("CrispTTS.utils")
 
-# --- User's Orpheus Decoder (Import with Fallback) ---
-try:
-    from decoder import convert_to_audio as user_orpheus_decoder
-    logger.info("Successfully imported 'convert_to_audio' from user's decoder.py for Orpheus utilities.")
-except ImportError:
-    logger.warning("'decoder.py' not found or 'convert_to_audio' not in it. "
-                   "Orpheus audio decoding in utils will use a placeholder (no audio).")
-    def user_orpheus_decoder_placeholder(multiframe, count):
-        logger.warning("Using PLACEHOLDER orpheus_decoder_convert_to_audio. NO ACTUAL AUDIO WILL BE GENERATED.")
-        return b'' # Return empty bytes
-    user_orpheus_decoder = user_orpheus_decoder_placeholder
-except Exception as e:
-    logger.error(f"Importing 'convert_to_audio' from decoder.py failed: {e}. Using placeholder.")
-    def user_orpheus_decoder_placeholder_exc(multiframe, count):
-        logger.warning("Using PLACEHOLDER orpheus_decoder_convert_to_audio due to import error. NO AUDIO.")
-        return b''
-    user_orpheus_decoder = user_orpheus_decoder_placeholder_exc
+# --- User's Orpheus Decoder (Lazy Import) ---
+# decoder.py loads the SNAC model from HuggingFace at import time, which
+# blocks for seconds or hangs on headless machines. Defer to first use.
+_orpheus_decoder_loaded = False
+user_orpheus_decoder = None
+
+
+def _ensure_orpheus_decoder():
+    """Lazy-load the Orpheus decoder on first use."""
+    global _orpheus_decoder_loaded, user_orpheus_decoder
+    if _orpheus_decoder_loaded:
+        return user_orpheus_decoder
+    _orpheus_decoder_loaded = True
+    try:
+        from decoder import convert_to_audio as _dec
+        user_orpheus_decoder = _dec
+        logger.info("Imported 'convert_to_audio' from decoder.py for Orpheus utilities.")
+    except ImportError:
+        logger.info("decoder.py not found — Orpheus audio decoding will use a placeholder.")
+
+        def _placeholder(multiframe, count):
+            return b''
+        user_orpheus_decoder = _placeholder
+    except Exception as e:
+        logger.warning("decoder.py import failed: %s — using placeholder.", e)
+
+        def _placeholder_err(multiframe, count):
+            return b''
+        user_orpheus_decoder = _placeholder_err
+    return user_orpheus_decoder
 
 
 # --- SuppressOutput Context Manager ---
@@ -368,7 +406,7 @@ def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=Fals
                 return
             if source_path.suffix.lower() == f".{target_format}":
                 shutil.copyfile(source_path, output_filepath)
-            elif PYDUB_AVAILABLE:
+            elif _ensure_pydub():
                 AudioSegment.from_file(source_path).export(output_filepath, format=target_format)
             elif SOUNDFILE_AVAILABLE and target_format == "wav":
                 data, sr = sf.read(source_path)
@@ -384,7 +422,7 @@ def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=Fals
 
             if fmt == "pcm_s16le":
                 current_sample_rate = sample_rate or DEFAULT_ORPHEUS_SR
-                if PYDUB_AVAILABLE:
+                if _ensure_pydub():
                     audio_segment = AudioSegment(data=audio_data_or_path, sample_width=2,
                         frame_rate=current_sample_rate, channels=1)
                     audio_segment.export(output_filepath, format=target_format)
@@ -394,7 +432,7 @@ def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=Fals
                 else:
                     logger.error("Cannot save raw PCM; Pydub or SoundFile (for WAV target) is required.")
                     return
-            elif PYDUB_AVAILABLE:
+            elif _ensure_pydub():
                 AudioSegment.from_file(BytesIO(audio_data_or_path), format=fmt).export(output_filepath,
                     format=target_format)
             elif SOUNDFILE_AVAILABLE and fmt == "wav" and target_format == "wav":
@@ -487,7 +525,7 @@ def trim_silence_file(filepath: str | Path, threshold_db: float = -40.0) -> None
 
 def play_audio(audio_path_or_data, is_path=True, input_format=None, sample_rate=None):
     if is_path:
-        if not PYDUB_AVAILABLE:
+        if not _ensure_pydub():
             logger.error("Pydub not available for file playback.")
             return
         audio_file_path = Path(audio_path_or_data)
@@ -508,7 +546,7 @@ def play_audio(audio_path_or_data, is_path=True, input_format=None, sample_rate=
 
         if fmt == "pcm_s16le":
             current_sample_rate = sample_rate or DEFAULT_ORPHEUS_SR
-            if not SOUNDDEVICE_AVAILABLE:
+            if not _ensure_sounddevice():
                 logger.error("Sounddevice not available for raw PCM playback.")
                 return
             try:
@@ -519,7 +557,7 @@ def play_audio(audio_path_or_data, is_path=True, input_format=None, sample_rate=
                 logger.info("Playback finished.")
             except Exception as e:
                 logger.error(f"Error playing PCM audio with sounddevice: {e}", exc_info=True)
-        elif PYDUB_AVAILABLE:
+        elif _ensure_pydub():
             from io import BytesIO
             try:
                 logger.info(f"Playing audio bytes (format: {fmt})...")
@@ -621,7 +659,8 @@ def _orpheus_master_token_processor_and_decoder(raw_token_text_generator, output
                         buffer_to_process = token_buffer[-28:]
                         if len(buffer_to_process) == 28:
                             try:
-                                audio_chunk_bytes = user_orpheus_decoder(buffer_to_process, token_count_for_decoder)
+                                dec = _ensure_orpheus_decoder()
+                                audio_chunk_bytes = dec(buffer_to_process, token_count_for_decoder)
                                 if audio_chunk_bytes and isinstance(audio_chunk_bytes,
                                     bytes) and len(audio_chunk_bytes) > 0:
                                     all_audio_data.extend(audio_chunk_bytes)
@@ -686,7 +725,7 @@ def _prepare_oute_speaker_ref(speaker_ref_path_str: str, model_id_for_log: str =
         return None, None
 
     # At this point, speaker_ref_path_input should be a valid Path object to an existing .wav file
-    if not PYDUB_AVAILABLE:
+    if not _ensure_pydub():
         logger.warning(f"{model_id_for_log} - Pydub not available. Cannot check/trim reference audio length. Using as is: '{speaker_ref_path_input}'. Max length for OuteTTS is ~14.5s.")  # noqa: E501
         return speaker_ref_path_input, None # Return original path, no temp file created
 

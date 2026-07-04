@@ -19,6 +19,7 @@ import sys
 import tempfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from socketserver import ThreadingMixIn
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -258,7 +259,10 @@ def run_server(host: str = "127.0.0.1", port: int = 8880):
     logger.info("  POST /v1/audio/speech — synthesize audio (OpenAI-compatible)")
     logger.info("  GET  /v1/audio/models — list available models")
     logger.info("  GET  /health          — health check")
-    server = HTTPServer((host, port), TTSRequestHandler)
+    class _ThreadedServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = _ThreadedServer((host, port), TTSRequestHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

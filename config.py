@@ -4,39 +4,20 @@ import logging  # Use logging for config-level warnings if needed
 
 logger_cfg = logging.getLogger("CrispTTS.config")
 
-# --- Attempt to import PyTorch for type hints if available ---
-try:
-    import torch
-    TORCH_AVAILABLE_FOR_CONFIG = True
-except ImportError:
-    torch = None # type: ignore
-    TORCH_AVAILABLE_FOR_CONFIG = False
+# --- Lazy imports for optional heavy dependencies ---
+# PyTorch and OuteTTS are NOT imported at module level to avoid blocking
+# on headless machines or when their packages hang (OuteTTS imports protobuf
+# compilation which can block indefinitely on some systems).
+# Instead, use string fallbacks in model configs and resolve at handler time.
+TORCH_AVAILABLE_FOR_CONFIG = False
+torch = None  # type: ignore
+OUTETTS_AVAILABLE_FOR_CONFIG = False
+OuteTTSModels_Enum = None  # type: ignore
+OuteTTSBackend_Enum = None  # type: ignore
+OuteTTSLlamaCppQuantization_Enum = None  # type: ignore
+OuteTTSInterfaceVersion_Enum = None  # type: ignore
 
 DEFAULT_GERMAN_REF_WAV = "./german.wav"
-
-# --- Attempt to import OuteTTS enums ---
-OUTETTS_AVAILABLE_FOR_CONFIG = False
-OuteTTSModels_Enum = None # type: ignore
-OuteTTSBackend_Enum = None # type: ignore
-OuteTTSLlamaCppQuantization_Enum = None # type: ignore
-OuteTTSInterfaceVersion_Enum = None # type: ignore
-
-if TORCH_AVAILABLE_FOR_CONFIG: # OuteTTS depends on PyTorch
-    try:
-        from outetts import Backend as _OuteTTSBackend_Enum
-        from outetts import InterfaceVersion as _OuteTTSInterfaceVersion_Enum
-        from outetts import LlamaCppQuantization as _OuteTTSLlamaCppQuantization_Enum
-        from outetts import Models as _OuteTTSModels_Enum
-        OuteTTSModels_Enum = _OuteTTSModels_Enum
-        OuteTTSBackend_Enum = _OuteTTSBackend_Enum
-        OuteTTSLlamaCppQuantization_Enum = _OuteTTSLlamaCppQuantization_Enum
-        OuteTTSInterfaceVersion_Enum = _OuteTTSInterfaceVersion_Enum
-        OUTETTS_AVAILABLE_FOR_CONFIG = True
-        logger_cfg.debug("Successfully imported OuteTTS enums.")
-    except ImportError:
-        logger_cfg.info("OuteTTS library not found during config load. OuteTTS enums will be placeholders.")
-    except AttributeError: # Catches error if protobufs for OuteTTS are not compiled
-        logger_cfg.warning("OuteTTS import has AttributeError (likely protobuf issue). OuteTTS enums will be placeholders.")  # noqa: E501
 
 
 # --- Global TTS Constants ---

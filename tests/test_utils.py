@@ -317,16 +317,22 @@ class TestHelperFunctions(unittest.TestCase):
             self.assertEqual(result, Path("/tmp/test_hf_home"))
 
     def test_pydub_available_is_boolean(self):
-        from utils import PYDUB_AVAILABLE
-        self.assertIsInstance(PYDUB_AVAILABLE, bool)
+        from utils import PYDUB_AVAILABLE, _ensure_pydub
+        # Before first use: None (lazy sentinel). After ensure: bool.
+        self.assertIn(PYDUB_AVAILABLE, (None, True, False))
+        result = _ensure_pydub()
+        self.assertIsInstance(result, bool)
 
     def test_soundfile_available_is_boolean(self):
         from utils import SOUNDFILE_AVAILABLE
         self.assertIsInstance(SOUNDFILE_AVAILABLE, bool)
 
-    def test_sounddevice_available_is_boolean(self):
-        from utils import SOUNDDEVICE_AVAILABLE
-        self.assertIsInstance(SOUNDDEVICE_AVAILABLE, bool)
+    def test_sounddevice_available_is_lazy(self):
+        from utils import SOUNDDEVICE_AVAILABLE, _ensure_sounddevice
+        # Before first use: None (lazy sentinel). After ensure: bool.
+        self.assertIn(SOUNDDEVICE_AVAILABLE, (None, True, False))
+        result = _ensure_sounddevice()
+        self.assertIsInstance(result, bool)
 
 
 if __name__ == "__main__":

@@ -380,3 +380,66 @@ stdout on long synthesis runs.
 | Commit | Tests | CI |
 |--------|-------|----|
 | `c981f3f` | 224 pass | py3.10/3.11/3.12 + ruff ✓ |
+
+---
+
+## Phase 9: Usability & reliability
+
+### 9.1 Fix utils.py import hang on headless machines
+
+`utils.py` imports pygame/sounddevice at module level, which blocks indefinitely
+on headless machines (no audio hardware). This causes:
+- Live tests to hang in pytest (pygame audio init blocks)
+- Slow CLI startup on servers/VPS
+
+**Fix**: Move pygame/sounddevice imports inside `play_audio()` and other
+functions that actually need them. Guard with try/except at use-time, not
+import-time.
+
+**Files**: `utils.py`
+
+### 9.2 `--backend` CLI shortcut
+
+Users currently must remember `--model-id crispasr_kokoro` when they think
+in CrispASR backend names (`kokoro`). Add `--backend NAME` as a shortcut
+that auto-selects the matching `crispasr_*` config entry.
+
+**Files**: `main.py` (argparse + dispatch logic)
+
+### 9.3 Threaded HTTP server
+
+Replace `HTTPServer` with `ThreadingHTTPServer` (stdlib). Current server
+blocks on each request — a long synthesis blocks all other clients.
+
+**Files**: `server.py` (one-line change + import)
+
+### 9.4 Batch synthesis mode
+
+`--input-file book.txt` currently produces one giant file. Add paragraph
+splitting: `--batch` flag splits input at blank lines, produces numbered
+output files (`output_001.wav`, `output_002.wav`, ...).
+
+**Files**: `main.py`, `chunking.py`
+
+### 9.5 Model availability probe
+
+`--list-models --check` probes each CrispASR backend with a quick
+`crispasr --backend X -m auto --dry-run` to show which backends are
+actually available (model cached) vs. need downloading vs. unsupported.
+
+**Files**: `main.py`, `handlers/crispasr_handler.py`
+
+### 9.6 Config validation
+
+Add a `validate_config()` function that checks all GERMAN_TTS_MODELS entries
+at startup for required fields, valid handler keys, and correct types. Emit
+clear warnings for misconfigured entries instead of failing at synthesis time.
+
+**Files**: `config.py` or new `validate.py`, `main.py`
+
+### 9.7 Pronunciation lexicon support
+
+Pass custom word→phoneme mappings to CrispASR backends via
+`--lexicon file.tsv` for domain-specific terms (medical, legal, brand names).
+
+**Files**: `main.py` (argparse), `handlers/crispasr_handler.py` (pass-through)

@@ -650,6 +650,8 @@ def run_synthesis(args):
         current_config_for_handler["reference_text"] = args.ref_text
     if getattr(args, 'no_spoken_disclaimer', False):
         current_config_for_handler["_cli_no_spoken_disclaimer"] = True
+    if getattr(args, 'lexicon', None):
+        current_config_for_handler["_cli_lexicon"] = args.lexicon
 
     handler_key = current_config_for_handler.get("handler_function_key", args.model_id)
     handler_func = current_all_handlers.get(handler_key)
@@ -800,12 +802,71 @@ def run_synthesis(args):
     else:
         logger.error(f"No synthesis handler function found for model ID: {args.model_id} (handler key: {handler_key})")
 
+def _probe_crispasr_backends(models_dict):
+    """Probe CrispASR backends to check which models are available."""
+    from handlers.crispasr_handler import _find_crispasr
+    exe = _find_crispasr()
+    if not exe:
+        print("\n[Check] CrispASR binary not found — cannot probe backends.")
+        return
+
+    print(f"\n[Check] Probing CrispASR backends (binary: {exe})...")
+    crispasr_models = {
+        mid: cfg for mid, cfg in models_dict.items()
+        if cfg.get("handler_function_key") == "crispasr"
+    }
+    for mid, cfg in crispasr_models.items():
+        backend = cfg.get("crispasr_backend", "?")
+        model_path = cfg.get("crispasr_model_path", "auto")
+        try:
+            import subprocess
+            result = subprocess.run(  # noqa: S603
+                [exe, "-m", model_path, "--backend", backend,
+                 "--auto-download", "--dry-run"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                print(f"  {mid:40s} [{backend:20s}]  READY")
+            else:
+                # Check if model just needs downloading
+                if "downloading" in (result.stderr or "").lower() or "resolving" in (result.stderr or "").lower():
+                    print(f"  {mid:40s} [{backend:20s}]  NEEDS DOWNLOAD")
+                else:
+                    print(f"  {mid:40s} [{backend:20s}]  UNAVAILABLE")
+        except subprocess.TimeoutExpired:
+            print(f"  {mid:40s} [{backend:20s}]  TIMEOUT")
+        except Exception:
+            print(f"  {mid:40s} [{backend:20s}]  ERROR")
+
+
+def _validate_config():
+    """Check GERMAN_TTS_MODELS entries for common misconfigurations."""
+    from config import GERMAN_TTS_MODELS
+    issues = []
+    for mid, cfg in GERMAN_TTS_MODELS.items():
+        if not isinstance(cfg, dict):
+            issues.append(f"  {mid}: config is not a dict")
+            continue
+        if "handler_function_key" not in cfg:
+            issues.append(f"  {mid}: missing 'handler_function_key'")
+        if cfg.get("handler_function_key") == "crispasr" and "crispasr_backend" not in cfg:
+            issues.append(f"  {mid}: crispasr handler but missing 'crispasr_backend'")
+        sr = cfg.get("sample_rate")
+        if sr is not None and (not isinstance(sr, int) or sr <= 0):
+            issues.append(f"  {mid}: invalid sample_rate={sr}")
+    if issues:
+        logger.warning("Config validation warnings:\n%s", "\n".join(issues))
+    return len(issues) == 0
+
+
 def main_cli_entrypoint():
     parser = argparse.ArgumentParser(description="CrispTTS: Modular German Text-to-Speech Synthesizer",
         formatter_class=argparse.RawTextHelpFormatter)
     action_group = parser.add_argument_group(title="Primary Actions")
     input_group = parser.add_mutually_exclusive_group(required=False)
     action_group.add_argument("--list-models", action="store_true", help="List all configured TTS models.")
+    action_group.add_argument("--check", action="store_true",
+        help="With --list-models: probe CrispASR backends to show availability status.")
     action_group.add_argument("--voice-info", type=str, metavar="MODEL_ID",
         help="Display voice/speaker info for a specific MODEL_ID.")
     action_group.add_argument("--test-all", action="store_true",
@@ -831,6 +892,9 @@ def main_cli_entrypoint():
     model_choices = list(GERMAN_TTS_MODELS.keys()) if GERMAN_TTS_MODELS else []
     synth_group.add_argument("--model-id", type=str, choices=model_choices, default=None,
         help="Select TTS model ID. Required for single synthesis if not using an action flag.")
+    synth_group.add_argument("--backend", type=str, default=None, metavar="NAME",
+        help="Shortcut: select a CrispASR backend by name (e.g., kokoro, piper, dots-tts).\n"
+             "Equivalent to --model-id crispasr_<name> but more convenient.")
     synth_group.add_argument("--output-file", type=str, help="Path to save synthesized audio (for single synthesis).")
     synth_group.add_argument("--output-dir", type=str, default="tts_test_outputs",
         help="Directory for --test-all* outputs (default: tts_test_outputs).")
@@ -860,6 +924,11 @@ def main_cli_entrypoint():
         help="Transcript of the reference voice audio for inline voice cloning (TADA, dots-tts).")
     synth_group.add_argument("--no-spoken-disclaimer", action="store_true",
         help="Skip the AI-disclosure spoken prefix on voice-cloned audio.")
+    synth_group.add_argument("--lexicon", type=str, default=None, metavar="TSV_PATH",
+        help="Path to a word→phoneme TSV file for custom pronunciation (CrispASR backends).")
+    synth_group.add_argument("--batch", action="store_true",
+        help="Batch mode: split input at blank lines, produce numbered output files\n"
+             "(e.g., output_001.wav, output_002.wav, ...). Requires --output-dir.")
 
     # CrispASR integration options
     crispasr_group = parser.add_argument_group(title="CrispASR Integration")
@@ -917,6 +986,28 @@ def main_cli_entrypoint():
 
     args = parser.parse_args()
 
+    # --- Resolve --backend shortcut to --model-id ---
+    if getattr(args, 'backend', None) and not args.model_id:
+        backend_name = args.backend.replace("-", "_")
+        candidate = f"crispasr_{backend_name}"
+        if candidate in GERMAN_TTS_MODELS:
+            args.model_id = candidate
+        else:
+            # Try with original name (e.g. "dots-tts" → "crispasr_dots_tts")
+            candidate2 = f"crispasr_{args.backend.replace('-', '_')}_tts"
+            if candidate2 in GERMAN_TTS_MODELS:
+                args.model_id = candidate2
+            else:
+                # Search for any model with matching crispasr_backend value
+                for mid, cfg in GERMAN_TTS_MODELS.items():
+                    if cfg.get("crispasr_backend") == args.backend:
+                        args.model_id = mid
+                        break
+                else:
+                    print(f"Error: No CrispASR backend matching '{args.backend}'. "
+                          f"Use --list-models to see available models.")
+                    return
+
     logging.basicConfig(level=args.loglevel.upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S', force=True)
     cli_numeric_log_level = getattr(logging, args.loglevel.upper(), logging.INFO)
@@ -956,6 +1047,9 @@ def main_cli_entrypoint():
     logger.info(f"Effective logging level for CrispTTS and sub-loggers set to: {args.loglevel.upper()}")
     _main_mp_logger.debug(f"Monkey patch logger effective level is: {logging.getLevelName(_main_mp_logger.getEffectiveLevel())}")  # noqa: E501
 
+
+    # --- Config validation ---
+    _validate_config()
 
     # --- Watermarking setup ---
     # Neural watermark backends (WavMark/AudioSeal) are lazy-loaded on first
@@ -1006,6 +1100,8 @@ def main_cli_entrypoint():
 
     if args.list_models:
         list_available_models(GERMAN_TTS_MODELS)
+        if getattr(args, 'check', False):
+            _probe_crispasr_backends(GERMAN_TTS_MODELS)
         return
     if args.voice_info:
         if args.voice_info not in GERMAN_TTS_MODELS:
@@ -1045,6 +1141,32 @@ def main_cli_entrypoint():
     if not _HANDLERS_LOADED:
         logger.critical(f"Failed to load handlers. Aborting synthesis for model '{args.model_id}'.")
         return
+
+    # --- Batch mode: split at blank lines, produce numbered files ---
+    batch_text = None
+    if getattr(args, 'batch', False):
+        batch_text = get_text_from_input(
+            getattr(args, 'input_text', None), getattr(args, 'input_file', None))
+    if batch_text:
+        paragraphs = [p.strip() for p in batch_text.split("\n\n") if p.strip()]
+        if len(paragraphs) <= 1:
+            logger.info("Batch mode: only 1 paragraph found, running single synthesis.")
+            run_synthesis(args)
+            return
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        ext = ".mp3" if args.model_id == "edge" else ".wav"
+        logger.info("Batch mode: %d paragraphs → %s/", len(paragraphs), output_dir)
+        for i, para in enumerate(paragraphs, 1):
+            batch_args = argparse.Namespace(**vars(args))
+            batch_args.input_text = para
+            batch_args.output_file = str(output_dir / f"output_{i:03d}{ext}")
+            batch_args.batch = False  # prevent recursion
+            logger.info("Batch [%d/%d]: %s", i, len(paragraphs), para[:60])
+            run_synthesis(batch_args)
+        logger.info("Batch synthesis complete: %d files in %s/", len(paragraphs), output_dir)
+        return
+
     run_synthesis(args)
 
 if __name__ == "__main__":
