@@ -292,6 +292,7 @@ python main.py --backend kokoro --input-text "Hello" --output-file out.wav
 | `--server` | off | Start the HTTP API server |
 | `--server-host ADDR` | `127.0.0.1` | Server bind address |
 | `--server-port PORT` | `8880` | Server port |
+| `--rate-limit N` | `10` | Max synthesis requests per minute per IP (0=unlimited) |
 
 #### Model-Specific Parameters (`--model-params`)
 
@@ -629,7 +630,13 @@ python server.py --host 0.0.0.0 --port 8880
 
 The `i_have_rights` field is required (and must be `true`) for voice-cloning models. Omit it or set to `false` for non-cloning models.
 
-Response: audio bytes with `Content-Type` and `Content-Disposition: attachment` headers. All output is automatically watermarked (`X-CrispTTS-Watermarked: true`). Voice-cloning models return 403 unless `i_have_rights` is set. Concurrent streaming synthesis is capped at 4 threads.
+Response: audio bytes with `Content-Type` and `Content-Disposition: attachment` headers. Features:
+- All output watermarked (`X-CrispTTS-Watermarked: true`)
+- Voice-cloning models return 403 unless `i_have_rights` is set
+- Concurrent requests handled via threaded server
+- Rate limiting: 10 requests/minute/IP (configurable via `--rate-limit`)
+- Synthesis caching: identical requests served from cache (`X-CrispTTS-Cache: hit`)
+- Enhanced `/health`: reports loaded handlers, memory RSS, registered backends
 
 ## Troubleshooting & Notes
 

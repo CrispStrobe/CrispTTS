@@ -543,3 +543,17 @@ Extend `/health` to report loaded handlers, memory usage (RSS), pending
 requests, and uptime. Useful for monitoring in production.
 
 **Files**: `server.py`
+
+### Status: ALL PHASE 10 ITEMS COMPLETE
+
+| Task | Commit |
+|------|--------|
+| 10.1 Lazy handler registry | `bf0fabc` |
+| 10.2 Test suite markers | `bf0fabc` |
+| 10.3 Server rate limiting | `bf0fabc` |
+| 10.4 Audio crossfade | `bf0fabc` |
+| 10.5 Synthesis caching | `bf0fabc` |
+| 10.6 Batch error recovery | `bf0fabc` |
+| 10.7 Enhanced /health | `bf0fabc` |
+
+224 tests passing in 53s (was 350s before lazy registry).
