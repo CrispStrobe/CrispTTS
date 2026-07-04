@@ -871,6 +871,10 @@ def main_cli_entrypoint():
         help="List of model IDs (space-separated) to skip during --test-all or --test-all-speakers.")
     action_group.add_argument("--detect-watermark", type=str, metavar="AUDIO_FILE",
         help="Detect AI-generated watermark in a WAV file and report confidence.")
+    action_group.add_argument("--cache-stats", action="store_true",
+        help="Show synthesis cache statistics (size, entries).")
+    action_group.add_argument("--cache-clear", action="store_true",
+        help="Clear the synthesis cache.")
     action_group.add_argument("--server", action="store_true",
         help="Run as HTTP server with OpenAI-compatible /v1/audio/speech endpoint.")
     action_group.add_argument("--server-host", type=str, default="127.0.0.1",
@@ -1071,6 +1075,41 @@ def main_cli_entrypoint():
     if args.server:
         from server import run_server
         run_server(args.server_host, args.server_port)
+        return
+
+    if getattr(args, 'cache_stats', False):
+        try:
+            import cache as _cache
+            _cache.configure(enabled=True)
+            total_size = 0
+            n_entries = 0
+            for name in os.listdir(_cache._cache_dir):
+                path = os.path.join(_cache._cache_dir, name)
+                if os.path.isfile(path):
+                    total_size += os.path.getsize(path)
+                    n_entries += 1
+            print(f"Cache directory: {_cache._cache_dir}")
+            print(f"Entries: {n_entries}")
+            print(f"Total size: {total_size / 1024 / 1024:.1f} MB")
+            print(f"Max size: {_cache._max_bytes / 1024 / 1024:.0f} MB")
+        except Exception as e:
+            print(f"Cache stats error: {e}")
+        return
+
+    if getattr(args, 'cache_clear', False):
+        try:
+            import shutil
+
+            import cache as _cache
+            if os.path.isdir(_cache._cache_dir):
+                n = len(os.listdir(_cache._cache_dir))
+                shutil.rmtree(_cache._cache_dir)
+                os.makedirs(_cache._cache_dir, exist_ok=True)
+                print(f"Cleared {n} cached entries from {_cache._cache_dir}")
+            else:
+                print("Cache directory does not exist.")
+        except Exception as e:
+            print(f"Cache clear error: {e}")
         return
 
     if args.detect_watermark:

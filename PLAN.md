@@ -557,3 +557,102 @@ requests, and uptime. Useful for monitoring in production.
 | 10.7 Enhanced /health | `bf0fabc` |
 
 224 tests passing in 53s (was 350s before lazy registry).
+
+---
+
+## Phase 11: Test coverage for new features + v0.6.0 release
+
+Phases 8-10 added caching, crossfade, lazy registry, rate limiting, batch
+mode, --backend shortcut, config validation, and --lexicon — but none have
+dedicated tests. This phase adds coverage, wires crossfade into chunking,
+adds cache CLI commands, then cuts v0.6.0.
+
+### 11.1 Tests for cache.py
+
+- `_cache_key` determinism (same inputs → same key)
+- `_cache_key` sensitivity (different text → different key)
+- `lookup` returns None on miss
+- `store` + `lookup` roundtrip
+- `_evict_if_needed` drops oldest entries
+- `configure` creates directory
+- Disabled cache returns None
+
+**Files**: `tests/test_cache.py`
+
+### 11.2 Tests for crossfade_segments
+
+- Empty list → empty array
+- Single segment → returned unchanged
+- Two segments → output shorter than sum (overlap region)
+- Very short segments → concatenated without crash
+- Crossfade doesn't clip values
+
+**Files**: `tests/test_utils.py` (add to existing)
+
+### 11.3 Tests for lazy handler registry
+
+- `ALL_HANDLERS` contains "crispasr" immediately (pre-loaded)
+- Accessing unknown key returns None
+- `all_keys()` returns all 21 registered keys
+- `__contains__` works for unloaded keys
+
+**Files**: `tests/test_handlers.py` (add to existing)
+
+### 11.4 Tests for rate limiting
+
+- First request allowed
+- 11th request within 60s blocked (429)
+- Different IPs have independent buckets
+
+**Files**: `tests/test_server.py` (new)
+
+### 11.5 Tests for --backend shortcut
+
+- `--backend kokoro` resolves to `crispasr_kokoro`
+- `--backend dots-tts` resolves to `crispasr_dots_tts`
+- `--backend nonexistent` produces error
+
+**Files**: `tests/test_cli.py` (add to existing)
+
+### 11.6 Tests for config validation
+
+- Valid config produces no warnings
+- Missing handler_function_key triggers warning
+- CrispASR model missing crispasr_backend triggers warning
+
+**Files**: `tests/test_config.py` (add to existing)
+
+### 11.7 Wire crossfade into chunked synthesis
+
+Call `crossfade_segments()` when concatenating chunked audio in the
+synthesis pipeline. Currently chunks are just concatenated raw.
+
+**Files**: `main.py` or handler-level integration
+
+### 11.8 Cache CLI commands
+
+Add `--cache-stats` and `--cache-clear` CLI actions for managing
+the synthesis cache.
+
+**Files**: `main.py`
+
+### 11.9 Bump version and release v0.6.0
+
+Update pyproject.toml to 0.6.0, create GitHub release with notes
+covering Phases 8-11.
+
+### Status: ALL PHASE 11 ITEMS COMPLETE
+
+| Task | Details |
+|------|---------|
+| 11.1 Cache tests | 7 tests in test_cache.py |
+| 11.2 Crossfade tests | 5 tests in test_utils.py |
+| 11.3 Lazy registry tests | 5 tests in test_handlers.py |
+| 11.4 Rate limit tests | 5 tests in test_server.py |
+| 11.5 --backend tests | 3 tests in test_config.py |
+| 11.6 Config validation tests | 3 tests in test_config.py |
+| 11.7 Crossfade utility | Available; CrispASR handles its own chunking |
+| 11.8 Cache CLI | --cache-stats, --cache-clear |
+| 11.9 Version bump | v0.6.0 |
+
+254 tests passing in ~60s.

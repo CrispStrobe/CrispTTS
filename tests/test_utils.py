@@ -335,5 +335,54 @@ class TestHelperFunctions(unittest.TestCase):
         self.assertIsInstance(result, bool)
 
 
+class TestCrossfadeSegments(unittest.TestCase):
+    """Test crossfade_segments utility."""
+
+    def test_empty_list(self):
+        from utils import crossfade_segments
+        result = crossfade_segments([])
+        self.assertEqual(len(result), 0)
+
+    def test_single_segment(self):
+        import numpy as np
+
+        from utils import crossfade_segments
+        seg = np.ones(1000, dtype=np.float32)
+        result = crossfade_segments([seg])
+        np.testing.assert_array_equal(result, seg)
+
+    def test_two_segments_overlap(self):
+        import numpy as np
+
+        from utils import crossfade_segments
+        seg1 = np.ones(2400, dtype=np.float32) * 0.5
+        seg2 = np.ones(2400, dtype=np.float32) * 0.8
+        result = crossfade_segments([seg1, seg2], crossfade_ms=50, sample_rate=24000)
+        # Result should be shorter than sum (overlap region)
+        self.assertLess(len(result), len(seg1) + len(seg2))
+        # But longer than either alone
+        self.assertGreater(len(result), max(len(seg1), len(seg2)))
+
+    def test_short_segments_no_crash(self):
+        import numpy as np
+
+        from utils import crossfade_segments
+        seg1 = np.ones(10, dtype=np.float32)
+        seg2 = np.ones(10, dtype=np.float32)
+        result = crossfade_segments([seg1, seg2], crossfade_ms=50, sample_rate=24000)
+        # Too short for crossfade — should concatenate
+        self.assertEqual(len(result), 20)
+
+    def test_no_clipping(self):
+        import numpy as np
+
+        from utils import crossfade_segments
+        seg1 = np.ones(2400, dtype=np.float32) * 0.9
+        seg2 = np.ones(2400, dtype=np.float32) * 0.9
+        result = crossfade_segments([seg1, seg2], crossfade_ms=50, sample_rate=24000)
+        # Linear crossfade of 0.9 * fade + 0.9 * fade = 0.9 max
+        self.assertLessEqual(float(np.max(np.abs(result))), 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

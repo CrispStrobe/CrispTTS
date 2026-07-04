@@ -215,5 +215,70 @@ class TestConstants(unittest.TestCase):
         self.assertGreater(len(SAUERKRAUT_VOICES), 0)
 
 
+class TestConfigValidation(unittest.TestCase):
+    """Test the _validate_config function from main.py."""
+
+    def test_valid_config_no_warnings(self):
+        """Current config should pass validation."""
+        import sys
+        sys.path.insert(0, ".")
+        from main import _validate_config
+        result = _validate_config()
+        self.assertTrue(result)
+
+    def test_detects_missing_handler_key(self):
+        """A model without handler_function_key should trigger a warning."""
+        # Temporarily add a bad entry
+        from config import GERMAN_TTS_MODELS
+        from main import _validate_config
+        GERMAN_TTS_MODELS["_test_bad"] = {"notes": "test"}
+        try:
+            result = _validate_config()
+            self.assertFalse(result)
+        finally:
+            del GERMAN_TTS_MODELS["_test_bad"]
+
+    def test_detects_missing_crispasr_backend(self):
+        """A crispasr model without crispasr_backend should warn."""
+        from config import GERMAN_TTS_MODELS
+        from main import _validate_config
+        GERMAN_TTS_MODELS["_test_bad_crispasr"] = {
+            "handler_function_key": "crispasr",
+            "notes": "test",
+        }
+        try:
+            result = _validate_config()
+            self.assertFalse(result)
+        finally:
+            del GERMAN_TTS_MODELS["_test_bad_crispasr"]
+
+
+class TestBackendShortcut(unittest.TestCase):
+    """Test the --backend CLI shortcut resolution."""
+
+    def test_kokoro_resolves(self):
+        """--backend kokoro should resolve to crispasr_kokoro."""
+        from config import GERMAN_TTS_MODELS
+        # Simulate the resolution logic from main.py
+        backend_name = "kokoro".replace("-", "_")
+        candidate = f"crispasr_{backend_name}"
+        self.assertIn(candidate, GERMAN_TTS_MODELS)
+
+    def test_dots_tts_resolves(self):
+        """--backend dots-tts should resolve via crispasr_backend search."""
+        from config import GERMAN_TTS_MODELS
+        found = False
+        for _mid, cfg in GERMAN_TTS_MODELS.items():
+            if cfg.get("crispasr_backend") == "dots-tts":
+                found = True
+                break
+        self.assertTrue(found, "No model with crispasr_backend='dots-tts'")
+
+    def test_piper_resolves(self):
+        from config import GERMAN_TTS_MODELS
+        candidate = "crispasr_piper"
+        self.assertIn(candidate, GERMAN_TTS_MODELS)
+
+
 if __name__ == "__main__":
     unittest.main()

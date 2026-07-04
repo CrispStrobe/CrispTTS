@@ -11,9 +11,35 @@ class TestHandlerRegistry(unittest.TestCase):
 
     def test_crispasr_handler_registered(self):
         """CrispASR handler should always be importable (no ML deps)."""
-        # Import directly to avoid triggering all other handlers
         from handlers.crispasr_handler import synthesize_with_crispasr
         self.assertTrue(callable(synthesize_with_crispasr))
+
+    def test_lazy_registry_preloads_crispasr(self):
+        """The lazy registry should pre-load crispasr (no ML deps)."""
+        from handlers import ALL_HANDLERS
+        self.assertIn("crispasr", ALL_HANDLERS.keys())
+        self.assertIsNotNone(ALL_HANDLERS["crispasr"])
+
+    def test_lazy_registry_all_keys(self):
+        """all_keys() should return all 21 registered handler keys."""
+        from handlers import ALL_HANDLERS
+        keys = ALL_HANDLERS.all_keys()
+        self.assertGreaterEqual(len(keys), 21)
+        self.assertIn("crispasr", keys)
+        self.assertIn("edge", keys)
+        self.assertIn("kokoro_onnx", keys)
+
+    def test_lazy_registry_contains_unloaded(self):
+        """__contains__ should work for keys not yet loaded."""
+        from handlers import ALL_HANDLERS
+        self.assertIn("edge", ALL_HANDLERS)
+        self.assertIn("outetts", ALL_HANDLERS)
+
+    def test_lazy_registry_unknown_key_returns_none(self):
+        """Accessing an unknown key should return None."""
+        from handlers import ALL_HANDLERS
+        result = ALL_HANDLERS["nonexistent_handler_xyz"]
+        self.assertIsNone(result)
 
     def test_handler_function_signature(self):
         """All handlers must accept the standard 6-argument signature."""
