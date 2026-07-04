@@ -648,6 +648,10 @@ def run_synthesis(args):
         current_config_for_handler["_cli_pitch_shift"] = args.pitch_shift
     if getattr(args, 'instruct', None):
         current_config_for_handler["instruct"] = args.instruct  # override config instruct
+    if getattr(args, 'ref_text', None):
+        current_config_for_handler["reference_text"] = args.ref_text
+    if getattr(args, 'no_spoken_disclaimer', False):
+        current_config_for_handler["_cli_no_spoken_disclaimer"] = True
 
     handler_key = current_config_for_handler.get("handler_function_key", args.model_id)
     handler_func = current_all_handlers.get(handler_key)
@@ -702,8 +706,9 @@ def run_synthesis(args):
                 except Exception as e_rs:
                     logger.warning("Could not resample output: %s", e_rs)
 
-            # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
-            if _is_voice_cloning and args.output_file and os.path.isfile(args.output_file):
+            # --- Spoken disclaimer for voice-cloned audio ---
+            if (_is_voice_cloning and args.output_file and os.path.isfile(args.output_file)
+                    and not getattr(args, 'no_spoken_disclaimer', False)):
                 try:
                     import soundfile as sf_disc
 
@@ -857,6 +862,10 @@ def main_cli_entrypoint():
         help="Resample output audio to this sample rate (e.g., 16000, 22050, 44100).")
     synth_group.add_argument("--stream", action="store_true",
         help="Stream audio playback during synthesis (crispasr backends only).")
+    synth_group.add_argument("--ref-text", type=str, default=None, metavar="TEXT",
+        help="Transcript of the reference voice audio for inline voice cloning (TADA, dots-tts).")
+    synth_group.add_argument("--no-spoken-disclaimer", action="store_true",
+        help="Skip the AI-disclosure spoken prefix on voice-cloned audio.")
 
     # CrispASR integration options
     crispasr_group = parser.add_argument_group(title="CrispASR Integration")

@@ -237,6 +237,89 @@ Added as preferred neural backend over AudioSeal (CC-BY-NC model weights).
 
 Released as [v0.4.0](https://github.com/CrispStrobe/CrispTTS/releases/tag/v0.4.0).
 
+---
+
+## Phase 7: New CrispASR backends + TADA enhancements (v0.5.0)
+
+Synced with CrispASR v0.8.7 (2026-07-04). CrispASR added 4 new TTS backends,
+TADA gained inline voice cloning + forced alignment, and new per-request
+tuning flags were added.
+
+### 7.1 New backend configs in config.py
+
+Add 4 new `crispasr_*` entries:
+
+| Model ID | Backend | Sample Rate | Voice Cloning | Notes |
+|----------|---------|-------------|---------------|-------|
+| `crispasr_bananamind_tts` | `bananamind-tts` | 22050 | No | Tacotron-lite + HiFi-GAN, en/de |
+| `crispasr_dots_tts` | `dots-tts` | 48000 | Yes (CAM++) | Qwen2.5 LLM + DiT + BigVGAN |
+| `crispasr_cosyvoice3_tts` | `cosyvoice3-tts` | 24000 | Yes (baked) | Multi-GGUF: LLM+flow+CAM++HiFT |
+| `crispasr_csm_tts` | `csm-tts` | 24000 | Yes (ref.wav) | Sesame CSM-1B, causal mode |
+
+### 7.2 New CLI flags in main.py
+
+Pass-through flags for TADA and new backends:
+
+| Flag | Maps to | Purpose |
+|------|---------|---------|
+| `--ref-text TEXT` | `--ref-text` | Transcript for inline voice cloning |
+| `--no-spoken-disclaimer` | `--no-spoken-disclaimer` | Skip AI disclaimer on cloned audio |
+
+### 7.3 Expanded param_map in crispasr_handler.py
+
+New keys in the `--model-params` JSON mapping:
+
+| Key | Flag | Backends |
+|-----|------|----------|
+| `top_k` | `--top-k` | dots-tts, cosyvoice3, TADA |
+| `min_p` | `--min-p` | LLM-based |
+| `do_sample` | `--tts-do-sample` | TADA talker |
+| `num_candidates` | `--tts-num-candidates` | TADA acoustic |
+| `cfg_scale` | `--tts-cfg-scale` | chatterbox, f5, TADA |
+| `num_steps` | `--tts-num-steps` | TADA flow-matching |
+| `noise_temp` | `--tts-noise-temp` | TADA FM noise |
+| `noise_scale` | `--tts-noise-scale` | piper VITS |
+| `noise_w` | `--tts-noise-w` | piper stochastic duration |
+| `speaker_id` | `--tts-speaker-id` | piper multi-speaker |
+| `max_speech_tokens` | `--tts-max-speech-tokens` | chatterbox |
+
+### 7.4 Voice-cloning keyword expansion
+
+Add to `VOICE_CLONING_MODEL_KEYWORDS` in watermark.py:
+- `dots`, `cosyvoice3`, `csm`, `tada`, `bananamind` (bananamind has no cloning
+  but shares the handler — detected by `.wav` path heuristic)
+
+### 7.5 Update handler docstring
+
+`crispasr_handler.py`: 10 → 14 backends, document ref-text flag.
+
+### 7.6 Unit tests
+
+Mocked tests (no binary needed):
+- Config validation for all 4 new backends
+- `--ref-text` flag pass-through in command builder
+- New param_map keys produce correct CLI flags
+- Voice-cloning keyword detection for dots/cosyvoice3/csm
+- `--no-spoken-disclaimer` pass-through
+
+### 7.7 Live tests
+
+Live tests need to work on 8 GB RAM VPS with no GPU:
+- Use `--backend kokoro` (smallest model, ~82M params, auto-download)
+- Short text input ("Test.") to minimize memory + time
+- 30s timeout per synthesis to avoid hangs
+- Skip GPU-heavy backends (dots-tts 48 kHz, cosyvoice3 multi-GGUF) in live tests
+- Test `--ref-text` pass-through with a tiny WAV (generate sine wave)
+
+### 7.8 README update
+
+- Update engine count (31+ → 35+)
+- Add new backends to the CrispASR native list
+- Document `--ref-text` for inline voice cloning
+- Update `--model-params` table with new keys
+
+---
+
 ### Live test results (2026-06-07)
 
 End-to-end pipeline verified with Kokoro backend:

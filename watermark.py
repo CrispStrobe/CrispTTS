@@ -658,6 +658,7 @@ VOICE_CLONING_HANDLER_KEYS = frozenset({
 VOICE_CLONING_MODEL_KEYWORDS = frozenset({
     "zeroshot", "xtts", "clone", "f5_tts", "zonos", "chatterbox",
     "vibevoice", "indextts", "voxcpm2", "qwen3_tts",
+    "dots_tts", "dots-tts", "cosyvoice3", "csm_tts", "csm-tts", "tada",
 })
 
 

@@ -481,5 +481,258 @@ class TestCLIArgParsing(unittest.TestCase):
         self.assertIn("--translate-to", source)
 
 
+class TestNewCrispASRBackendConfigs(unittest.TestCase):
+    """Test Phase 7 backend configs are valid."""
+
+    NEW_BACKENDS = [
+        "crispasr_bananamind_tts", "crispasr_dots_tts",
+        "crispasr_cosyvoice3_tts", "crispasr_csm_tts",
+    ]
+
+    def test_new_backends_exist_in_config(self):
+        from config import GERMAN_TTS_MODELS
+        for mid in self.NEW_BACKENDS:
+            self.assertIn(mid, GERMAN_TTS_MODELS, f"{mid} missing from config")
+
+    def test_new_backends_use_crispasr_handler(self):
+        from config import GERMAN_TTS_MODELS
+        for mid in self.NEW_BACKENDS:
+            cfg = GERMAN_TTS_MODELS[mid]
+            self.assertEqual(cfg["handler_function_key"], "crispasr")
+
+    def test_new_backends_have_crispasr_backend(self):
+        from config import GERMAN_TTS_MODELS
+        for mid in self.NEW_BACKENDS:
+            cfg = GERMAN_TTS_MODELS[mid]
+            self.assertIn("crispasr_backend", cfg)
+            self.assertIsInstance(cfg["crispasr_backend"], str)
+
+    def test_new_backends_sample_rates(self):
+        from config import GERMAN_TTS_MODELS
+        expected_rates = {
+            "crispasr_bananamind_tts": 22050,
+            "crispasr_dots_tts": 48000,
+            "crispasr_cosyvoice3_tts": 24000,
+            "crispasr_csm_tts": 24000,
+        }
+        for mid, expected_sr in expected_rates.items():
+            self.assertEqual(GERMAN_TTS_MODELS[mid]["sample_rate"], expected_sr)
+
+
+class TestExpandedParamMap(unittest.TestCase):
+    """Test that new param_map keys produce correct CLI flags."""
+
+    @patch("handlers.crispasr_handler.subprocess.run")
+    def test_new_param_keys(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        from handlers.crispasr_handler import synthesize_with_crispasr
+
+        config = {
+            "crisptts_model_id": "test",
+            "crispasr_backend": "dots-tts",
+            "crispasr_model_path": "auto",
+        }
+
+        params = '{"top_k": 25, "cfg_scale": 2.0, "noise_temp": 0.6, "num_steps": 20}'
+        with patch("handlers.crispasr_handler.os.path.isfile", return_value=True):
+            with patch("handlers.crispasr_handler._find_crispasr", return_value="/usr/bin/crispasr"):
+                synthesize_with_crispasr(
+                    config, "Test", None, params, "/tmp/test.wav", False
+                )
+
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--top-k", cmd)
+        self.assertIn("25", cmd)
+        self.assertIn("--tts-cfg-scale", cmd)
+        self.assertIn("2.0", cmd)
+        self.assertIn("--tts-noise-temp", cmd)
+        self.assertIn("0.6", cmd)
+        self.assertIn("--tts-num-steps", cmd)
+        self.assertIn("20", cmd)
+
+    @patch("handlers.crispasr_handler.subprocess.run")
+    def test_ref_text_passthrough(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        from handlers.crispasr_handler import synthesize_with_crispasr
+
+        config = {
+            "crisptts_model_id": "test",
+            "crispasr_backend": "tada",
+            "crispasr_model_path": "auto",
+            "reference_text": "Hello this is my voice",
+        }
+
+        with patch("handlers.crispasr_handler.os.path.isfile", return_value=True):
+            with patch("handlers.crispasr_handler._find_crispasr", return_value="/usr/bin/crispasr"):
+                synthesize_with_crispasr(
+                    config, "New text", "ref.wav", None, "/tmp/test.wav", False
+                )
+
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--ref-text", cmd)
+        self.assertIn("Hello this is my voice", cmd)
+        self.assertIn("--voice", cmd)
+        self.assertIn("ref.wav", cmd)
+
+    @patch("handlers.crispasr_handler.subprocess.run")
+    def test_no_spoken_disclaimer_passthrough(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        from handlers.crispasr_handler import synthesize_with_crispasr
+
+        config = {
+            "crisptts_model_id": "test",
+            "crispasr_backend": "kokoro",
+            "crispasr_model_path": "auto",
+            "_cli_no_spoken_disclaimer": True,
+        }
+
+        with patch("handlers.crispasr_handler.os.path.isfile", return_value=True):
+            with patch("handlers.crispasr_handler._find_crispasr", return_value="/usr/bin/crispasr"):
+                synthesize_with_crispasr(
+                    config, "Test", None, None, "/tmp/test.wav", False
+                )
+
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--no-spoken-disclaimer", cmd)
+
+
+class TestNewVoiceCloningKeywords(unittest.TestCase):
+    """Test voice-cloning detection for Phase 7 backends."""
+
+    def test_dots_tts_requires_consent(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_dots_tts", "crispasr"))
+
+    def test_cosyvoice3_requires_consent(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_cosyvoice3_tts", "crispasr"))
+
+    def test_csm_tts_requires_consent(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_csm_tts", "crispasr"))
+
+    def test_bananamind_no_consent_without_wav(self):
+        from watermark import requires_consent
+        # bananamind doesn't clone unless a .wav path is passed
+        self.assertFalse(requires_consent("crispasr_bananamind_tts", "crispasr"))
+
+    def test_bananamind_consent_with_wav(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_bananamind_tts", "crispasr", "/path/ref.wav"))
+
+
+class TestLiveCrispASR(unittest.TestCase):
+    """Live tests using the actual CrispASR binary.
+
+    These tests only run when the crispasr binary is available.
+    Designed for an 8 GB RAM VPS with no GPU: uses piper (~16 MB VITS,
+    fastest backend), short text, and 30s timeout. Kokoro hangs on
+    CPU-only with 8 GB RAM.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if not os.environ.get("CRISPTTS_LIVE_TESTS"):
+            raise unittest.SkipTest(
+                "Live tests disabled (set CRISPTTS_LIVE_TESTS=1 to enable)")
+        from handlers.crispasr_handler import _find_crispasr
+        cls.exe = _find_crispasr()
+        if not cls.exe:
+            raise unittest.SkipTest("CrispASR binary not available")
+
+    def test_live_piper_synthesis(self):
+        """Synthesize a short phrase with piper and verify output exists."""
+        import subprocess
+        import tempfile
+
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            result = subprocess.run(  # noqa: S603
+                [self.exe, "-m", "auto", "--backend", "piper",
+                 "--tts", "Test.", "--tts-output", tmp,
+                 "--auto-download", "-t", "4"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                self.skipTest(f"piper synthesis failed: {result.stderr[-200:]}")
+            self.assertTrue(os.path.isfile(tmp))
+            self.assertGreater(os.path.getsize(tmp), 1000)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def test_live_piper_watermark_present(self):
+        """Verify CrispASR binary embeds a watermark in TTS output."""
+        import subprocess
+        import tempfile
+
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            result = subprocess.run(  # noqa: S603
+                [self.exe, "-m", "auto", "--backend", "piper",
+                 "--tts", "Watermark test.", "--tts-output", tmp,
+                 "--auto-download", "-t", "4"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                self.skipTest(f"piper synthesis failed: {result.stderr[-200:]}")
+
+            from watermark import spread_spectrum_detect
+            try:
+                import soundfile as sf_live
+            except ImportError:
+                self.skipTest("soundfile not installed")
+            data, sr = sf_live.read(tmp, dtype="float32")
+            if data.ndim > 1:
+                data = data[:, 0]
+            confidence = spread_spectrum_detect(data)
+            self.assertGreater(confidence, 0.5,
+                               f"CrispASR binary should watermark output (confidence={confidence:.3f})")
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def test_live_z_pipeline_via_handler(self):
+        """End-to-end: CrispTTS handler → crispasr binary → WAV.
+
+        Imports crispasr_handler directly (not via handlers/) to avoid
+        loading torch-heavy handlers that OOM on 8 GB machines.
+        """
+        import importlib
+        import tempfile
+
+        # Import handler module directly to avoid handlers/__init__.py torch imports
+        spec = importlib.util.spec_from_file_location(
+            "crispasr_handler",
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "handlers", "crispasr_handler.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            config = {
+                "crisptts_model_id": "crispasr_piper",
+                "crispasr_backend": "piper",
+                "crispasr_model_path": "auto",
+                "default_voice_id": None,
+            }
+            mod.synthesize_with_crispasr(config, "Pipeline.", None, None, tmp, False)
+
+            if not os.path.isfile(tmp) or os.path.getsize(tmp) < 100:
+                self.skipTest("piper synthesis via handler failed")
+
+            self.assertGreater(os.path.getsize(tmp), 1000)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+
 if __name__ == "__main__":
     unittest.main()

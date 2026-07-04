@@ -1,13 +1,14 @@
 # CrispTTS/handlers/crispasr_handler.py
-"""CrispASR TTS handler — access 10 C++ TTS engines via the crispasr binary.
+"""CrispASR TTS handler — access 14 C++ TTS engines via the crispasr binary.
 
 Supported engines: kokoro, orpheus, qwen3-tts, chatterbox, vibevoice-tts,
-indextts, voxcpm2-tts, f5-tts, melotts, piper. Each runs as native C++
-inference through ggml, offering fast synthesis without Python ML dependencies.
+indextts, voxcpm2-tts, f5-tts, melotts, piper, bananamind-tts, dots-tts,
+cosyvoice3-tts, csm-tts. Each runs as native C++ inference through ggml,
+offering fast synthesis without Python ML dependencies.
 
-The binary automatically embeds a spread-spectrum watermark (EU AI Act
-Art. 50 compliant) into all TTS output — no additional watermarking
-needed on the Python side for these backends.
+The binary automatically embeds a spread-spectrum watermark into all TTS
+output — no additional watermarking needed on the Python side for these
+backends.
 
 Requires the crispasr binary on PATH, at CRISPASR_EXECUTABLE, or at
 a common build location. Auto-downloads if not found.
@@ -144,7 +145,8 @@ def synthesize_with_crispasr(
     """Synthesize audio using CrispASR's native C++ TTS engines.
 
     Supported backends: kokoro, orpheus, qwen3-tts, chatterbox,
-    vibevoice-tts, indextts, voxcpm2-tts, f5-tts, melotts, piper.
+    vibevoice-tts, indextts, voxcpm2-tts, f5-tts, melotts, piper,
+    bananamind-tts, dots-tts, cosyvoice3-tts, csm-tts.
     """
     model_id = crisptts_model_config.get("crisptts_model_id", "crispasr_unknown")
     backend = crisptts_model_config.get("crispasr_backend")
@@ -224,6 +226,9 @@ def synthesize_with_crispasr(
     if cli_pitch and cli_pitch != 0.0:
         cmd.extend(["--pitch-shift", str(cli_pitch)])
 
+    if crisptts_model_config.get("_cli_no_spoken_disclaimer"):
+        cmd.append("--no-spoken-disclaimer")
+
     # Parse model params override
     if model_params_override:
         try:
@@ -237,13 +242,24 @@ def synthesize_with_crispasr(
             "seed": "--seed",
             "tts_steps": "--tts-steps",
             "top_p": "--top-p",
+            "top_k": "--top-k",
+            "min_p": "--min-p",
             "repetition_penalty": "--repetition-penalty",
             "cfg_weight": "--cfg-weight",
+            "cfg_scale": "--tts-cfg-scale",
             "exaggeration": "--exaggeration",
             "length_scale": "--length-scale",
             "speaker_name": "--speaker-name",
             "speech_speed": "--pace",
             "pitch_shift": "--pitch-shift",
+            "do_sample": "--tts-do-sample",
+            "num_candidates": "--tts-num-candidates",
+            "num_steps": "--tts-num-steps",
+            "noise_temp": "--tts-noise-temp",
+            "noise_scale": "--tts-noise-scale",
+            "noise_w": "--tts-noise-w",
+            "speaker_id": "--tts-speaker-id",
+            "max_speech_tokens": "--tts-max-speech-tokens",
         }
         for key, flag in param_map.items():
             if key in params:

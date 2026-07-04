@@ -7,16 +7,16 @@ CrispTTS is a versatile command-line Text-to-Speech (TTS) tool designed for synt
 | Project | Role |
 |---|---|
 | **[Susurrus](https://github.com/CrispStrobe/Susurrus)** | Python GUI + CLI — 30+ ASR, 12 TTS, translation |
-| **[CrispASR](https://github.com/CrispStrobe/CrispASR)** | C++ ASR/TTS engine — 26+ ASR, 14+ TTS backends, ggml inference |
-| **CrispTTS** | This repo — Python TTS CLI with 31+ handlers |
+| **[CrispASR](https://github.com/CrispStrobe/CrispASR)** | C++ ASR/TTS engine — 26+ ASR, 18+ TTS backends, ggml inference |
+| **CrispTTS** | This repo — Python TTS CLI with 35+ handlers |
 | **[CrisperWeaver](https://github.com/CrispStrobe/CrisperWeaver)** | Flutter transcription app — desktop + mobile |
 
 NOTE: This is in experimental / work in progress state. Some Python-only models may be broken due to dependency conflicts. The CrispASR-based handlers (`crispasr_*`) are the most reliable — they use native C++ inference with no Python ML dependencies.
 
 ## Features
 
-- **31+ TTS Engine Support**:
-  - **CrispASR native C++ engines** (10 backends, auto-download, no Python ML deps):
+- **35+ TTS Engine Support**:
+  - **CrispASR native C++ engines** (14 backends, auto-download, no Python ML deps):
     - Kokoro (multilingual, Apache 2.0)
     - Orpheus + Kartoffel-Orpheus DE (19 German speakers, llama3.2 license)
     - Qwen3-TTS (voice cloning + voice design, Apache 2.0)
@@ -27,6 +27,10 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
     - F5-TTS (flow-matching, voice cloning, Apache 2.0)
     - MeloTTS (VITS2, 44.1 kHz, MIT)
     - Piper (250+ community voices, 30+ languages — faster than Python Piper)
+    - BananaMind-TTS (Tacotron-lite + HiFi-GAN, en/de)
+    - Dots.TTS (Qwen2.5 LLM + DiT + BigVGAN, 48 kHz, CAM++ voice cloning)
+    - CosyVoice3 (multi-GGUF: LLM+flow+CAM+++HiFT, voice cloning)
+    - CSM/Sesame (Llama backbone + Mimi codec, causal mode, voice cloning)
   - Microsoft Edge TTS (cloud-based, requires `edge-tts`)
   - Coqui TTS (XTTS v2, VITS, etc.)
   - Piper (local ONNX, requires `piper-tts`)
@@ -76,7 +80,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
-  - 212 unit and live tests
+  - 224+ unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -251,6 +255,8 @@ python main.py [ACTION_FLAG | --model-id <MODEL_ID> [OPTIONS]]
 | `--instruct TEXT` | — | Natural-language voice description for VoiceDesign models (Qwen3-TTS) |
 | `--output-sample-rate HZ` | native | Resample output to target sample rate (e.g. `16000`, `22050`, `44100`) |
 | `--stream` | off | Stream audio playback during synthesis (CrispASR backends only) |
+| `--ref-text TEXT` | — | Transcript of reference voice audio for inline voice cloning (TADA, dots-tts) |
+| `--no-spoken-disclaimer` | off | Skip the AI-disclosure spoken prefix on voice-cloned audio |
 
 #### CrispASR Integration
 
@@ -294,10 +300,21 @@ Parameters are passed as a JSON string. Available keys depend on the backend:
 | `tts_steps` | Diffusion/flow | Number of inference steps |
 | `speech_speed` | CrispASR | Rate multiplier (same as `--speech-speed`) |
 | `pitch_shift` | FastPitch | Hz offset (same as `--pitch-shift`) |
+| `top_k` | LLM-based | Top-K candidates |
+| `min_p` | LLM-based | Min-P threshold |
 | `cfg_weight` | Chatterbox | Classifier-free guidance weight |
+| `cfg_scale` | Chatterbox, F5, TADA | CFG scale for acoustic conditioning |
 | `exaggeration` | Chatterbox | Emotion exaggeration factor |
 | `length_scale` | VITS | Duration scaling factor |
 | `speaker_name` | Multi-speaker | Speaker name override |
+| `speaker_id` | Piper | Multi-speaker model ID |
+| `do_sample` | TADA | 0=greedy, 1=sample talker |
+| `num_candidates` | TADA | Acoustic flow-matching candidates |
+| `num_steps` | TADA, flow-matching | FM/diffusion inference steps |
+| `noise_temp` | TADA | FM noise temperature |
+| `noise_scale` | Piper | VITS variance |
+| `noise_w` | Piper | Stochastic duration predictor |
+| `max_speech_tokens` | Chatterbox | Max AR tokens |
 
 Example:
 ```bash
@@ -414,7 +431,7 @@ python main.py --model-id orpheus_ollama --input-text "Hallo Ollama" --ollama-ap
 
 Refer to the output of `python main.py --list-models` for the currently configured models and their notes. The script supports integration with:
 
-- CrispASR native C++ (10 backends: Kokoro, Orpheus, Qwen3-TTS, Chatterbox, VibeVoice, IndexTTS, VoxCPM2, F5-TTS, MeloTTS, Piper)
+- CrispASR native C++ (14 backends: Kokoro, Orpheus, Qwen3-TTS, Chatterbox, VibeVoice, IndexTTS, VoxCPM2, F5-TTS, MeloTTS, Piper, BananaMind, Dots.TTS, CosyVoice3, CSM/Sesame)
 - Microsoft Edge TTS
 - Piper TTS
 - Orpheus GGUF (via llama-cpp-python)
