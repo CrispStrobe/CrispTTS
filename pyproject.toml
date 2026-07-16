@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crisptts"
-version = "0.6.0"
+version = "0.7.0"
 description = "Modular German Text-to-Speech synthesizer with 28+ TTS engines"
 readme = "readme.md"
 license = "EUPL-1.2"
