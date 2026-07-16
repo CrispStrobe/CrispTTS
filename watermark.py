@@ -607,7 +607,8 @@ def inject_flac_metadata(filepath: str) -> bool:
         logger.debug("FLAC AI-provenance metadata injected: %s", filepath)
         return True
     except ImportError:
-        logger.debug("mutagen not installed — FLAC metadata injection skipped.")
+        logger.warning("mutagen not installed — FLAC metadata injection skipped. "
+                       "Install with: pip install mutagen")
         return False
     except Exception as e:
         logger.warning("FLAC metadata injection failed: %s", e)
@@ -636,7 +637,8 @@ def inject_opus_metadata(filepath: str) -> bool:
         logger.debug("Opus AI-provenance metadata injected: %s", filepath)
         return True
     except ImportError:
-        logger.debug("mutagen not installed — Opus metadata injection skipped.")
+        logger.warning("mutagen not installed — Opus metadata injection skipped. "
+                       "Install with: pip install mutagen")
         return False
     except Exception as e:
         logger.warning("Opus metadata injection failed: %s", e)
@@ -766,7 +768,7 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
                 if os.path.exists(tmp_wav):
                     os.unlink(tmp_wav)
     except Exception as e:
-        logger.debug("CrispASR disclaimer generation failed: %s", e)
+        logger.info("CrispASR disclaimer generation failed: %s", e)
 
     # Try edge-tts (cloud, lightweight, no voice cloning concerns)
     try:
@@ -803,7 +805,7 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
         finally:
             loop.close()
     except Exception as e:
-        logger.debug("Edge TTS disclaimer generation failed: %s", e)
+        logger.info("Edge TTS disclaimer generation failed: %s", e)
 
     # Fallback: generate a simple beep pattern (3 short beeps) as a
     # machine-readable audio marker that something precedes the content
@@ -891,37 +893,65 @@ def c2pa_sign_file(
 ) -> bool:
     """Sign an audio file with C2PA content credentials.
 
-    Args:
-        input_path: Path to the audio file (WAV or MP3).
-        output_path: Where to write signed file (defaults to overwrite input).
-        cert_path: Path to PEM certificate (or env var C2PA_CERT_PATH).
-        key_path: Path to PEM private key (or env var C2PA_KEY_PATH).
+    Tries c2pa-audio (native, ~160 KB, no Rust) first, then falls back to
+    c2pa-python (~10 MB). With c2pa-audio, cert/key are optional — it uses
+    a bundled self-signed cert by default.
 
-    Returns True on success, False if c2pa-python is not installed or signing fails.
+    Args:
+        input_path: Path to the audio file (WAV, MP3, or M4A).
+        output_path: Where to write signed file (defaults to overwrite input).
+        cert_path: Path to PEM certificate (optional for c2pa-audio).
+        key_path: Path to PEM private key (optional for c2pa-audio).
+
+    Returns True on success, False if no C2PA library is available.
     """
     cert_path = cert_path or os.environ.get("C2PA_CERT_PATH")
     key_path = key_path or os.environ.get("C2PA_KEY_PATH")
 
-    if not cert_path or not key_path:
-        logger.debug("C2PA signing skipped: no certificate/key configured.")
-        return False
-
+    # --- Try c2pa-audio (native, lightweight) first ---
     try:
-        import c2pa
+        from c2pa_audio import C2paAudio
+        c2pa = C2paAudio()
+        with open(input_path, "rb") as f_in:
+            data = f_in.read()
+        ext = os.path.splitext(input_path)[1].lower()
+        mime_map = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4"}
+        mime = mime_map.get(ext, "audio/wav")
+        cert_pem = open(cert_path).read() if cert_path else None
+        key_pem = open(key_path).read() if key_path else None
+        signed = c2pa.sign(data, mime, cert_pem, key_pem)
+        effective_output = output_path or input_path
+        with open(effective_output, "wb") as f_out:
+            f_out.write(signed)
+        logger.info("C2PA signed (c2pa-audio native): %s", effective_output)
+        return True
     except ImportError:
-        logger.debug("c2pa-python not installed; C2PA signing skipped.")
+        logger.debug("c2pa-audio not available, trying c2pa-python.")
+    except Exception as e:
+        logger.info("c2pa-audio signing failed: %s — trying c2pa-python.", e)
+
+    # --- Fallback: c2pa-python (heavy, requires Rust) ---
+    if not cert_path or not key_path:
+        logger.debug("C2PA signing skipped: no certificate/key and c2pa-audio not available.")
         return False
 
     try:
-        cert_data = open(cert_path, "rb").read()
-        key_data = open(key_path, "rb").read()
+        import c2pa as c2pa_rs
+    except ImportError:
+        logger.debug("Neither c2pa-audio nor c2pa-python installed; C2PA signing skipped.")
+        return False
 
-        signer = c2pa.create_signer(cert_data, key_data, "es256")
-        builder = c2pa.Builder(_C2PA_MANIFEST_JSON)
+    try:
+        with open(cert_path, "rb") as f_cert:
+            cert_data = f_cert.read()
+        with open(key_path, "rb") as f_key:
+            key_data = f_key.read()
+
+        signer = c2pa_rs.create_signer(cert_data, key_data, "es256")
+        builder = c2pa_rs.Builder(_C2PA_MANIFEST_JSON)
 
         effective_output = output_path or input_path
         if effective_output == input_path:
-            # c2pa requires different input/output; use a temp file
             import tempfile
             suffix = os.path.splitext(input_path)[1]
             fd, tmp_path = tempfile.mkstemp(suffix=suffix)
@@ -937,7 +967,7 @@ def c2pa_sign_file(
         else:
             builder.sign_file(input_path, effective_output, signer)
 
-        logger.info("C2PA content credentials signed: %s", effective_output)
+        logger.info("C2PA signed (c2pa-python): %s", effective_output)
         return True
     except Exception as e:
         logger.warning("C2PA signing failed: %s", e)

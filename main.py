@@ -667,16 +667,28 @@ def run_synthesis(args):
         except ImportError:
             pass  # watermark module missing — skip consent check
 
+        # If --play-direct without --output-file, use a temp file so watermarking
+        # can be applied before playback (compliance: all output must be marked).
+        _temp_play_file = None
+        _effective_output = args.output_file
+        if args.play_direct and not args.output_file and handler_key != "crispasr":
+            import tempfile
+            fd, _temp_play_file = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            _effective_output = _temp_play_file
+            # Tell handler to write to temp file, we'll play after watermarking
+            args.output_file = _temp_play_file
+
         try:
             # Use streaming handler if --stream and crispasr backend
             if getattr(args, 'stream', False) and handler_key == "crispasr":
                 from handlers.crispasr_handler import synthesize_with_crispasr_streaming
                 synthesize_with_crispasr_streaming(
                     current_config_for_handler, text_to_synthesize, effective_voice_id,
-                    args.model_params, args.output_file, args.play_direct)
+                    args.model_params, _effective_output, args.play_direct)
             else:
                 handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
-                    args.output_file, args.play_direct)
+                    _effective_output, False if _temp_play_file else args.play_direct)
 
             # --- Post-synthesis silence trimming (Python fallback for non-crispasr) ---
             if getattr(args, 'trim_silence', False) and args.output_file and os.path.isfile(args.output_file):
@@ -704,15 +716,32 @@ def run_synthesis(args):
             if (_is_voice_cloning and args.output_file and os.path.isfile(args.output_file)
                     and not getattr(args, 'no_spoken_disclaimer', False)):
                 try:
-                    import soundfile as sf_disc
-
+                    out_lower_disc = args.output_file.lower()
                     from watermark import prepend_disclaimer
-                    data, sr = sf_disc.read(args.output_file, dtype="float32")
-                    if data.ndim > 1:
-                        data = data[:, 0]
-                    data_with_disclaimer = prepend_disclaimer(data, sample_rate=sr)
-                    sf_disc.write(args.output_file, data_with_disclaimer, sr, subtype="PCM_16")
-                    logger.info("AI disclaimer prepended to voice-cloned output.")
+                    if out_lower_disc.endswith(".wav"):
+                        import soundfile as sf_disc
+                        data, sr = sf_disc.read(args.output_file, dtype="float32")
+                        if data.ndim > 1:
+                            data = data[:, 0]
+                        data_with_disclaimer = prepend_disclaimer(data, sample_rate=sr)
+                        sf_disc.write(args.output_file, data_with_disclaimer, sr, subtype="PCM_16")
+                        logger.info("AI disclaimer prepended to voice-cloned output.")
+                    elif out_lower_disc.endswith(".mp3"):
+                        try:
+                            import numpy as np
+                            from pydub import AudioSegment as _DiscSeg
+                            seg = _DiscSeg.from_file(args.output_file)
+                            pcm_d = np.frombuffer(
+                                seg.set_channels(1).set_sample_width(2).raw_data,
+                                dtype=np.int16).astype(np.float32) / 32767.0
+                            pcm_d = prepend_disclaimer(pcm_d, sample_rate=seg.frame_rate)
+                            disc_seg = seg._spawn(
+                                (pcm_d * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
+                            ).set_channels(1).set_sample_width(2)
+                            disc_seg.export(args.output_file, format="mp3")
+                            logger.info("AI disclaimer prepended to voice-cloned MP3.")
+                        except ImportError:
+                            logger.warning("pydub not available — MP3 disclaimer skipped.")
                 except Exception as e_disc:
                     logger.warning("Could not prepend spoken disclaimer: %s", e_disc)
 
@@ -750,6 +779,25 @@ def run_synthesis(args):
                             with open(args.output_file, "wb") as f_wm:
                                 f_wm.write(wav_bytes)
                         elif out_lower.endswith(".mp3"):
+                            # Embed audio watermark in MP3: decode→watermark→re-encode
+                            if handler_key != "crispasr":
+                                try:
+                                    import numpy as np
+                                    from pydub import AudioSegment as _MP3Seg
+                                    seg = _MP3Seg.from_file(args.output_file)
+                                    pcm_mp3 = np.frombuffer(
+                                        seg.set_channels(1).set_sample_width(2).raw_data,
+                                        dtype=np.int16).astype(np.float32) / 32767.0
+                                    pcm_mp3 = watermark_embed(pcm_mp3, sample_rate=seg.frame_rate)
+                                    wm_seg = seg._spawn(
+                                        (pcm_mp3 * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
+                                    ).set_channels(1).set_sample_width(2)
+                                    wm_seg.export(args.output_file, format="mp3")
+                                    logger.info("Audio watermark embedded in MP3.")
+                                except ImportError:
+                                    logger.warning("pydub not available — MP3 audio watermark skipped.")
+                                except Exception as e_mp3wm:
+                                    logger.warning("MP3 audio watermark failed: %s", e_mp3wm)
                             with open(args.output_file, "rb") as f_wm:
                                 mp3_bytes = inject_mp3_metadata(f_wm.read())
                             with open(args.output_file, "wb") as f_wm:
@@ -771,6 +819,20 @@ def run_synthesis(args):
                         logger.debug("watermark module not available — skipping watermark embedding.")
                     except Exception as e_wm:
                         logger.warning("Watermark embedding failed: %s", e_wm)
+
+            # --- Play temp file if --play-direct without --output-file ---
+            if _temp_play_file and os.path.isfile(_temp_play_file):
+                try:
+                    from utils import play_audio
+                    play_audio(_temp_play_file, is_path=True)
+                except Exception as e_play:
+                    logger.warning("Playback failed: %s", e_play)
+                finally:
+                    try:
+                        os.unlink(_temp_play_file)
+                    except OSError:
+                        pass
+                    args.output_file = None  # restore original
 
             # --- Post-synthesis ASR verification (CrispASR integration) ---
             if getattr(args, 'verify', False) and args.output_file and os.path.isfile(args.output_file):
