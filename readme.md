@@ -98,6 +98,8 @@ crisptts_project/
 ├── watermark.py                # Audio watermarking, metadata, consent gate, C2PA
 ├── chunking.py                 # Smart sentence-boundary text splitting
 ├── server.py                   # OpenAI-compatible HTTP API server
+├── ssml.py                     # SSML-lite tag preprocessor
+├── cache.py                    # Synthesis result caching (LRU)
 ├── decoder.py                  # User-provided decoder for Orpheus models (if used)
 ├── handlers/                   # Package for individual TTS engine handlers
 │   ├── __init__.py             # Makes 'handlers' a package, exports handler functions
@@ -430,6 +432,23 @@ curl -X POST http://localhost:8880/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{"model":"crispasr_f5_tts","input":"Hallo","voice":"ref.wav","i_have_rights":true}' \
   --output cloned.wav
+```
+
+**SSML-lite markup:**
+```bash
+python main.py --backend kokoro --output-file out.wav --input-text \
+  'Hello. <break time="500ms"/> <prosody rate="fast">This part is fast.</prosody> Normal again.'
+```
+
+**Batch synthesis with parallel jobs:**
+```bash
+python main.py --backend kokoro --batch --jobs 4 \
+  --input-file book.txt --output-dir chapters/
+```
+
+**Audio normalization:**
+```bash
+python main.py --backend kokoro --input-text "Test" --normalize --output-file normalized.wav
 ```
 
 **Change Logging Level (for debugging):**

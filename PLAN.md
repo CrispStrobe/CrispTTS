@@ -795,3 +795,16 @@ at startup, ensuring the first real request isn't slow. Useful for backends
 that lazy-load models.
 
 **Files**: `server.py`
+
+### Status: ALL PHASE 14 ITEMS COMPLETE
+
+| Task | Commit |
+|------|--------|
+| 14.1 SSML-lite preprocessor | `2f84b8a` |
+| 14.2 Progress indication | Already covered by batch + SSML logging |
+| 14.3 Concurrent batch (--jobs) | `2f84b8a` |
+| 14.4 Audio normalization (--normalize) | `2f84b8a` |
+| 14.5 Server warm-up (--warm-up) | `2f84b8a` |
+
+281 tests passing in ~34s.
+Released as [v0.8.0](https://github.com/CrispStrobe/CrispTTS/releases/tag/v0.8.0).
