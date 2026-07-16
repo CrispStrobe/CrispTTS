@@ -153,7 +153,9 @@ crisptts_project/
    ```bash
    pip install crisptts[watermark-mit]   # WavMark neural watermark (MIT license)
    pip install crisptts[metadata]        # FLAC/Opus metadata via mutagen
-   pip install crisptts[provenance]      # C2PA content credentials
+   pip install crisptts[provenance]      # C2PA via c2pa-python (heavy, needs Rust)
+   # Or use c2pa-audio (lightweight native, ~160 KB, no Rust):
+   # pip install c2pa-audio  # or build from https://github.com/CrispStrobe/c2pa-audio
    pip install crisptts[dev]             # ruff, bandit, pytest
    ```
 
@@ -551,7 +553,7 @@ Voice-cloning models require explicit consent attestation before synthesis is al
 | WAV LIST/INFO metadata | ISFT + ICMT | ISFT + ICMT | ISFT + ICMT + IART + ICRD |
 | MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) |
 | FLAC/Opus metadata | Vorbis comments (mutagen) | — | — |
-| C2PA content credentials | c2pa-python (optional) | c2pa-c (compile-time) | — |
+| C2PA content credentials | c2pa-audio (native, preferred) or c2pa-python | c2pa-c (compile-time) | — |
 | Spoken AI disclaimer | CrispASR kokoro / Edge TTS / beep | Native TTS (cached) | Beep marker |
 | Voice-cloning consent gate | CLI + API (403) | CLI + server JSON | GDPR Art. 9(2)(a) consent files |
 | Consent audit logging | stderr + `consent_audit.log` | `[CONSENT]` stderr | `[CONSENT]` log + `.consent.json` |

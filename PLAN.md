@@ -701,3 +701,46 @@ Add `omnivoice` to VOICE_CLONING_MODEL_KEYWORDS.
 ### Status: ALL PHASE 12 ITEMS COMPLETE
 
 257 tests passing in ~84s.
+
+---
+
+## Phase 13: EU AI Act compliance audit + c2pa-audio (v0.7.1)
+
+Implemented 2026-07-16. Full Art. 50 audit identified 6 compliance gaps,
+all closed in commit `dbbcb21`.
+
+### 13.1 Compliance gaps closed
+
+| Gap | Issue | Fix |
+|-----|-------|-----|
+| 1+5 | Streaming output had no metadata | WAV LIST/INFO injected after file copy |
+| 2 | `--play-direct` without file skipped watermark | Temp file created, watermarked, then played |
+| 8 | MP3 had metadata only, no audio watermark | decode→embed→re-encode via pydub |
+| 10 | MP3 voice-cloning had no spoken disclaimer | Disclaimer prepended to MP3 output |
+| 6 | Disclaimer failure logged at DEBUG (invisible) | Raised to INFO |
+| 9 | mutagen missing logged at DEBUG | Raised to WARNING with install hint |
+
+### 13.2 c2pa-audio native signing
+
+Integrated [CrispStrobe/c2pa-audio](https://github.com/CrispStrobe/c2pa-audio)
+(~160 KB, no Rust, no OpenSSL) as preferred C2PA signer. Falls back to
+c2pa-python (~10 MB). Uses bundled self-signed cert by default — no
+cert/key configuration needed for basic signing. Supports WAV, MP3, M4A.
+
+### 13.3 Compliance tests
+
+8 new tests covering all output paths:
+- C2PA native signing fallback
+- WAV watermark roundtrip detection
+- WAV/MP3 metadata AI-generated tag injection
+- Voice-cloning keyword coverage (all 8 cloning backends)
+- Spoken disclaimer generation
+- Consent audit log path
+- Live: piper metadata injection
+
+| Commit | Tests | CI |
+|--------|-------|----|
+| `dbbcb21` | 257 pass | py3.10/3.11/3.12 + ruff ✓ |
+| `85c759a` | 265 pass | py3.10/3.11/3.12 + ruff ✓ |
+
+Released as [v0.7.1](https://github.com/CrispStrobe/CrispTTS/releases/tag/v0.7.1).
