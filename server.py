@@ -150,6 +150,25 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
         if not text:
             self._send_error(400, "Missing 'input' field")
             return
+
+        # Parse SSML tags if present (same as CLI)
+        try:
+            from ssml import has_ssml, parse_ssml
+            if has_ssml(text):
+                segments = parse_ssml(text)
+                if len(segments) == 1:
+                    text = segments[0].text
+                    if segments[0].speed != 1.0:
+                        speed = segments[0].speed
+                # Multi-segment SSML: concatenate text, use first speed
+                # (full multi-segment synthesis would need temp files + crossfade,
+                #  which is complex for a single API response — keep it simple)
+                elif segments:
+                    text = " ".join(s.text for s in segments if s.text.strip())
+                    speed = segments[0].speed
+        except ImportError:
+            pass
+
         if model not in GERMAN_TTS_MODELS:
             self._send_error(400, f"Unknown model: {model}. Use GET /v1/audio/models for available models.")
             return

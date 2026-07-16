@@ -59,5 +59,46 @@ class TestRateLimiting(unittest.TestCase):
         server._rate_limit_window = 60.0
 
 
+class TestServerSSML(unittest.TestCase):
+    """Test SSML handling in server API request parsing."""
+
+    def test_ssml_stripped_from_input(self):
+        """SSML tags should be parsed and stripped from input text."""
+        from ssml import has_ssml, parse_ssml
+        text = '<prosody rate="fast">Hello world</prosody>'
+        self.assertTrue(has_ssml(text))
+        segments = parse_ssml(text)
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, "Hello world")
+        self.assertAlmostEqual(segments[0].speed, 1.25)
+
+    def test_plain_text_unchanged(self):
+        """Plain text without SSML should pass through unchanged."""
+        from ssml import has_ssml
+        self.assertFalse(has_ssml("Just plain text"))
+
+
+class TestCacheVersioning(unittest.TestCase):
+    """Test that cache key includes version to prevent stale results."""
+
+    def test_cache_key_includes_version(self):
+        """Different versions should produce different cache keys."""
+        import cache
+        key1 = cache._cache_key("kokoro", "af_heart", "Hello", None)
+        # Temporarily change version
+        old_ver = cache._VERSION
+        cache._VERSION = "99.99.99"
+        try:
+            key2 = cache._cache_key("kokoro", "af_heart", "Hello", None)
+        finally:
+            cache._VERSION = old_ver
+        self.assertNotEqual(key1, key2)
+
+    def test_cache_version_is_string(self):
+        import cache
+        self.assertIsInstance(cache._VERSION, str)
+        self.assertGreater(len(cache._VERSION), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

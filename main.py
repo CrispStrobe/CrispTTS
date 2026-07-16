@@ -1019,6 +1019,10 @@ def main_cli_entrypoint():
         help="Server bind address (default: 127.0.0.1).")
     action_group.add_argument("--server-port", type=int, default=8880,
         help="Server port (default: 8880).")
+    action_group.add_argument("--server-rate-limit", type=int, default=10,
+        help="Max synthesis requests per minute per IP (default: 10, 0=unlimited).")
+    action_group.add_argument("--warm-up", type=str, default=None, metavar="MODEL_ID",
+        help="Pre-synthesize with this model at server startup to warm caches.")
 
 
     synth_group = parser.add_argument_group(title="Synthesis Options (used with --model-id or --test-all*)")
@@ -1216,7 +1220,9 @@ def main_cli_entrypoint():
 
     if args.server:
         from server import run_server
-        run_server(args.server_host, args.server_port)
+        run_server(args.server_host, args.server_port,
+                   rate_limit=getattr(args, 'server_rate_limit', 10),
+                   warm_up=getattr(args, 'warm_up', None))
         return
 
     if getattr(args, 'cache_stats', False):

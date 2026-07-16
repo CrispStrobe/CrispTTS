@@ -30,9 +30,20 @@ def configure(cache_dir: str | None = None, max_mb: int = 500, enabled: bool = T
         logger.info("Synthesis cache: %s (max %d MB)", _cache_dir, max_mb)
 
 
+# Include version in cache key so upgrades auto-invalidate stale entries.
+# This prevents serving unwatermarked audio from a pre-watermark cache.
+_VERSION = "0.8.0"
+try:
+    import importlib.metadata
+    _VERSION = importlib.metadata.version("crisptts")
+except Exception:  # noqa: S110 — version lookup is best-effort
+    pass
+
+
 def _cache_key(model_id: str, voice: str | None, text: str, params: str | None) -> str:
-    """Compute a cache key from synthesis parameters."""
-    raw = json.dumps({"m": model_id, "v": voice or "", "t": text, "p": params or ""},
+    """Compute a cache key from synthesis parameters + version."""
+    raw = json.dumps({"m": model_id, "v": voice or "", "t": text, "p": params or "",
+                      "_ver": _VERSION},
                      sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
