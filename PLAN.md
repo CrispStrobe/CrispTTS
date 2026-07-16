@@ -808,3 +808,28 @@ that lazy-load models.
 
 281 tests passing in ~34s.
 Released as [v0.8.0](https://github.com/CrispStrobe/CrispTTS/releases/tag/v0.8.0).
+
+---
+
+## Phase 15: Consistency fixes
+
+### 15.1 Server SSML parsing
+
+Server API `/v1/audio/speech` now parses SSML tags in input text,
+matching CLI behavior.
+
+### 15.2 --warm-up wired through main.py
+
+`--warm-up MODEL_ID` and `--server-rate-limit N` now available as
+main.py CLI flags when using `--server`.
+
+### 15.3 Versioned cache keys
+
+Cache key hash includes the package version. Upgrades auto-invalidate
+stale entries, preventing serving unwatermarked audio from old cache.
+
+### Status: COMPLETE
+
+| Commit | Tests |
+|--------|-------|
+| `dcb8545` | 285 pass |
