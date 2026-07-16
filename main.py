@@ -575,6 +575,65 @@ def run_synthesis(args):
         except Exception as e_tr:
             logger.warning("Translation failed, using original text: %s", e_tr)
 
+    # --- SSML-lite preprocessing ---
+    # If text contains SSML tags, parse into segments and synthesize each.
+    # Multi-segment SSML is handled by recursive calls + crossfade.
+    try:
+        from ssml import has_ssml, parse_ssml
+        if has_ssml(text_to_synthesize) and args.output_file:
+            segments = parse_ssml(text_to_synthesize)
+            if len(segments) > 1:
+                import tempfile
+
+                import numpy as np
+                try:
+                    import soundfile as sf_ssml
+                except ImportError:
+                    sf_ssml = None
+                from utils import crossfade_segments
+                logger.info("SSML: %d segments detected", len(segments))
+                audio_parts = []
+                sr_out = None
+                for _i, seg in enumerate(segments):
+                    if seg.silence_ms > 0 and sr_out:
+                        silence = np.zeros(int(sr_out * seg.silence_ms / 1000), dtype=np.float32)
+                        audio_parts.append(silence)
+                    if not seg.text.strip():
+                        continue
+                    fd_seg, tmp_seg = tempfile.mkstemp(suffix=".wav")
+                    os.close(fd_seg)
+                    try:
+                        seg_args = argparse.Namespace(**vars(args))
+                        seg_args.input_text = seg.text
+                        seg_args.output_file = tmp_seg
+                        seg_args.play_direct = False
+                        if seg.speed != 1.0:
+                            seg_args.speech_speed = seg.speed
+                        run_synthesis(seg_args)
+                        if sf_ssml and os.path.isfile(tmp_seg) and os.path.getsize(tmp_seg) > 100:
+                            data_seg, sr_seg = sf_ssml.read(tmp_seg, dtype="float32")
+                            if data_seg.ndim > 1:
+                                data_seg = data_seg[:, 0]
+                            audio_parts.append(data_seg)
+                            sr_out = sr_out or sr_seg
+                    finally:
+                        if os.path.exists(tmp_seg):
+                            os.unlink(tmp_seg)
+                if audio_parts and sr_out and sf_ssml:
+                    combined = crossfade_segments(audio_parts, sample_rate=sr_out)
+                    sf_ssml.write(args.output_file, combined, sr_out, subtype="PCM_16")
+                    logger.info("SSML: combined %d segments → %s", len(audio_parts), args.output_file)
+                    if args.play_direct:
+                        from utils import play_audio
+                        play_audio(args.output_file, is_path=True)
+                    return
+            elif len(segments) == 1:
+                text_to_synthesize = segments[0].text
+                if segments[0].speed != 1.0:
+                    args.speech_speed = segments[0].speed
+    except ImportError:
+        pass
+
     model_config_base = GERMAN_TTS_MODELS.get(args.model_id)
     if not model_config_base:
         logger.error(f"Invalid model ID '{args.model_id}' passed to run_synthesis.")
@@ -695,6 +754,21 @@ def run_synthesis(args):
                 if handler_key != "crispasr":  # crispasr handles it via --tts-trim-silence
                     from utils import trim_silence_file
                     trim_silence_file(args.output_file)
+
+            # --- Post-synthesis normalization ---
+            if getattr(args, 'normalize', False) and args.output_file and os.path.isfile(args.output_file):
+                try:
+                    import soundfile as sf_norm
+
+                    from utils import normalize_audio
+                    data_n, sr_n = sf_norm.read(args.output_file, dtype="float32")
+                    if data_n.ndim > 1:
+                        data_n = data_n[:, 0]
+                    data_n = normalize_audio(data_n)
+                    sf_norm.write(args.output_file, data_n, sr_n, subtype="PCM_16")
+                    logger.info("Audio normalized to -3 dB peak.")
+                except Exception as e_norm:
+                    logger.warning("Normalization failed: %s", e_norm)
 
             # --- Post-synthesis resampling ---
             if getattr(args, 'output_sample_rate', None) and args.output_file and os.path.isfile(args.output_file):
@@ -991,6 +1065,10 @@ def main_cli_entrypoint():
     synth_group.add_argument("--batch", action="store_true",
         help="Batch mode: split input at blank lines, produce numbered output files\n"
              "(e.g., output_001.wav, output_002.wav, ...). Requires --output-dir.")
+    synth_group.add_argument("--jobs", type=int, default=1, metavar="N",
+        help="Concurrent synthesis jobs for --batch mode (default: 1).")
+    synth_group.add_argument("--normalize", action="store_true",
+        help="Peak-normalize output audio to -3 dB for consistent volume.")
 
     # CrispASR integration options
     crispasr_group = parser.add_argument_group(title="CrispASR Integration")
@@ -1253,24 +1331,37 @@ def main_cli_entrypoint():
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         ext = ".mp3" if args.model_id == "edge" else ".wav"
-        logger.info("Batch mode: %d paragraphs → %s/", len(paragraphs), output_dir)
-        batch_ok, batch_fail = 0, 0
-        for i, para in enumerate(paragraphs, 1):
+        n_jobs = getattr(args, 'jobs', 1)
+        logger.info("Batch mode: %d paragraphs → %s/ (jobs=%d)", len(paragraphs), output_dir, n_jobs)
+
+        def _synth_one(item):
+            i, para = item
             batch_args = argparse.Namespace(**vars(args))
             batch_args.input_text = para
             batch_args.output_file = str(output_dir / f"output_{i:03d}{ext}")
-            batch_args.batch = False  # prevent recursion
+            batch_args.batch = False
+            batch_args.play_direct = False
             logger.info("Batch [%d/%d]: %s", i, len(paragraphs), para[:60])
             try:
                 run_synthesis(batch_args)
                 if os.path.isfile(batch_args.output_file) and os.path.getsize(batch_args.output_file) > 100:
-                    batch_ok += 1
-                else:
-                    batch_fail += 1
-                    logger.warning("Batch [%d/%d]: no output produced.", i, len(paragraphs))
+                    return True
+                logger.warning("Batch [%d/%d]: no output produced.", i, len(paragraphs))
+                return False
             except Exception as e_batch:
-                batch_fail += 1
                 logger.error("Batch [%d/%d] failed: %s", i, len(paragraphs), e_batch)
+                return False
+
+        items = list(enumerate(paragraphs, 1))
+        if n_jobs > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=n_jobs) as pool:
+                results = list(pool.map(_synth_one, items))
+        else:
+            results = [_synth_one(item) for item in items]
+
+        batch_ok = sum(results)
+        batch_fail = len(results) - batch_ok
         logger.info("Batch complete: %d/%d succeeded, %d failed in %s/",
                      batch_ok, len(paragraphs), batch_fail, output_dir)
         return

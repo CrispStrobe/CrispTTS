@@ -75,6 +75,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - All responses watermarked + metadata-injected
 - **Text Input Flexibility**: Synthesize from CLI, `.txt`, `.md`, `.html`, `.pdf`, `.epub`
 - **Smart Text Chunking**: Automatic sentence-boundary splitting for long texts
+- **SSML-lite**: Supports `<break>`, `<prosody rate>`, `<say-as>`, `<phoneme>` tags in input text
 - **Customizable Output**: Save audio to `.wav`, `.mp3`, `.flac`, or `.opus`
 - **Direct Playback**: Play synthesized audio immediately
 - **Voice Selection**: Override default voices/speakers for most models
@@ -82,7 +83,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
-  - 257+ unit and live tests
+  - 281+ unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -267,6 +268,8 @@ python main.py --backend kokoro --input-text "Hello" --output-file out.wav
 | `--no-spoken-disclaimer` | off | Skip the AI-disclosure spoken prefix on voice-cloned audio |
 | `--lexicon TSV_PATH` | — | Custom word→phoneme TSV file for CrispASR pronunciation |
 | `--batch` | off | Split input at blank lines, produce numbered output files |
+| `--jobs N` | `1` | Concurrent synthesis jobs for `--batch` mode |
+| `--normalize` | off | Peak-normalize output audio to -3 dB |
 
 #### CrispASR Integration
 
@@ -297,6 +300,7 @@ python main.py --backend kokoro --input-text "Hello" --output-file out.wav
 | `--server-host ADDR` | `127.0.0.1` | Server bind address |
 | `--server-port PORT` | `8880` | Server port |
 | `--rate-limit N` | `10` | Max synthesis requests per minute per IP (0=unlimited) |
+| `--warm-up MODEL_ID` | — | Pre-synthesize at startup to warm model caches |
 
 #### Model-Specific Parameters (`--model-params`)
 

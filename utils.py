@@ -523,6 +523,24 @@ def trim_silence_file(filepath: str | Path, threshold_db: float = -40.0) -> None
         logger.warning("Silence trimming failed for %s: %s", filepath, e)
 
 
+def normalize_audio(pcm: np.ndarray, target_db: float = -3.0) -> np.ndarray:
+    """Peak-normalize audio to a target level in dB.
+
+    Args:
+        pcm: 1-D float32 mono PCM array.
+        target_db: Target peak level in dB (default -3.0 dB).
+
+    Returns:
+        Normalized copy of the PCM array.
+    """
+    peak = np.max(np.abs(pcm))
+    if peak < 1e-10:
+        return pcm.copy()
+    target_linear = 10.0 ** (target_db / 20.0)
+    gain = target_linear / peak
+    return (pcm * gain).astype(np.float32)
+
+
 def crossfade_segments(segments: list[np.ndarray], crossfade_ms: float = 50.0,
                        sample_rate: int = 24000) -> np.ndarray:
     """Concatenate audio segments with a short crossfade to avoid clicks.

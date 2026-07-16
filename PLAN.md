@@ -744,3 +744,54 @@ cert/key configuration needed for basic signing. Supports WAV, MP3, M4A.
 | `85c759a` | 265 pass | py3.10/3.11/3.12 + ruff ✓ |
 
 Released as [v0.7.1](https://github.com/CrispStrobe/CrispTTS/releases/tag/v0.7.1).
+
+---
+
+## Phase 14: Remaining opportunities
+
+### 14.1 SSML-lite preprocessing
+
+Support a subset of SSML tags in input text, translated to backend-specific
+controls before synthesis:
+
+- `<break time="500ms"/>` → insert silence
+- `<prosody rate="fast">` → map to `--speech-speed`
+- `<say-as interpret-as="characters">ABC</say-as>` → spell out
+- `<phoneme ph="...">` → pass to `--lexicon`-style phoneme override
+
+**Design**: Parse SSML in a preprocessor (new `ssml.py`), strip tags and
+emit a sequence of (text, params) tuples. Synthesize each segment with
+its params, concatenate with `crossfade_segments()`.
+
+**Files**: `ssml.py` (new), `main.py` (wire into synthesis), `utils.py` (silence insert)
+
+### 14.2 Progress indication for long synthesis
+
+Emit progress to stderr during synthesis:
+- Batch mode: `[3/12 paragraphs]` (already partially done)
+- Chunked synthesis: `[chunk 2/5]`
+- Server: progress header not possible (HTTP), but log it
+
+**Files**: `main.py`
+
+### 14.3 Concurrent batch synthesis
+
+`--batch --jobs N` synthesizes N paragraphs in parallel using a thread pool.
+Default: 1 (sequential). Useful for CrispASR backends that are CPU-bound.
+
+**Files**: `main.py`
+
+### 14.4 Audio normalization
+
+`--normalize` flag to apply peak or LUFS normalization to output audio.
+Ensures consistent volume across different backends and voices.
+
+**Files**: `utils.py` (new `normalize_audio()` function), `main.py` (CLI flag + post-processing)
+
+### 14.5 Model warm-up for server
+
+`--warm-up MODEL_ID` flag for the server to pre-synthesize a short phrase
+at startup, ensuring the first real request isn't slow. Useful for backends
+that lazy-load models.
+
+**Files**: `server.py`

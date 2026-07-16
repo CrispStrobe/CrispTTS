@@ -320,7 +320,8 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 pass
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8880, rate_limit: int = 10):
+def run_server(host: str = "127.0.0.1", port: int = 8880, rate_limit: int = 10,
+               warm_up: str | None = None):
     """Start the CrispTTS HTTP server."""
     global _rate_limit_max
     _rate_limit_max = rate_limit
@@ -330,6 +331,27 @@ def run_server(host: str = "127.0.0.1", port: int = 8880, rate_limit: int = 10):
     )
     logger.info("Loading TTS handlers...")
     _load_handlers()
+    # Optional warm-up: pre-synthesize a short phrase to load models
+    if warm_up:
+        handlers = _load_handlers()
+        model_config = GERMAN_TTS_MODELS.get(warm_up)
+        if model_config and handlers:
+            handler_key = model_config.get("handler_function_key", warm_up)
+            handler_func = handlers.get(handler_key)
+            if handler_func:
+                import tempfile
+                fd, tmp = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                try:
+                    logger.info("Warm-up: synthesizing with %s...", warm_up)
+                    handler_func(model_config.copy(), "Warm up.", None, None, tmp, False)
+                    logger.info("Warm-up complete.")
+                except Exception as e_wu:
+                    logger.warning("Warm-up failed: %s", e_wu)
+                finally:
+                    if os.path.exists(tmp):
+                        os.unlink(tmp)
+
     logger.info("Starting CrispTTS server on %s:%d", host, port)
     logger.info("Endpoints:")
     logger.info("  POST /v1/audio/speech — synthesize audio (OpenAI-compatible)")
@@ -353,5 +375,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8880, help="Port (default: 8880)")
     parser.add_argument("--rate-limit", type=int, default=10,
                         help="Max synthesis requests per minute per IP (default: 10, 0=unlimited)")
+    parser.add_argument("--warm-up", type=str, default=None, metavar="MODEL_ID",
+                        help="Pre-synthesize with this model at startup to warm caches.")
     args = parser.parse_args()
-    run_server(args.host, args.port, args.rate_limit)
+    run_server(args.host, args.port, args.rate_limit, args.warm_up)
