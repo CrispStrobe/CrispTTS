@@ -656,3 +656,48 @@ covering Phases 8-11.
 | 11.9 Version bump | v0.6.0 |
 
 254 tests passing in ~60s.
+
+---
+
+## Phase 12: CrispASR v0.8.12 sync + ecosystem updates
+
+Synced 2026-07-16. CrispASR added 2 new TTS backends, native C2PA signing
+on-by-default, and AudioSeal wiring.
+
+### 12.1 New backend configs
+
+| Model ID | Backend | Sample Rate | Cloning | Notes |
+|----------|---------|-------------|---------|-------|
+| `crispasr_omnivoice_tts` | `omnivoice` | 24000 | Yes (HuBERT) | 600+ langs, masked iterative |
+| `crispasr_moss_tts_local` | `moss-tts-local` | 48000 | No | 4B transformer, ~2.1 GB F16 |
+
+### 12.2 Skip C2PA for CrispASR backends
+
+CrispASR v0.8.8+ has native C2PA signing built in (self-signed by default).
+Python-side `c2pa_sign_file()` is redundant for CrispASR handler outputs.
+
+### 12.3 Add --tts-speed to param_map
+
+New OmniVoice flag for target-length estimate.
+
+### 12.4 Update voice-cloning keywords
+
+Add `omnivoice` to VOICE_CLONING_MODEL_KEYWORDS.
+
+### 12.5 Update ecosystem references
+
+- CrispASR version: 0.8.12 (was 0.8.7)
+- CrispASR TTS backends: 20+ (was 18+)
+- Handler count: 37+ (was 35+)
+- Handler docstring: 16 backends (was 14)
+
+### 12.6 Tests
+
+- Config validation for new backends
+- Voice-cloning keyword detection for omnivoice
+- C2PA skip logic for crispasr handler
+- tts_speed param passthrough
+
+### Status: ALL PHASE 12 ITEMS COMPLETE
+
+257 tests passing in ~84s.

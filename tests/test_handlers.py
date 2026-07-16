@@ -513,6 +513,7 @@ class TestNewCrispASRBackendConfigs(unittest.TestCase):
     NEW_BACKENDS = [
         "crispasr_bananamind_tts", "crispasr_dots_tts",
         "crispasr_cosyvoice3_tts", "crispasr_csm_tts",
+        "crispasr_omnivoice_tts", "crispasr_moss_tts_local",
     ]
 
     def test_new_backends_exist_in_config(self):
@@ -540,6 +541,8 @@ class TestNewCrispASRBackendConfigs(unittest.TestCase):
             "crispasr_dots_tts": 48000,
             "crispasr_cosyvoice3_tts": 24000,
             "crispasr_csm_tts": 24000,
+            "crispasr_omnivoice_tts": 24000,
+            "crispasr_moss_tts_local": 48000,
         }
         for mid, expected_sr in expected_rates.items():
             self.assertEqual(GERMAN_TTS_MODELS[mid]["sample_rate"], expected_sr)
@@ -624,6 +627,29 @@ class TestExpandedParamMap(unittest.TestCase):
         cmd = mock_run.call_args[0][0]
         self.assertIn("--no-spoken-disclaimer", cmd)
 
+    @patch("handlers.crispasr_handler.subprocess.run")
+    def test_tts_speed_passthrough(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        from handlers.crispasr_handler import synthesize_with_crispasr
+
+        config = {
+            "crisptts_model_id": "test",
+            "crispasr_backend": "omnivoice",
+            "crispasr_model_path": "auto",
+        }
+
+        params = '{"tts_speed": 1.5}'
+        with patch("handlers.crispasr_handler.os.path.isfile", return_value=True):
+            with patch("handlers.crispasr_handler._find_crispasr", return_value="/usr/bin/crispasr"):
+                synthesize_with_crispasr(
+                    config, "Test", None, params, "/tmp/test.wav", False
+                )
+
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("--tts-speed", cmd)
+        self.assertIn("1.5", cmd)
+
 
 class TestNewVoiceCloningKeywords(unittest.TestCase):
     """Test voice-cloning detection for Phase 7 backends."""
@@ -648,6 +674,15 @@ class TestNewVoiceCloningKeywords(unittest.TestCase):
     def test_bananamind_consent_with_wav(self):
         from watermark import requires_consent
         self.assertTrue(requires_consent("crispasr_bananamind_tts", "crispasr", "/path/ref.wav"))
+
+    def test_omnivoice_requires_consent(self):
+        from watermark import requires_consent
+        self.assertTrue(requires_consent("crispasr_omnivoice_tts", "crispasr"))
+
+    def test_moss_tts_local_no_consent(self):
+        from watermark import requires_consent
+        # moss-tts-local doesn't have voice cloning yet
+        self.assertFalse(requires_consent("crispasr_moss_tts_local", "crispasr"))
 
 
 class TestLiveCrispASR(unittest.TestCase):

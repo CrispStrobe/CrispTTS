@@ -817,6 +817,28 @@ GERMAN_TTS_MODELS = {
         "sample_rate": 24000,
         "notes": "CrispASR Sesame CSM-1B (C++ ggml, Llama backbone + Mimi codec). Causal mode, voice cloning.",
     },
+    # --- CrispASR v0.8.12 backends ---
+    "crispasr_omnivoice_tts": {
+        "crisptts_model_id": "crispasr_omnivoice_tts",
+        "handler_function_key": "crispasr",
+        "crispasr_backend": "omnivoice",
+        "crispasr_model_path": "auto",
+        "default_voice_id": None,
+        "available_voices": [],
+        "sample_rate": 24000,
+        "notes": "CrispASR OmniVoice (C++ ggml, Qwen3 masked iterative). 600+ langs, voice cloning via HuBERT.",
+    },
+    "crispasr_moss_tts_local": {
+        "crisptts_model_id": "crispasr_moss_tts_local",
+        "handler_function_key": "crispasr",
+        "crispasr_backend": "moss-tts-local",
+        "crispasr_model_path": "auto",
+        "crispasr_codec_model": "auto",
+        "default_voice_id": None,
+        "available_voices": [],
+        "sample_rate": 48000,
+        "notes": "CrispASR MOSS-TTS-Local 4B (C++ ggml, transformer + codec-v2). 48 kHz, ~2.1 GB F16.",
+    },
     # --- experimental (not yet working) models ---
     "mlx_audio_dia_clone": {
         "crisptts_model_id": "mlx_audio_dia_clone", # Add this for better logging

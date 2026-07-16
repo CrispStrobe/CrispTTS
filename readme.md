@@ -7,16 +7,16 @@ CrispTTS is a versatile command-line Text-to-Speech (TTS) tool designed for synt
 | Project | Role |
 |---|---|
 | **[Susurrus](https://github.com/CrispStrobe/Susurrus)** | Python GUI + CLI — 30+ ASR, 12 TTS, translation |
-| **[CrispASR](https://github.com/CrispStrobe/CrispASR)** | C++ ASR/TTS engine — 26+ ASR, 18+ TTS backends, ggml inference |
-| **CrispTTS** | This repo — Python TTS CLI with 35+ handlers |
+| **[CrispASR](https://github.com/CrispStrobe/CrispASR)** | C++ ASR/TTS engine — 26+ ASR, 20+ TTS backends, ggml inference |
+| **CrispTTS** | This repo — Python TTS CLI with 37+ handlers |
 | **[CrisperWeaver](https://github.com/CrispStrobe/CrisperWeaver)** | Flutter transcription app — desktop + mobile |
 
 NOTE: This is in experimental / work in progress state. Some Python-only models may be broken due to dependency conflicts. The CrispASR-based handlers (`crispasr_*`) are the most reliable — they use native C++ inference with no Python ML dependencies.
 
 ## Features
 
-- **35+ TTS Engine Support**:
-  - **CrispASR native C++ engines** (14 backends, auto-download, no Python ML deps):
+- **37+ TTS Engine Support**:
+  - **CrispASR native C++ engines** (16 backends, auto-download, no Python ML deps):
     - Kokoro (multilingual, Apache 2.0)
     - Orpheus + Kartoffel-Orpheus DE (19 German speakers, llama3.2 license)
     - Qwen3-TTS (voice cloning + voice design, Apache 2.0)
@@ -31,6 +31,8 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
     - Dots.TTS (Qwen2.5 LLM + DiT + BigVGAN, 48 kHz, CAM++ voice cloning)
     - CosyVoice3 (multi-GGUF: LLM+flow+CAM+++HiFT, voice cloning)
     - CSM/Sesame (Llama backbone + Mimi codec, causal mode, voice cloning)
+    - OmniVoice (Qwen3 masked iterative, 600+ languages, voice cloning)
+    - MOSS-TTS-Local (4B transformer + codec-v2, 48 kHz)
   - Microsoft Edge TTS (cloud-based, requires `edge-tts`)
   - Coqui TTS (XTTS v2, VITS, etc.)
   - Piper (local ONNX, requires `piper-tts`)
@@ -322,6 +324,7 @@ Parameters are passed as a JSON string. Available keys depend on the backend:
 | `noise_scale` | Piper | VITS variance |
 | `noise_w` | Piper | Stochastic duration predictor |
 | `max_speech_tokens` | Chatterbox | Max AR tokens |
+| `tts_speed` | OmniVoice | Target-length speed estimate |
 
 Example:
 ```bash
@@ -438,7 +441,7 @@ python main.py --model-id orpheus_ollama --input-text "Hallo Ollama" --ollama-ap
 
 Refer to the output of `python main.py --list-models` for the currently configured models and their notes. The script supports integration with:
 
-- CrispASR native C++ (14 backends: Kokoro, Orpheus, Qwen3-TTS, Chatterbox, VibeVoice, IndexTTS, VoxCPM2, F5-TTS, MeloTTS, Piper, BananaMind, Dots.TTS, CosyVoice3, CSM/Sesame)
+- CrispASR native C++ (16 backends: Kokoro, Orpheus, Qwen3-TTS, Chatterbox, VibeVoice, IndexTTS, VoxCPM2, F5-TTS, MeloTTS, Piper, BananaMind, Dots.TTS, CosyVoice3, CSM/Sesame, OmniVoice, MOSS-TTS-Local)
 - Microsoft Edge TTS
 - Piper TTS
 - Orpheus GGUF (via llama-cpp-python)

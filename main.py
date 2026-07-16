@@ -759,11 +759,13 @@ def run_synthesis(args):
                         elif out_lower.endswith(".opus") or out_lower.endswith(".ogg"):
                             inject_opus_metadata(args.output_file)
 
-                        # C2PA content credentials (if configured)
-                        c2pa_cert = getattr(args, 'c2pa_cert', None) or os.environ.get("C2PA_CERT_PATH")
-                        c2pa_key = getattr(args, 'c2pa_key', None) or os.environ.get("C2PA_KEY_PATH")
-                        if c2pa_cert and c2pa_key:
-                            c2pa_sign_file(args.output_file, cert_path=c2pa_cert, key_path=c2pa_key)
+                        # C2PA content credentials (if configured).
+                        # Skip for CrispASR backends — the binary signs by default since v0.8.8.
+                        if handler_key != "crispasr":
+                            c2pa_cert = getattr(args, 'c2pa_cert', None) or os.environ.get("C2PA_CERT_PATH")
+                            c2pa_key = getattr(args, 'c2pa_key', None) or os.environ.get("C2PA_KEY_PATH")
+                            if c2pa_cert and c2pa_key:
+                                c2pa_sign_file(args.output_file, cert_path=c2pa_cert, key_path=c2pa_key)
 
                     except ImportError:
                         logger.debug("watermark module not available — skipping watermark embedding.")

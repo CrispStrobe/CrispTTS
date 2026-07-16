@@ -1,10 +1,10 @@
 # CrispTTS/handlers/crispasr_handler.py
-"""CrispASR TTS handler — access 14 C++ TTS engines via the crispasr binary.
+"""CrispASR TTS handler — access 16 C++ TTS engines via the crispasr binary.
 
 Supported engines: kokoro, orpheus, qwen3-tts, chatterbox, vibevoice-tts,
 indextts, voxcpm2-tts, f5-tts, melotts, piper, bananamind-tts, dots-tts,
-cosyvoice3-tts, csm-tts. Each runs as native C++ inference through ggml,
-offering fast synthesis without Python ML dependencies.
+cosyvoice3-tts, csm-tts, omnivoice, moss-tts-local. Each runs as native
+C++ inference through ggml, offering fast synthesis without Python ML deps.
 
 The binary automatically embeds a spread-spectrum watermark into all TTS
 output — no additional watermarking needed on the Python side for these
@@ -148,7 +148,8 @@ def synthesize_with_crispasr(
 
     Supported backends: kokoro, orpheus, qwen3-tts, chatterbox,
     vibevoice-tts, indextts, voxcpm2-tts, f5-tts, melotts, piper,
-    bananamind-tts, dots-tts, cosyvoice3-tts, csm-tts.
+    bananamind-tts, dots-tts, cosyvoice3-tts, csm-tts, omnivoice,
+    moss-tts-local.
     """
     model_id = crisptts_model_config.get("crisptts_model_id", "crispasr_unknown")
     backend = crisptts_model_config.get("crispasr_backend")
@@ -266,6 +267,7 @@ def synthesize_with_crispasr(
             "noise_w": "--tts-noise-w",
             "speaker_id": "--tts-speaker-id",
             "max_speech_tokens": "--tts-max-speech-tokens",
+            "tts_speed": "--tts-speed",
         }
         for key, flag in param_map.items():
             if key in params:
