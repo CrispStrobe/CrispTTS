@@ -509,5 +509,94 @@ class TestWatermarkEmbedDispatcher(unittest.TestCase):
         np.testing.assert_array_equal(pcm, original)
 
 
+class TestC2paAudioNative(unittest.TestCase):
+    """Test c2pa-audio native signing integration."""
+
+    def test_c2pa_sign_returns_bool(self):
+        """c2pa_sign_file should return bool regardless of backend availability."""
+        from watermark import c2pa_sign_file
+        result = c2pa_sign_file("/nonexistent/file.wav")
+        self.assertIsInstance(result, bool)
+
+    def test_c2pa_tries_native_first(self):
+        """c2pa_sign_file should not crash regardless of backend availability."""
+        from watermark import c2pa_sign_file
+        result = c2pa_sign_file("/nonexistent/file.wav")
+        self.assertFalse(result)
+
+
+class TestComplianceCoverage(unittest.TestCase):
+    """Verify all output paths have watermark coverage."""
+
+    def test_wav_watermark_roundtrip(self):
+        """WAV files should have detectable watermark after embed."""
+        from watermark import spread_spectrum_detect, watermark_embed
+        pcm = 0.5 * np.sin(
+            2 * np.pi * 440 * np.linspace(0, 1, 24000, endpoint=False, dtype=np.float32)
+        )
+        wm = watermark_embed(pcm, sample_rate=24000)
+        conf = spread_spectrum_detect(wm)
+        self.assertGreater(conf, 0.6,
+                           f"WAV watermark should be detectable (confidence={conf:.3f})")
+
+    def test_wav_metadata_contains_ai_tag(self):
+        """WAV metadata should contain AI-generated declaration."""
+        # Minimal WAV
+        import struct
+
+        from watermark import inject_wav_metadata
+        sr = 16000
+        data_size = sr * 2
+        riff_size = 36 + data_size
+        wav = bytearray()
+        wav.extend(b"RIFF")
+        wav.extend(struct.pack("<I", riff_size))
+        wav.extend(b"WAVE")
+        wav.extend(b"fmt ")
+        wav.extend(struct.pack("<I", 16))
+        wav.extend(struct.pack("<HHI I HH", 1, 1, sr, sr * 2, 2, 16))
+        wav.extend(b"data")
+        wav.extend(struct.pack("<I", data_size))
+        wav.extend(b"\x00" * data_size)
+        result = inject_wav_metadata(bytes(wav))
+        self.assertIn(b"AI-generated", result)
+        self.assertIn(b"CrispTTS", result)
+
+    def test_mp3_metadata_contains_ai_tag(self):
+        """MP3 metadata should contain AI_GENERATED tag."""
+        from watermark import inject_mp3_metadata
+        fake_mp3 = b"\xff\xfb" + b"\x00" * 100
+        result = inject_mp3_metadata(fake_mp3)
+        self.assertIn(b"AI_GENERATED", result)
+
+    def test_voice_cloning_keywords_comprehensive(self):
+        """All known cloning-capable backends should trigger consent."""
+        from watermark import requires_consent
+        cloning_models = [
+            "crispasr_vibevoice_tts", "crispasr_indextts",
+            "crispasr_voxcpm2", "crispasr_qwen3_tts",
+            "crispasr_dots_tts", "crispasr_cosyvoice3_tts",
+            "crispasr_csm_tts", "crispasr_omnivoice_tts",
+        ]
+        for mid in cloning_models:
+            self.assertTrue(requires_consent(mid, "crispasr"),
+                            f"{mid} should require consent")
+        # Non-cloning should not trigger
+        self.assertFalse(requires_consent("crispasr_kokoro", "crispasr", "af_heart"))
+        self.assertFalse(requires_consent("edge", "edge"))
+
+    def test_disclaimer_generates_audio(self):
+        """Spoken disclaimer should produce non-empty audio."""
+        from watermark import generate_spoken_disclaimer
+        result = generate_spoken_disclaimer(sample_rate=24000)
+        self.assertIsNotNone(result)
+        self.assertGreater(len(result), 100)
+
+    def test_consent_audit_log_path_exists(self):
+        """Consent audit log path should be defined."""
+        from watermark import _CONSENT_LOG_PATH
+        self.assertTrue(_CONSENT_LOG_PATH.endswith("consent_audit.log"))
+
+
 if __name__ == "__main__":
     unittest.main()

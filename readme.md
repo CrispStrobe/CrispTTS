@@ -82,7 +82,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
-  - 254+ unit and live tests
+  - 257+ unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -525,7 +525,7 @@ All outputs are watermarked — CLI, `--test-all`, and API server responses. Cri
 | **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.08, ~38 dB SNR) | Always active | Built-in (numpy) |
 | **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
 | **WAV/MP3/FLAC/Opus metadata** | LIST/INFO, ID3v2, Vorbis comments — `AI_GENERATED=true` | Always active | Built-in (FLAC/Opus: `pip install mutagen`) |
-| **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) | Opt-in | `pip install c2pa-python` |
+| **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) | Opt-in | c2pa-audio (native, ~160 KB) or `pip install c2pa-python` |
 | **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio | Auto for cloning | Built-in |
 | **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
 

@@ -97,7 +97,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 })
             self._send_json(200, {"object": "list", "data": models})
         elif self.path == "/health" or self.path == "/":
-            health = {"status": "ok", "server": "CrispTTS", "version": "0.7.0"}
+            health = {"status": "ok", "server": "CrispTTS", "version": "0.7.1"}
             try:
                 import resource
                 rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024

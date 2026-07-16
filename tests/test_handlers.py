@@ -795,5 +795,35 @@ class TestLiveCrispASR(unittest.TestCase):
                 os.unlink(tmp)
 
 
+    def test_live_piper_metadata_present(self):
+        """Verify CrispASR piper output has WAV metadata after handler processing."""
+        import subprocess
+        import tempfile
+
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            result = subprocess.run(  # noqa: S603
+                [self.exe, "-m", "auto", "--backend", "piper",
+                 "--tts", "Metadata test.", "--tts-output", tmp,
+                 "--auto-download", "-t", "4"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                self.skipTest(f"piper synthesis failed: {result.stderr[-200:]}")
+
+            # The binary embeds watermark. Now inject metadata (as main.py would)
+            from watermark import inject_wav_metadata
+            with open(tmp, "rb") as f:
+                wav_bytes = f.read()
+            tagged = inject_wav_metadata(wav_bytes)
+            self.assertIn(b"AI-generated", tagged)
+            self.assertIn(b"CrispTTS", tagged)
+            self.assertGreater(len(tagged), len(wav_bytes))
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+
 if __name__ == "__main__":
     unittest.main()
