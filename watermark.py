@@ -401,7 +401,8 @@ def _detect_audioseal_python(pcm: np.ndarray, sample_rate: int = 24000) -> float
     return float(result.mean().item())
 
 
-def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 24000) -> np.ndarray:
+def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 24000,
+                    force: bool = False) -> np.ndarray:
     """Embed AI-generated watermark. Dispatches to the best available backend.
 
     Priority: wavmark (MIT) > audioseal (Python) > crispasr (C/GGUF) > spread-spectrum.
@@ -410,11 +411,15 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 240
         pcm: 1-D float32 mono PCM array.
         alpha: Strength for spread-spectrum (ignored when neural backends active).
         sample_rate: Audio sample rate (needed for neural backend resampling).
+        force: Embed even when CRISPTTS_NO_WATERMARK is set. Used by the
+            watermark floor (see :func:`preflight_marking`): when the output
+            container cannot carry a C2PA manifest, the watermark is the only
+            robust mark and the opt-out must not be able to strip it.
 
     Returns:
         Watermarked PCM (new array, input unchanged).
     """
-    if os.environ.get("CRISPTTS_NO_WATERMARK"):
+    if os.environ.get("CRISPTTS_NO_WATERMARK") and not force:
         return pcm.copy()
 
     # Lazy-load: if no neural backend was loaded yet, try loading on first use.
@@ -496,6 +501,41 @@ def watermark_verify_file(filepath: str) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# Marker strings used both for injection and for the is_marked() probe
+# ---------------------------------------------------------------------------
+
+_AI_MARKER_WAV = b"CrispTTS (AI-generated audio)"
+_AI_MARKER_TAG = b"AI_GENERATED"
+
+# How much of a file to scan when probing for an existing marker. Container
+# metadata lives at the head (ID3, FLAC/Ogg comments) or the tail (WAV LIST),
+# so scanning both ends avoids reading large files in full.
+_MARKER_SCAN_BYTES = 128 * 1024
+
+
+def is_marked(filepath: str) -> bool:
+    """Return True if the file already carries CrispTTS AI-provenance metadata.
+
+    Used to keep marking idempotent: a file that has been through
+    :func:`mark_audio_file` once must not be watermarked a second time,
+    which would degrade audio quality without adding provenance.
+    """
+    try:
+        size = os.path.getsize(filepath)
+        with open(filepath, "rb") as f_probe:
+            head = f_probe.read(_MARKER_SCAN_BYTES)
+            if size > _MARKER_SCAN_BYTES:
+                f_probe.seek(max(0, size - _MARKER_SCAN_BYTES))
+                tail = f_probe.read(_MARKER_SCAN_BYTES)
+            else:
+                tail = b""
+    except OSError:
+        return False
+    blob = head + tail
+    return _AI_MARKER_WAV in blob or _AI_MARKER_TAG in blob
+
+
+# ---------------------------------------------------------------------------
 # WAV LIST/INFO metadata (AI-provenance)
 # ---------------------------------------------------------------------------
 
@@ -526,10 +566,14 @@ def inject_wav_metadata(wav_bytes: bytes) -> bytes:
     """Inject AI-provenance LIST/INFO metadata into a WAV byte string.
 
     Works on complete in-memory WAV files. If the input is not a valid
-    RIFF/WAVE container, returns it unchanged.
+    RIFF/WAVE container, returns it unchanged. Idempotent: a WAV that
+    already carries the CrispTTS AI-provenance marker is returned as-is,
+    so repeated marking cannot stack duplicate LIST/INFO chunks.
     """
     if len(wav_bytes) < 44 or wav_bytes[:4] != b"RIFF" or wav_bytes[8:12] != b"WAVE":
         return wav_bytes
+    if _AI_MARKER_WAV in wav_bytes:
+        return wav_bytes  # already marked — do not double-tag
 
     info_chunk = make_wav_info_chunk()
     # Append INFO after existing data, patch RIFF size
@@ -579,10 +623,62 @@ def make_id3v2_ai_tag() -> bytes:
 
 
 def inject_mp3_metadata(mp3_bytes: bytes) -> bytes:
-    """Prepend AI-provenance ID3v2 tag to MP3 data if not already present."""
+    """Prepend AI-provenance ID3v2 tag to MP3 data if not already present.
+
+    Conservative by design: if the data already carries *any* ID3v2 tag this
+    returns it untouched, because prepending a second tag header would produce
+    a malformed file. To add the AI marker to an MP3 that already has an ID3
+    tag from an encoder, use :func:`inject_mp3_metadata_file`, which merges
+    into the existing tag instead.
+    """
     if mp3_bytes[:3] == b"ID3":
         return mp3_bytes  # already has ID3 tag, don't double-tag
     return make_id3v2_ai_tag() + mp3_bytes
+
+
+def inject_mp3_metadata_file(filepath: str) -> bool:
+    """Inject AI-provenance TXXX frames into an MP3 file, merging safely.
+
+    Encoders (ffmpeg/LAME, as used by pydub on export) write their own ID3v2
+    tag, which made the bytes-level injector skip marking entirely — MP3
+    outputs ended up with no AI-provenance metadata at all. mutagen merges our
+    frames into whatever tag is already there.
+
+    Returns True if the marker is present in the file afterwards.
+    """
+    try:
+        from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
+        try:
+            tags = ID3(filepath)
+        except ID3NoHeaderError:
+            tags = ID3()
+        if any(frame.desc == "AI_GENERATED" for frame in tags.getall("TXXX")):
+            return True
+        tags.add(TXXX(encoding=3, desc="AI_GENERATED", text="true"))
+        tags.add(TXXX(encoding=3, desc="GENERATOR", text="CrispTTS"))
+        tags.add(TXXX(encoding=3, desc="AI_CONTENT_NOTICE", text=(
+            "This audio was synthesized by an AI text-to-speech model. "
+            "It is not a recording of a human speaker.")))
+        tags.save(filepath)
+        return True
+    except ImportError:
+        logger.debug("mutagen not installed — falling back to bytes-level ID3 injection.")
+    except Exception as e:
+        logger.warning("MP3 ID3 merge failed for %s: %s", filepath, e)
+
+    # Fallback: only works when the file carries no ID3 tag yet.
+    try:
+        with open(filepath, "rb") as f_mp3:
+            raw = f_mp3.read()
+        patched = inject_mp3_metadata(raw)
+        if patched is raw or patched == raw:
+            return _AI_MARKER_TAG in raw
+        with open(filepath, "wb") as f_mp3:
+            f_mp3.write(patched)
+        return True
+    except OSError as e:
+        logger.warning("MP3 metadata injection failed for %s: %s", filepath, e)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -649,18 +745,25 @@ def inject_opus_metadata(filepath: str) -> bool:
 # Voice-cloning consent gate
 # ---------------------------------------------------------------------------
 
-# Model IDs / handler keys that involve voice cloning
+# Handler keys whose every model clones a voice from a reference recording.
+#
+# These are the ``handler_function_key`` values used in ``config.py`` — not the
+# ``synthesize_with_*`` function names. An earlier version of this set listed the
+# function names, which match no config entry, so the whole tier was dead and the
+# gate silently fell through to keyword matching. ``tests/test_watermark.py``
+# now asserts that every entry here corresponds to a real handler key.
+#
+# Handlers serving both cloning and fixed-speaker models (``coqui_tts``,
+# ``mlx_audio``, ``crispasr``, ``tts_cpp``) deliberately do NOT belong here:
+# they are resolved per-model by the explicit ``voice_cloning`` config key.
 VOICE_CLONING_HANDLER_KEYS = frozenset({
-    "synthesize_with_outetts_llamacpp",
-    "synthesize_with_outetts_hf",
-    "synthesize_with_coqui_xtts_v2",
-    "synthesize_with_llasa_hybrid_de_zeroshot",
-    "synthesize_with_llasa_german_transformers_zeroshot",
-    "synthesize_with_llasa_multilingual_hf_zeroshot",
-    "synthesize_with_kartoffelbox_zeroshot",
-    "synthesize_with_f5_tts",
-    "synthesize_with_zonos",
-    "synthesize_with_chatterbox",
+    "outetts",
+    "zonos",
+    "f5_tts",
+    "chatterbox",
+    "llasa_hybrid",
+    "llasa_german_transformers",
+    "llasa_multilingual_transformers",
 })
 
 VOICE_CLONING_MODEL_KEYWORDS = frozenset({
@@ -671,25 +774,73 @@ VOICE_CLONING_MODEL_KEYWORDS = frozenset({
 })
 
 
-def requires_consent(model_id: str, handler_key: str, voice_id: str | None = None) -> bool:
+#: Extensions that identify a reference *recording* supplied as the voice.
+#: Restricting this to ``.wav`` used to let an identical clone from an MP3 or
+#: FLAC reference through the gate untouched.
+REFERENCE_AUDIO_EXTS = frozenset({".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a"})
+
+
+def _is_reference_recording(voice_id: str | None) -> bool:
+    """True if ``voice_id`` names an audio file rather than a preset voice."""
+    if not voice_id or not isinstance(voice_id, str):
+        return False
+    return os.path.splitext(voice_id)[1].lower() in REFERENCE_AUDIO_EXTS
+
+
+def requires_consent(model_id: str, handler_key: str, voice_id: str | None = None,
+                     model_config: dict | None = None) -> bool:
     """Check whether a model/handler involves voice cloning.
 
-    Also detects voice cloning when a .wav file is passed as voice_id
-    to any backend (including crispasr), since that implies the user
-    is cloning a voice from a reference recording.
+    Detection order — strongest signal first:
+
+      1. A reference *recording* supplied as ``voice_id``. Handing the system
+         somebody's voice to imitate is the cloning act itself, so this is
+         checked before anything else and is **not** overridable by config: a
+         model declared ``voice_cloning: false`` still needs consent when it is
+         driven from a reference clip.
+      2. An explicit ``voice_cloning`` key in the model's config entry. Every
+         entry in ``config.py`` sets this; it is the authoritative answer for a
+         model's default mode, in both directions.
+      3. The handler-key and model-ID keyword lists, as a fallback for configs
+         that predate the explicit key (e.g. a user's own model dict).
+
+    (3) fails *open* for a backend whose name matches no keyword, which is why
+    (2) exists and why ``tests/test_watermark.py`` asserts that every shipped
+    model declares it.
     """
+    if _is_reference_recording(voice_id):
+        return True
+    if model_config is not None and model_config.get("voice_cloning") is not None:
+        return bool(model_config["voice_cloning"])
     if handler_key in VOICE_CLONING_HANDLER_KEYS:
         return True
     model_lower = model_id.lower()
-    if any(kw in model_lower for kw in VOICE_CLONING_MODEL_KEYWORDS):
-        return True
-    # .wav voice path = voice cloning on any backend
-    if voice_id and isinstance(voice_id, str) and voice_id.lower().endswith(".wav"):
-        return True
-    return False
+    return any(kw in model_lower for kw in VOICE_CLONING_MODEL_KEYWORDS)
 
 
 _CONSENT_LOG_PATH = os.path.join(os.path.expanduser("~"), ".cache", "crisptts", "consent_audit.log")
+
+
+def _reference_audio_digest(voice_id: str | None) -> str | None:
+    """SHA-256 of a reference voice sample, for the consent audit trail.
+
+    The attestation itself is unverifiable self-declaration; recording a
+    digest of the exact reference audio at least makes the log evidential —
+    it ties an attestation to the specific recording that was cloned.
+    """
+    if not voice_id or not isinstance(voice_id, str):
+        return None
+    if not os.path.isfile(voice_id):
+        return None
+    try:
+        import hashlib
+        digest = hashlib.sha256()
+        with open(voice_id, "rb") as f_ref:
+            for chunk in iter(lambda: f_ref.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()[:32]
+    except OSError:
+        return None
 
 
 def log_consent_attestation(
@@ -700,6 +851,7 @@ def log_consent_attestation(
     """Log a consent attestation to stderr AND a persistent audit log file.
 
     Format matches CrispASR: [CONSENT] ts=ISO8601 model=X voice=Y attestation="..."
+    plus a ref_sha256 of the reference recording when one was supplied.
 
     The persistent log at ~/.cache/crisptts/consent_audit.log ensures the
     audit trail survives even when stderr is not captured.
@@ -708,7 +860,10 @@ def log_consent_attestation(
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
     voice_str = voice_id or "default"
-    msg = f'[CONSENT] ts={ts} model={model_id} voice={voice_str} attestation="{source}"\n'
+    ref_digest = _reference_audio_digest(voice_id)
+    ref_field = f" ref_sha256={ref_digest}" if ref_digest else ""
+    msg = (f'[CONSENT] ts={ts} model={model_id} voice={voice_str}{ref_field} '
+           f'attestation="{source}"\n')
     sys.stderr.write(msg)
     sys.stderr.flush()
 
@@ -727,17 +882,88 @@ def log_consent_attestation(
 # Spoken AI disclaimer for voice-cloned audio (EU AI Act Art. 50(4))
 # ---------------------------------------------------------------------------
 
-DISCLAIMER_TEXT = "This audio was generated by artificial intelligence."
+#: Spoken disclosure text per language. Art. 50(4) asks the deployer to
+#: disclose that content is artificially generated; a disclosure the audience
+#: cannot understand does not do that, so the language follows the synthesized
+#: audio rather than being fixed to English.
+DISCLAIMER_TEXTS = {
+    "de": "Diese Audioaufnahme wurde von künstlicher Intelligenz erzeugt.",
+    "en": "This audio was generated by artificial intelligence.",
+    "fr": "Cet enregistrement audio a été généré par une intelligence artificielle.",
+    "es": "Este audio fue generado por inteligencia artificial.",
+    "it": "Questo audio è stato generato dall'intelligenza artificiale.",
+    "nl": "Deze audio is gegenereerd door kunstmatige intelligentie.",
+    "pl": "Ten dźwięk został wygenerowany przez sztuczną inteligencję.",
+    "pt": "Este áudio foi gerado por inteligência artificial.",
+}
+
+#: CrispTTS is a German TTS toolkit, so German is the default disclosure
+#: language — not English.
+DEFAULT_DISCLAIMER_LANG = "de"
+
+#: Edge TTS voice used per language when CrispASR is unavailable.
+_DISCLAIMER_EDGE_VOICES = {
+    "de": "de-DE-KatjaNeural",
+    "en": "en-US-AriaNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "es": "es-ES-ElviraNeural",
+    "it": "it-IT-ElsaNeural",
+    "nl": "nl-NL-ColetteNeural",
+    "pl": "pl-PL-ZofiaNeural",
+    "pt": "pt-PT-RaquelNeural",
+}
+
 _DISCLAIMER_SILENCE_SEC = 0.3  # 300ms gap between disclaimer and content
 
 
-def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
-    """Generate a spoken AI disclaimer using a non-cloning TTS backend.
+class DisclosureError(RuntimeError):
+    """Raised when the spoken AI disclosure could not be added to cloned audio.
 
-    Priority: CrispASR kokoro (local, fast) > Edge TTS (cloud) > beep marker.
-
-    Returns float32 PCM array at the given sample rate, or None on failure.
+    Treated like :class:`MarkingError`: voice-cloned output without its
+    disclosure is not delivered. The escape hatch is
+    ``--no-spoken-disclaimer``, which requires
+    ``--accept-marking-responsibility``.
     """
+
+
+def normalize_disclaimer_lang(language: str | None) -> str:
+    """Map a config language code (``de``, ``de-DE``, ``german``) to a key."""
+    if not language or not isinstance(language, str):
+        return DEFAULT_DISCLAIMER_LANG
+    lang = language.strip().lower().replace("_", "-")
+    aliases = {"german": "de", "english": "en", "french": "fr", "spanish": "es",
+               "italian": "it", "dutch": "nl", "polish": "pl", "portuguese": "pt"}
+    if lang in aliases:
+        return aliases[lang]
+    base = lang.split("-")[0]
+    return base if base in DISCLAIMER_TEXTS else DEFAULT_DISCLAIMER_LANG
+
+
+def disclaimer_text(language: str | None = None) -> str:
+    """The spoken disclosure sentence for a language."""
+    return DISCLAIMER_TEXTS[normalize_disclaimer_lang(language)]
+
+
+#: Backwards-compatible alias. Prefer :func:`disclaimer_text`.
+DISCLAIMER_TEXT = DISCLAIMER_TEXTS["en"]
+
+
+def generate_spoken_disclaimer(sample_rate: int = 24000,
+                               language: str | None = None) -> tuple[np.ndarray | None, str]:
+    """Synthesize the spoken AI disclosure with a non-cloning TTS backend.
+
+    Priority: CrispASR kokoro (local, fast) > Edge TTS (cloud) > tone marker.
+
+    Returns:
+        ``(pcm, kind)`` where ``kind`` is ``"spoken"`` for real speech or
+        ``"tone-marker"`` for the beep fallback. The distinction matters:
+        three beeps are an audible marker, not a disclosure a listener can
+        understand, so callers must not present them as one. ``(None, "none")``
+        if nothing could be produced.
+    """
+    lang = normalize_disclaimer_lang(language)
+    text = DISCLAIMER_TEXTS[lang]
+
     # Try CrispASR kokoro (local, no internet, no voice cloning)
     try:
         import shutil
@@ -751,7 +977,7 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
             try:
                 result = subprocess.run(  # noqa: S603
                     [exe, "-m", "auto", "--backend", "kokoro",
-                     "--tts", DISCLAIMER_TEXT, "--tts-output", tmp_wav,
+                     "--tts", text, "--tts-output", tmp_wav,
                      "--auto-download", "-t", "4"],
                     capture_output=True, text=True, timeout=60,
                 )
@@ -762,8 +988,8 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
                         data = data[:, 0]
                     if sr != sample_rate:
                         data = _resample_linear(data, sr, sample_rate)
-                    logger.info("Spoken disclaimer generated via CrispASR kokoro.")
-                    return data
+                    logger.info("Spoken disclaimer (%s) generated via CrispASR kokoro.", lang)
+                    return data, "spoken"
             finally:
                 if os.path.exists(tmp_wav):
                     os.unlink(tmp_wav)
@@ -778,7 +1004,8 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
         import edge_tts
 
         async def _synth():
-            communicate = edge_tts.Communicate(DISCLAIMER_TEXT, "en-US-AriaNeural")
+            voice = _DISCLAIMER_EDGE_VOICES.get(lang, _DISCLAIMER_EDGE_VOICES["en"])
+            communicate = edge_tts.Communicate(text, voice)
             fd, tmp = tempfile.mkstemp(suffix=".mp3")
             os.close(fd)
             try:
@@ -786,6 +1013,8 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
                 try:
                     import soundfile as sf_disc
                     data, sr = sf_disc.read(tmp, dtype="float32")
+                    if data.ndim > 1:
+                        data = data[:, 0]
                     if sr != sample_rate:
                         data = _resample_linear(data, sr, sample_rate)
                     return data
@@ -793,22 +1022,26 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
                     from pydub import AudioSegment
                     seg = AudioSegment.from_file(tmp)
                     seg = seg.set_frame_rate(sample_rate).set_channels(1).set_sample_width(2)
-                    raw = np.frombuffer(seg.raw_data, dtype=np.int16).astype(np.float32) / 32767.0
-                    return raw
+                    return np.frombuffer(seg.raw_data, dtype=np.int16).astype(np.float32) / 32767.0
             finally:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
 
         loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(_synth())
+            data = loop.run_until_complete(_synth())
         finally:
             loop.close()
+        if data is not None and len(data):
+            logger.info("Spoken disclaimer (%s) generated via Edge TTS.", lang)
+            return data, "spoken"
     except Exception as e:
         logger.info("Edge TTS disclaimer generation failed: %s", e)
 
-    # Fallback: generate a simple beep pattern (3 short beeps) as a
-    # machine-readable audio marker that something precedes the content
+    # Last resort: an audible tone marker. NOT a disclosure — it signals that
+    # something precedes the content, but conveys nothing to a listener who
+    # does not already know the convention. Reported as such so callers can
+    # refuse to treat it as an Art. 50(4) disclosure.
     try:
         duration = 0.15  # each beep
         gap = 0.08
@@ -821,68 +1054,185 @@ def generate_spoken_disclaimer(sample_rate: int = 24000) -> np.ndarray | None:
         beep[-fade_len:] *= np.linspace(1, 0, fade_len, dtype=np.float32)
         silence_gap = np.zeros(int(sample_rate * gap), dtype=np.float32)
         marker = np.concatenate([beep, silence_gap, beep, silence_gap, beep])
-        logger.info("Using beep marker as spoken disclaimer fallback.")
-        return marker
+        logger.warning("No TTS backend available for the spoken AI disclosure; "
+                       "falling back to a tone marker, which is NOT a disclosure "
+                       "a listener can understand. Install edge-tts, or run with "
+                       "CrispASR available, for a real spoken disclosure.")
+        return marker, "tone-marker"
     except Exception as e:
         logger.warning("Disclaimer generation failed entirely: %s", e)
-        return None
+        return None, "none"
 
 
-# Cache the disclaimer audio to avoid re-synthesizing
-_disclaimer_cache: dict[int, np.ndarray] = {}
+# Cache the disclaimer audio to avoid re-synthesizing. Keyed by (rate, lang).
+_disclaimer_cache: dict[tuple[int, str], tuple[np.ndarray, str]] = {}
 
 
-def prepend_disclaimer(pcm: np.ndarray, sample_rate: int = 24000) -> np.ndarray:
-    """Prepend an AI-generated spoken disclaimer to voice-cloned audio.
+def prepend_disclaimer(pcm: np.ndarray, sample_rate: int = 24000,
+                       language: str | None = None) -> tuple[np.ndarray, str]:
+    """Prepend the spoken AI disclosure to voice-cloned audio.
 
-    Matches CrispASR's approach: disclaimer + 300ms silence + original audio.
-    The disclaimer is cached after first generation.
+    Layout: disclosure + 300 ms silence + original audio. The generated
+    disclosure is cached per (sample rate, language).
+
+    Returns:
+        ``(pcm, kind)`` — see :func:`generate_spoken_disclaimer` for ``kind``.
+        On failure the original PCM is returned unchanged with ``"none"``.
     """
-    if sample_rate not in _disclaimer_cache:
-        disclaimer = generate_spoken_disclaimer(sample_rate)
-        if disclaimer is not None:
-            _disclaimer_cache[sample_rate] = disclaimer
-        else:
-            return pcm  # can't generate disclaimer, return original
+    lang = normalize_disclaimer_lang(language)
+    key = (sample_rate, lang)
+    if key not in _disclaimer_cache:
+        disclaimer, kind = generate_spoken_disclaimer(sample_rate, lang)
+        if disclaimer is None:
+            return pcm, "none"
+        _disclaimer_cache[key] = (disclaimer, kind)
 
-    disclaimer = _disclaimer_cache[sample_rate]
+    disclaimer, kind = _disclaimer_cache[key]
     silence = np.zeros(int(sample_rate * _DISCLAIMER_SILENCE_SEC), dtype=np.float32)
-    return np.concatenate([disclaimer, silence, pcm])
+    return np.concatenate([disclaimer, silence, pcm]), kind
+
+
+def prepend_disclaimer_file(filepath: str, language: str | None = None,
+                            require_spoken: bool = True) -> str:
+    """Prepend the spoken AI disclosure to an audio file, in place.
+
+    Format-agnostic: works for every container the marking pipeline supports.
+
+    Supports the deployer's Art. 50(4) duty to disclose deepfake content. That
+    obligation is theirs, but voice-cloned output carries the disclosure by
+    default so it is present unless deliberately removed — which is why this
+    raises rather than returning a value callers can ignore.
+
+    Args:
+        filepath: Audio file to modify in place.
+        language: Language of the synthesized speech; the disclosure follows it.
+        require_spoken: When True, a tone-marker fallback is not accepted as a
+            disclosure and raises instead.
+
+    Returns:
+        The disclosure kind that was applied: ``"spoken"`` or ``"tone-marker"``.
+
+    Raises:
+        DisclosureError: If no disclosure could be added, or only a tone marker
+            could be and ``require_spoken`` is set.
+    """
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext not in _SOUNDFILE_EXTS and ext not in _PYDUB_EXTS:
+        raise DisclosureError(
+            f"Cannot prepend the spoken AI disclosure to '{ext}' output. "
+            f"Use one of: {', '.join(sorted(_SOUNDFILE_EXTS | _PYDUB_EXTS))}.")
+    try:
+        pcm, sr = _read_pcm_any(filepath, ext)
+        combined, kind = prepend_disclaimer(pcm, sample_rate=sr, language=language)
+    except DisclosureError:
+        raise
+    except Exception as e:
+        raise DisclosureError(
+            f"Could not add the spoken AI disclosure to {filepath}: {e}") from e
+
+    if kind == "none" or len(combined) == len(pcm):
+        raise DisclosureError(
+            f"The spoken AI disclosure could not be generated for {filepath}. "
+            "Voice-cloned audio is not delivered without it — install edge-tts "
+            "for a local-network-free fallback, or pass --no-spoken-disclaimer "
+            "--accept-marking-responsibility to take on the disclosure duty.")
+    if kind == "tone-marker" and require_spoken:
+        raise DisclosureError(
+            f"Only a tone marker could be produced for {filepath}, which is not "
+            "a disclosure a listener can understand. Install edge-tts (or make "
+            "CrispASR available) for a real spoken disclosure, or pass "
+            "--no-spoken-disclaimer --accept-marking-responsibility.")
+
+    try:
+        _write_pcm_any(filepath, combined, sr, ext)
+    except Exception as e:
+        raise DisclosureError(
+            f"Could not write the disclosed audio for {filepath}: {e}") from e
+    logger.info("AI disclosure (%s, %s) prepended to voice-cloned output: %s",
+                kind, normalize_disclaimer_lang(language), filepath)
+    return kind
 
 
 # ---------------------------------------------------------------------------
 # C2PA content credentials (optional, pip install c2pa-python)
 # ---------------------------------------------------------------------------
 
-_C2PA_MANIFEST_JSON = """{
-  "claim_generator": "CrispTTS",
-  "assertions": [
-    {
-      "label": "c2pa.actions",
-      "data": {
-        "actions": [
-          {
-            "action": "c2pa.created",
-            "digitalSourceType":
-              "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-            "softwareAgent": "CrispTTS"
-          }
-        ]
-      }
-    },
-    {
-      "label": "c2pa.training-mining",
-      "data": {
-        "entries": [
-          {
-            "use": "notAllowed",
-            "constraint_info": "This AI-generated audio may not be used to train AI models without explicit permission."
-          }
-        ]
-      }
+def _c2pa_manifest(model_id: str | None = None) -> dict:
+    """Build the C2PA manifest asserting this audio is AI-generated.
+
+    ``digitalSourceType: trainedAlgorithmicMedia`` is the assertion that makes
+    the manifest an AI-provenance claim rather than a bare integrity seal, so
+    it is what Art. 50(2) marking leans on. It must be attached on *every*
+    signing path — an earlier version built this only for one of two code
+    paths, and the other signed files with no AI assertion at all.
+    """
+    software_agent: dict = {"name": "CrispTTS", "version": _crisptts_version()}
+    if model_id:
+        software_agent["softwareAgentModel"] = model_id
+    return {
+        "claim_generator_info": [{"name": "CrispTTS", "version": _crisptts_version()}],
+        "title": "AI-generated speech",
+        "assertions": [
+            {
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.created",
+                            "digitalSourceType":
+                                "http://cv.iptc.org/newscodes/digitalsourcetype/"
+                                "trainedAlgorithmicMedia",
+                            "softwareAgent": software_agent,
+                        }
+                    ]
+                },
+            },
+            {
+                "label": "c2pa.training-mining",
+                "data": {
+                    "entries": {
+                        "c2pa.ai_generative_training": {"use": "notAllowed"},
+                        "c2pa.ai_inference": {"use": "notAllowed"},
+                        "c2pa.ai_training": {"use": "notAllowed"},
+                        "c2pa.data_mining": {"use": "notAllowed"},
+                    }
+                },
+            },
+        ],
     }
-  ]
-}"""
+
+
+def _crisptts_version() -> str:
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            return version("crisptts")
+        except PackageNotFoundError:
+            return "0.0.0+source"
+    except ImportError:
+        return "0.0.0+source"
+
+
+def _c2pa_signer(cert_pem: bytes, key_pem: bytes):
+    """Build a c2pa ``Signer`` from PEM bytes.
+
+    Works around two undocumented requirements of c2pa-python that silently
+    produce useless errors otherwise:
+
+      * ``ta_url`` must be a real NULL pointer. The wrapper's ``__init__``
+        rejects ``None`` and an empty ``b""`` is parsed as a timestamp-authority
+        URL, failing with "Signature: empty string" — so the ctypes struct is
+        populated directly.
+      * the private key must be PKCS#8 ("BEGIN PRIVATE KEY"), not SEC1
+        ("BEGIN EC PRIVATE KEY").
+    """
+    import ctypes
+
+    import c2pa as c2pa_rs
+
+    info = ctypes.Structure.__new__(c2pa_rs.C2paSignerInfo)
+    ctypes.Structure.__init__(info, b"es256", cert_pem, key_pem, None)
+    return c2pa_rs.Signer.from_info(info)
 
 
 def c2pa_sign_file(
@@ -893,70 +1243,86 @@ def c2pa_sign_file(
 ) -> bool:
     """Sign an audio file with C2PA content credentials.
 
-    Tries c2pa-audio (native, ~160 KB, no Rust) first, then falls back to
-    c2pa-python (~10 MB). With c2pa-audio, cert/key are optional — it uses
-    a bundled self-signed cert by default.
+    Thin boolean wrapper around :func:`c2pa_sign_file_ex`.
+    """
+    ok, _signer = c2pa_sign_file_ex(input_path, output_path, cert_path, key_path)
+    return ok
+
+
+def c2pa_sign_file_ex(
+    input_path: str,
+    output_path: str | None = None,
+    cert_path: str | None = None,
+    key_path: str | None = None,
+    model_id: str | None = None,
+) -> tuple[bool, str | None]:
+    """Sign an audio file with C2PA content credentials, reporting the signer.
+
+    Signing is attempted for every C2PA-capable container. When no certificate
+    is supplied, the bundled development credential in :mod:`c2pa_dev_cert` is
+    used, so a default install still produces an interoperable, verifiable
+    provenance manifest instead of only a CrispTTS-specific watermark.
 
     Args:
-        input_path: Path to the audio file (WAV, MP3, or M4A).
-        output_path: Where to write signed file (defaults to overwrite input).
-        cert_path: Path to PEM certificate (optional for c2pa-audio).
-        key_path: Path to PEM private key (optional for c2pa-audio).
+        input_path: Path to the audio file (WAV, MP3, M4A or FLAC).
+        output_path: Where to write the signed file (defaults to overwrite).
+        cert_path: PEM certificate — leaf first, then its CA chain.
+        key_path: PKCS#8 PEM private key for the leaf certificate.
+        model_id: TTS model that produced the audio, recorded in the manifest.
 
-    Returns True on success, False if no C2PA library is available.
+    Returns:
+        ``(success, signer_kind)`` where ``signer_kind`` is ``"ca-issued"``
+        when an explicit certificate was supplied, ``"self-signed"`` when the
+        bundled development certificate was used, or ``None`` on failure.
+
+        A ``"self-signed"`` manifest proves the file has not been altered
+        since signing, but will NOT validate against C2PA trust lists — it
+        is not equivalent to a credential from a recognised authority.
     """
     cert_path = cert_path or os.environ.get("C2PA_CERT_PATH")
     key_path = key_path or os.environ.get("C2PA_KEY_PATH")
 
-    # --- Try c2pa-audio (native, lightweight) first ---
     try:
-        from c2pa_audio import C2paAudio
-        c2pa = C2paAudio()
-        with open(input_path, "rb") as f_in:
-            data = f_in.read()
-        ext = os.path.splitext(input_path)[1].lower()
-        mime_map = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4"}
-        mime = mime_map.get(ext, "audio/wav")
-        cert_pem = open(cert_path).read() if cert_path else None
-        key_pem = open(key_path).read() if key_path else None
-        signed = c2pa.sign(data, mime, cert_pem, key_pem)
-        effective_output = output_path or input_path
-        with open(effective_output, "wb") as f_out:
-            f_out.write(signed)
-        logger.info("C2PA signed (c2pa-audio native): %s", effective_output)
-        return True
+        import c2pa as c2pa_rs  # noqa: F401
     except ImportError:
-        logger.debug("c2pa-audio not available, trying c2pa-python.")
-    except Exception as e:
-        logger.info("c2pa-audio signing failed: %s — trying c2pa-python.", e)
+        logger.debug("c2pa-python not installed; C2PA signing skipped.")
+        return False, None
 
-    # --- Fallback: c2pa-python (heavy, requires Rust) ---
-    if not cert_path or not key_path:
-        logger.debug("C2PA signing skipped: no certificate/key and c2pa-audio not available.")
-        return False
+    if cert_path and key_path:
+        try:
+            with open(cert_path, "rb") as f_cert:
+                cert_pem = f_cert.read()
+            with open(key_path, "rb") as f_key:
+                key_pem = f_key.read()
+            signer_kind = "ca-issued"
+        except OSError as e:
+            logger.warning("Could not read C2PA credential (%s); C2PA signing skipped.", e)
+            return False, None
+    else:
+        try:
+            from c2pa_dev_cert import DEV_CERT_CHAIN_PEM, DEV_PRIVATE_KEY_PEM
+        except ImportError:
+            logger.debug("Bundled C2PA development credential unavailable.")
+            return False, None
+        cert_pem = DEV_CERT_CHAIN_PEM.encode()
+        key_pem = DEV_PRIVATE_KEY_PEM.encode()
+        signer_kind = "self-signed"
 
     try:
         import c2pa as c2pa_rs
-    except ImportError:
-        logger.debug("Neither c2pa-audio nor c2pa-python installed; C2PA signing skipped.")
-        return False
 
-    try:
-        with open(cert_path, "rb") as f_cert:
-            cert_data = f_cert.read()
-        with open(key_path, "rb") as f_key:
-            key_data = f_key.read()
-
-        signer = c2pa_rs.create_signer(cert_data, key_data, "es256")
-        builder = c2pa_rs.Builder(_C2PA_MANIFEST_JSON)
+        signer = _c2pa_signer(cert_pem, key_pem)
+        builder = c2pa_rs.Builder(_c2pa_manifest(model_id))
 
         effective_output = output_path or input_path
         if effective_output == input_path:
+            # sign_file refuses to write over its own source.
             import tempfile
             suffix = os.path.splitext(input_path)[1]
             fd, tmp_path = tempfile.mkstemp(suffix=suffix)
             os.close(fd)
             try:
+                os.unlink(tmp_path)  # must not exist
                 builder.sign_file(input_path, tmp_path, signer)
                 import shutil
                 shutil.move(tmp_path, input_path)
@@ -966,9 +1332,602 @@ def c2pa_sign_file(
                 raise
         else:
             builder.sign_file(input_path, effective_output, signer)
-
-        logger.info("C2PA signed (c2pa-python): %s", effective_output)
-        return True
     except Exception as e:
-        logger.warning("C2PA signing failed: %s", e)
+        logger.warning("C2PA signing failed for %s: %s", input_path, e)
+        return False, None
+
+    if signer_kind == "self-signed":
+        _warn_self_signed_once()
+        logger.info("C2PA signed with the bundled development certificate: %s — the "
+                    "manifest proves the file is unaltered but will not validate "
+                    "against C2PA trust lists.", effective_output)
+    else:
+        logger.info("C2PA signed with the supplied certificate: %s", effective_output)
+    return True, signer_kind
+
+
+_self_signed_warned = False
+
+
+def _warn_self_signed_once() -> None:
+    """Say once per run that the bundled credential is not a trusted one."""
+    global _self_signed_warned
+    if _self_signed_warned:
+        return
+    _self_signed_warned = True
+    logger.warning(
+        "C2PA manifests are being signed with the bundled development "
+        "certificate, whose private key is public. They prove integrity, not "
+        "authorship. Pass --c2pa-cert/--c2pa-key for a credential others can "
+        "attribute to you."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Central marking entry point (EU AI Act Art. 50(2))
+# ---------------------------------------------------------------------------
+#
+# Every code path that produces an audio file — CLI single synthesis,
+# --test-all, batch mode, and the HTTP server — marks its output through
+# mark_audio_file() and nothing else. Having exactly one implementation is
+# what keeps coverage uniform across formats and prevents the same file from
+# being watermarked twice.
+
+
+class MarkingError(RuntimeError):
+    """Raised when AI-provenance marking could not be applied to an output.
+
+    Callers must treat this as fatal for the output in question: under
+    Art. 50(2) an unmarked synthetic-audio file should not be delivered.
+    The only intended escape hatch is ``allow_unmarked=True``, which the CLI
+    exposes as ``--allow-unmarked`` and the environment as
+    ``CRISPTTS_ALLOW_UNMARKED=1``.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Marking-sufficiency policy (ported from CrispASR's watertight-CLI guarantee)
+# ---------------------------------------------------------------------------
+#
+# Two ideas taken from the C++ CLI (examples/cli/crispasr_run.cpp):
+#
+#   1. Watermark floor. If the output container cannot carry a C2PA manifest,
+#      the audio watermark is the ONLY robust machine-readable mark, so
+#      --no-watermark is overridden rather than honoured. No path can emit a
+#      fully unmarked AI file.
+#
+#   2. Marking attestation. Any provenance opt-out requires an explicit
+#      --accept-marking-responsibility, mirroring the voice-clone
+#      --i-have-rights gate, and is recorded as a [MARKING] audit line.
+#
+# CrispTTS adds a third, which neither sibling has: marking is *verified* and
+# generation is gated on the verification, not merely warned about. Metadata
+# alone never counts as sufficient — it is strippable by any transcode.
+
+#: Containers into which c2pa-python can actually *embed* a signed manifest.
+#:
+#: Deliberately narrower than ``Builder.get_supported_mime_types()``, which
+#: also lists FLAC and M4A — both are accepted for reading but fail signing
+#: with "NotSupported: type is unsupported". This set feeds the watermark
+#: floor, so an over-broad entry is not cosmetic: it would let
+#: ``--no-watermark`` be honoured for a container that then carries no
+#: manifest, leaving only strippable metadata. ``.m4a`` was listed here for
+#: exactly that reason and is now removed.
+#: ``tests/test_watermark.py`` verifies each entry by really signing a file.
+C2PA_CAPABLE_EXTS = frozenset({".wav", ".mp3"})
+
+
+def c2pa_available(cert_path: str | None = None, key_path: str | None = None) -> bool:
+    """True if C2PA signing can run in this environment.
+
+    Signing no longer depends on the caller supplying a credential: without
+    one, the bundled development certificate is used. So this reduces to
+    "is c2pa-python importable", which for a normal install is always true —
+    c2pa-python is a core dependency precisely so that the interoperable
+    provenance layer is on by default rather than opt-in.
+    """
+    del cert_path, key_path  # signing works with the bundled credential too
+    try:
+        import c2pa  # noqa: F401
+    except ImportError:
         return False
+    try:
+        from c2pa_dev_cert import DEV_CERT_CHAIN_PEM  # noqa: F401
+    except ImportError:
+        # No bundled credential: signing only possible with an explicit one.
+        return bool((os.environ.get("C2PA_CERT_PATH") and os.environ.get("C2PA_KEY_PATH")))
+    return True
+
+
+def output_carries_c2pa(filepath: str | None, cert_path: str | None = None,
+                        key_path: str | None = None) -> bool:
+    """True if this output will carry a C2PA manifest.
+
+    Mirrors ``crispasr_output_carries_c2pa``. Used to decide whether the audio
+    watermark may be opted out of: when this is False the watermark is the only
+    robust mark left, so it becomes mandatory.
+    """
+    if not filepath:
+        return False
+    if os.path.splitext(filepath)[1].lower() not in C2PA_CAPABLE_EXTS:
+        return False
+    return c2pa_available(cert_path, key_path)
+
+
+def log_marking_attestation(
+    no_watermark: bool = False,
+    allow_unmarked: bool = False,
+    no_spoken_disclaimer: bool = False,
+    source: str = "CLI --accept-marking-responsibility",
+) -> None:
+    """Record an honoured provenance opt-out as a [MARKING] audit line.
+
+    Parallel to :func:`log_consent_attestation`'s [CONSENT] line, and to
+    CrispASR's ``[MARKING]`` line, so the two ecosystems produce a compatible
+    audit trail.
+    """
+    import sys
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
+    msg = (f'[MARKING] ts={ts} no_watermark={"yes" if no_watermark else "no"} '
+           f'allow_unmarked={"yes" if allow_unmarked else "no"} '
+           f'no_spoken_disclaimer={"yes" if no_spoken_disclaimer else "no"} '
+           f'attestation="{source}"\n')
+    sys.stderr.write(msg)
+    sys.stderr.flush()
+    try:
+        os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
+        with open(_CONSENT_LOG_PATH, "a") as f_audit:
+            f_audit.write(msg)
+    except OSError as e:
+        logger.debug("Could not write marking audit log: %s", e)
+
+
+def preflight_marking(
+    output_path: str | None,
+    *,
+    handler_key: str | None = None,
+    no_watermark: bool = False,
+    allow_unmarked: bool = False,
+    responsibility_accepted: bool = False,
+    no_spoken_disclaimer: bool = False,
+    c2pa_cert: str | None = None,
+    c2pa_key: str | None = None,
+) -> dict:
+    """Decide, BEFORE synthesis, whether this output can be marked sufficiently.
+
+    Refusing here rather than after generation means no model is loaded and no
+    compute is spent producing audio we would have to throw away — and, more
+    importantly, that unmarkable audio never exists on disk at all.
+
+    Returns:
+        A policy dict consumed by :func:`mark_audio_file`:
+        ``embed_watermark``, ``forced``, ``expect_c2pa``, ``allow_unmarked``,
+        ``note``.
+
+    Raises:
+        MarkingError: If generation must not proceed.
+    """
+    env_no_watermark = bool(os.environ.get("CRISPTTS_NO_WATERMARK"))
+    env_allow_unmarked = bool(os.environ.get("CRISPTTS_ALLOW_UNMARKED"))
+    env_accepted = bool(os.environ.get("CRISPTTS_ACCEPT_MARKING_RESPONSIBILITY"))
+
+    no_watermark = no_watermark or env_no_watermark
+    allow_unmarked = allow_unmarked or env_allow_unmarked
+    responsibility_accepted = responsibility_accepted or env_accepted
+
+    opt_out = no_watermark or allow_unmarked or no_spoken_disclaimer
+
+    # --- Attestation gate: opting out of provenance is an explicit act ---
+    if opt_out and not responsibility_accepted:
+        which = ("--no-watermark" if no_watermark else
+                 "--allow-unmarked" if allow_unmarked else
+                 "--no-spoken-disclaimer")
+        raise MarkingError(
+            f"{which} requires --accept-marking-responsibility.\n"
+            "  Disabling AI-content provenance marking shifts the marking and\n"
+            "  disclosure duty to you, the operator. By passing\n"
+            "  --accept-marking-responsibility you affirm you accept that\n"
+            "  responsibility for this output."
+        )
+
+    expect_c2pa = output_carries_c2pa(output_path, c2pa_cert, c2pa_key)
+    policy = {
+        "embed_watermark": True,
+        "forced": False,
+        "expect_c2pa": expect_c2pa,
+        "allow_unmarked": allow_unmarked,
+        "note": None,
+    }
+
+    # --- Watermark floor: honour --no-watermark only if C2PA still marks it ---
+    if no_watermark:
+        if expect_c2pa:
+            policy["embed_watermark"] = False
+        else:
+            policy["forced"] = True
+            policy["note"] = (
+                f"'{output_path or '<stream>'}' will not carry a C2PA manifest, so "
+                "--no-watermark is overridden — the audio watermark is kept so the "
+                "output stays marked as AI-generated. Use a C2PA-capable container "
+                f"({'/'.join(sorted(e.lstrip('.').upper() for e in C2PA_CAPABLE_EXTS))}) "
+                "to allow --no-watermark."
+            )
+            logger.warning("%s", policy["note"])
+
+    if opt_out and responsibility_accepted:
+        log_marking_attestation(no_watermark=no_watermark, allow_unmarked=allow_unmarked,
+                                no_spoken_disclaimer=no_spoken_disclaimer)
+
+    if allow_unmarked:
+        return policy  # blunt override: caller has accepted responsibility
+
+    # --- Refuse now if marking could not possibly succeed on this output ---
+    if policy["embed_watermark"] and output_path and handler_key != "crispasr":
+        ext = os.path.splitext(output_path)[1].lower()
+        if ext not in _SOUNDFILE_EXTS and ext not in _PYDUB_EXTS:
+            raise MarkingError(
+                f"Refusing to synthesize: output format '{ext or '(none)'}' cannot carry "
+                "an audio watermark, so the result could not be marked as AI-generated. "
+                f"Use one of: {', '.join(sorted(_SOUNDFILE_EXTS | _PYDUB_EXTS))}."
+            )
+        missing = _missing_codec_dependency(ext)
+        if missing:
+            raise MarkingError(
+                f"Refusing to synthesize: {missing} is required to watermark '{ext}' output "
+                "and is not installed, so the result could not be marked as AI-generated."
+            )
+    return policy
+
+
+def _missing_codec_dependency(ext: str) -> str | None:
+    """Name of the missing package needed to watermark `ext`, or None."""
+    if ext in _SOUNDFILE_EXTS:
+        try:
+            import soundfile  # noqa: F401
+        except ImportError:
+            return "soundfile"
+        return None
+    try:
+        import pydub  # noqa: F401
+    except ImportError:
+        return "pydub"
+    return None
+
+
+class MarkResult:
+    """Outcome of marking one audio file.
+
+    Attributes:
+        marked: True only if an audio watermark layer was actually applied
+            (or was already present). This is what provenance claims —
+            such as the server's ``X-CrispTTS-Watermarked`` header — must
+            be derived from.
+        backend: Active watermark backend name.
+        layers: Which provenance layers were applied.
+        confidence: Post-embed detection confidence, when verification ran.
+        c2pa_signer: ``"ca-issued"``, ``"self-signed"`` or None.
+        reason: Why marking was skipped or degraded, if it was.
+    """
+
+    __slots__ = ("marked", "backend", "layers", "confidence", "c2pa_signer", "reason")
+
+    def __init__(self, marked: bool, backend: str | None = None,
+                 layers: tuple[str, ...] = (), confidence: float | None = None,
+                 c2pa_signer: str | None = None, reason: str | None = None):
+        self.marked = marked
+        self.backend = backend
+        self.layers = layers
+        self.confidence = confidence
+        self.c2pa_signer = c2pa_signer
+        self.reason = reason
+
+    def __repr__(self) -> str:
+        return (f"MarkResult(marked={self.marked}, backend={self.backend!r}, "
+                f"layers={self.layers!r}, confidence={self.confidence!r}, "
+                f"c2pa_signer={self.c2pa_signer!r}, reason={self.reason!r})")
+
+
+# Formats we can decode/re-encode for a real PCM watermark embed.
+_SOUNDFILE_EXTS = frozenset({".wav", ".flac"})
+_PYDUB_EXTS = frozenset({".mp3", ".opus", ".ogg", ".m4a"})
+
+# Detection confidence below which we warn that the mark may not survive
+# downstream processing. Matches the documented spread-spectrum threshold.
+_VERIFY_THRESHOLD = 0.65
+
+_weak_backend_warned = False
+_unmarked_warned = False
+
+
+def marking_enabled() -> bool:
+    """False when marking has been disabled via CRISPTTS_NO_WATERMARK."""
+    return not os.environ.get("CRISPTTS_NO_WATERMARK")
+
+
+def allow_unmarked_default() -> bool:
+    """True when the environment permits delivering unmarked output."""
+    return bool(os.environ.get("CRISPTTS_ALLOW_UNMARKED"))
+
+
+def _warn_if_weak_backend(has_c2pa: bool = False) -> None:
+    """Warn once when only the built-in spread-spectrum watermark is active.
+
+    Measured on 20 s of speech: the built-in mark reads 0.94 after embedding
+    but drops to 0.63 after a plain 24k->16k->24k resample, i.e. below its own
+    0.65 detection threshold. Art. 50(2) asks for marking that is robust "as
+    far as technically feasible", and a robust neural backend is one install
+    away, so this is worth telling the user about exactly once.
+
+    Args:
+        has_c2pa: True when this output also carries a signed C2PA manifest.
+            The manifest survives what the spread-spectrum mark does not, so
+            the warning is softened — but not dropped, since a transcode that
+            strips the manifest also leaves the weak watermark behind.
+    """
+    global _weak_backend_warned
+    if _weak_backend_warned or _backend != "spread_spectrum":
+        return
+    _weak_backend_warned = True
+    if has_c2pa:
+        logger.info(
+            "Audio watermarking uses the built-in spread-spectrum backend, which "
+            "does not reliably survive resampling or transcoding; the signed C2PA "
+            "manifest is this output's durable provenance layer. For a watermark "
+            "that survives transcoding too: pip install 'crisptts[robust]'"
+        )
+        return
+    logger.warning(
+        "Watermarking with the built-in spread-spectrum backend only, and this "
+        "container carries no C2PA manifest. The mark is imperceptible but does "
+        "NOT reliably survive resampling or transcoding. For a robust neural "
+        "watermark: pip install 'crisptts[robust]'"
+    )
+
+
+def _warn_unmarked_once() -> None:
+    """Warn prominently, once, that output is being delivered unmarked."""
+    global _unmarked_warned
+    if _unmarked_warned:
+        return
+    _unmarked_warned = True
+    import sys
+    sys.stderr.write(
+        "\n*** WARNING: AI watermarking is DISABLED. Synthetic audio will be "
+        "produced WITHOUT machine-readable AI-provenance marking.\n"
+        "*** Under EU AI Act Art. 50(2) marking is required for synthetic "
+        "audio; responsibility for unmarked output rests with you.\n\n"
+    )
+    sys.stderr.flush()
+
+
+def _read_pcm_any(filepath: str, ext: str) -> tuple[np.ndarray, int]:
+    """Decode an audio file to (float32 mono PCM, true sample rate).
+
+    Reading the real sample rate matters: the neural backends resample
+    internally, so passing a wrong rate embeds the watermark at the wrong
+    frequency and makes it undetectable.
+    """
+    if ext in _SOUNDFILE_EXTS:
+        import soundfile as sf_read
+        data, sr = sf_read.read(filepath, dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        return data, int(sr)
+
+    from pydub import AudioSegment as _Seg
+    seg = _Seg.from_file(filepath)
+    seg = seg.set_channels(1).set_sample_width(2)
+    pcm = np.frombuffer(seg.raw_data, dtype=np.int16).astype(np.float32) / 32767.0
+    return pcm, int(seg.frame_rate)
+
+
+def _write_pcm_any(filepath: str, pcm: np.ndarray, sample_rate: int, ext: str) -> None:
+    """Re-encode float32 mono PCM back into the file's original container."""
+    if ext in _SOUNDFILE_EXTS:
+        import soundfile as sf_write
+        subtype = "PCM_16" if ext == ".wav" else None
+        sf_write.write(filepath, pcm, sample_rate, subtype=subtype)
+        return
+
+    from pydub import AudioSegment as _Seg
+    raw = (pcm * 32767.0).clip(-32768, 32767).astype(np.int16).tobytes()
+    seg = _Seg(data=raw, sample_width=2, frame_rate=sample_rate, channels=1)
+    export_format = {".m4a": "ipod", ".opus": "opus", ".ogg": "ogg", ".mp3": "mp3"}[ext]
+    seg.export(filepath, format=export_format)
+
+
+def _inject_container_metadata(filepath: str, ext: str) -> bool:
+    """Inject AI-provenance metadata appropriate to the container. Best-effort."""
+    if ext == ".wav":
+        with open(filepath, "rb") as f_meta:
+            patched = inject_wav_metadata(f_meta.read())
+        with open(filepath, "wb") as f_meta:
+            f_meta.write(patched)
+        return True
+    if ext == ".mp3":
+        return inject_mp3_metadata_file(filepath)
+    if ext == ".flac":
+        return inject_flac_metadata(filepath)
+    if ext in (".opus", ".ogg"):
+        return inject_opus_metadata(filepath)
+    return False
+
+
+def mark_audio_file(
+    filepath: str,
+    *,
+    handler_key: str | None = None,
+    allow_unmarked: bool | None = None,
+    c2pa_cert: str | None = None,
+    c2pa_key: str | None = None,
+    verify: bool = True,
+    policy: dict | None = None,
+    model_id: str | None = None,
+) -> MarkResult:
+    """Apply AI-provenance marking to a synthesized audio file, in place.
+
+    This is the single marking path for the whole project. It embeds the
+    audio watermark at the file's true sample rate, injects container
+    metadata, optionally attaches C2PA content credentials, and verifies
+    that the result is detectable.
+
+    Idempotent: a file that already carries the CrispTTS marker is left
+    untouched rather than watermarked a second time (double embedding costs
+    roughly 6 dB of SNR and adds no provenance).
+
+    Args:
+        filepath: Audio file to mark in place.
+        handler_key: Originating handler. ``"crispasr"`` outputs are already
+            watermarked by that binary, so the PCM embed is skipped while
+            metadata and verification still run.
+        allow_unmarked: When True, marking failures are downgraded to a
+            warning and reported via the result instead of raising. Defaults
+            to the ``CRISPTTS_ALLOW_UNMARKED`` environment variable.
+        c2pa_cert: PEM certificate for C2PA signing.
+        c2pa_key: PEM private key for C2PA signing.
+        verify: Read the file back and confirm the watermark is detectable.
+            When True the verification is a **gate**, not a warning: an output
+            whose mark cannot be detected above the threshold is refused unless
+            some other robust layer (C2PA) marked it.
+        policy: Resolved policy from :func:`preflight_marking`. Supplying it
+            enables the watermark floor — an opt-out that preflight overrode
+            stays overridden here, so the env var cannot re-disable it.
+
+    Returns:
+        A :class:`MarkResult` describing what was applied.
+
+    Raises:
+        MarkingError: If marking failed, or succeeded but is not sufficient,
+            and unmarked output is not allowed.
+    """
+    forced = bool(policy and policy.get("forced"))
+    skip_watermark_layer = bool(policy and not policy.get("embed_watermark", True))
+    if allow_unmarked is None:
+        allow_unmarked = bool(policy["allow_unmarked"]) if policy else allow_unmarked_default()
+
+    def _fail(reason: str) -> MarkResult:
+        if allow_unmarked:
+            logger.warning("Delivering UNMARKED audio for %s: %s", filepath, reason)
+            return MarkResult(marked=False, backend=_backend, reason=reason)
+        raise MarkingError(
+            f"Could not apply AI-provenance marking to {filepath}: {reason}. "
+            "Refusing to deliver unmarked synthetic audio. Pass --allow-unmarked "
+            "(or set CRISPTTS_ALLOW_UNMARKED=1) to override."
+        )
+
+    if not filepath or not os.path.isfile(filepath):
+        return _fail("output file does not exist")
+
+    # The floor wins over the env opt-out: if preflight determined this output
+    # has no other robust mark, the watermark is not optional here either.
+    if not marking_enabled() and not forced:
+        _warn_unmarked_once()
+        return MarkResult(marked=False, backend=_backend, reason="disabled via CRISPTTS_NO_WATERMARK")
+
+    if is_marked(filepath):
+        logger.debug("Already marked, skipping re-embed: %s", filepath)
+        return MarkResult(marked=True, backend=_backend, layers=("already-marked",),
+                          reason="already-marked")
+
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext not in _SOUNDFILE_EXTS and ext not in _PYDUB_EXTS:
+        return _fail(f"unsupported output format '{ext}' — cannot embed a watermark")
+
+    layers: list[str] = []
+    confidence: float | None = None
+    sample_rate: int | None = None
+
+    # --- Layer 1: audio watermark (the layer that survives transcoding) ---
+    if skip_watermark_layer:
+        # --no-watermark honoured because C2PA will carry the provenance.
+        logger.info("Audio watermark skipped for %s — C2PA manifest carries provenance.",
+                    filepath)
+    elif handler_key == "crispasr":
+        # The CrispASR binary embeds its watermark during synthesis.
+        layers.append("audio-watermark:crispasr")
+    else:
+        try:
+            pcm, sample_rate = _read_pcm_any(filepath, ext)
+        except ImportError as e:
+            return _fail(f"cannot decode {ext} for watermarking ({e}); "
+                         "install soundfile (wav/flac) or pydub+ffmpeg (mp3/opus/ogg/m4a)")
+        except Exception as e:
+            return _fail(f"cannot decode {ext} for watermarking: {e}")
+
+        _warn_if_weak_backend(
+            has_c2pa=bool(policy["expect_c2pa"]) if policy and "expect_c2pa" in policy
+            else output_carries_c2pa(filepath, c2pa_cert, c2pa_key))
+        try:
+            pcm = watermark_embed(pcm, sample_rate=sample_rate, force=forced)
+            _write_pcm_any(filepath, pcm, sample_rate, ext)
+        except Exception as e:
+            return _fail(f"watermark embedding failed: {e}")
+        layers.append("audio-watermark")
+
+    # --- Layer 2: container metadata (best-effort; strippable by design) ---
+    try:
+        if _inject_container_metadata(filepath, ext):
+            layers.append("metadata")
+        else:
+            logger.warning("Container metadata not injected for %s "
+                           "(install mutagen for FLAC/Opus). Audio watermark is unaffected.",
+                           filepath)
+    except Exception as e:
+        logger.warning("Container metadata injection failed for %s: %s", filepath, e)
+
+    # --- Layer 3: C2PA content credentials (optional) ---
+    c2pa_signer = None
+    try:
+        signed, c2pa_signer = c2pa_sign_file_ex(filepath, cert_path=c2pa_cert,
+                                                key_path=c2pa_key, model_id=model_id)
+        if signed:
+            layers.append(f"c2pa:{c2pa_signer}")
+    except Exception as e:
+        logger.debug("C2PA signing skipped for %s: %s", filepath, e)
+
+    # --- Verify, and GATE on the verification ---
+    #
+    # A watermark that cannot be read back is not a mark. The embed silently
+    # no-ops on audio shorter than one FFT frame and on digital silence, and
+    # can be wiped by aggressive post-processing — in all of those cases the
+    # only thing left is strippable container metadata, which is not the
+    # "machine-readable, detectable" marking Art. 50(2) asks for. So the
+    # verification result decides whether this output may be delivered.
+    verified = False
+    if verify:
+        try:
+            check_pcm, check_sr = _read_pcm_any(filepath, ext)
+            confidence = watermark_detect(check_pcm, sample_rate=check_sr)
+            verified = confidence is not None and confidence >= _VERIFY_THRESHOLD
+            if verified:
+                logger.debug("Watermark verified for %s (confidence=%.3f).", filepath, confidence)
+            else:
+                logger.warning(
+                    "Watermark NOT detectable in %s (confidence=%.3f, threshold=%.2f).",
+                    filepath, confidence if confidence is not None else -1.0, _VERIFY_THRESHOLD)
+        except Exception as e:
+            logger.warning("Watermark verification failed for %s: %s", filepath, e)
+
+    # Sufficiency: at least one ROBUST layer must be present. Container
+    # metadata alone never qualifies — any transcode removes it.
+    if verify:
+        robust = verified or (c2pa_signer is not None)
+        if not robust:
+            detail = (f"watermark not detectable after embedding "
+                      f"(confidence={confidence:.3f}, threshold={_VERIFY_THRESHOLD:.2f})"
+                      if confidence is not None else "watermark could not be verified")
+            hint = ""
+            if confidence is not None and confidence <= 0.55:
+                hint = (" The audio may be too short (under ~0.25 s), silent, or otherwise "
+                        "unable to carry a watermark.")
+            return _fail(
+                f"marking is not sufficient: {detail}. Container metadata alone is "
+                f"strippable and does not satisfy machine-readable marking.{hint}"
+            )
+
+    logger.info("AI-provenance marking applied to %s (backend=%s, layers=%s, confidence=%s).",
+                filepath, _backend, "+".join(layers),
+                f"{confidence:.3f}" if confidence is not None else "n/a")
+    return MarkResult(marked=True, backend=_backend, layers=tuple(layers),
+                      confidence=confidence, c2pa_signer=c2pa_signer)

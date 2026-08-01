@@ -154,13 +154,16 @@ crisptts_project/
 
    Optional feature groups:
    ```bash
+   pip install crisptts[robust]          # RECOMMENDED: robust neural watermark (MIT)
    pip install crisptts[watermark-mit]   # WavMark neural watermark (MIT license)
-   pip install crisptts[metadata]        # FLAC/Opus metadata via mutagen
-   pip install crisptts[provenance]      # C2PA via c2pa-python (heavy, needs Rust)
-   # Or use c2pa-audio (lightweight native, ~160 KB, no Rust):
-   # pip install c2pa-audio  # or build from https://github.com/CrispStrobe/c2pa-audio
    pip install crisptts[dev]             # ruff, bandit, pytest
    ```
+
+   C2PA signing (`c2pa-python`), container metadata (`mutagen`), `soundfile`
+   and `pydub` are **core** dependencies, not extras — without them the
+   AI-provenance marking cannot be applied and CrispTTS fails closed rather
+   than emitting unmarked synthetic audio. The `metadata` and `provenance`
+   extras are kept only so existing install commands keep working.
 
    > **Note**: Some libraries like PyTorch, NeMo, LlamaCPP, and `mlx-audio` can have specific installation needs depending on your OS and hardware (e.g., CUDA for Nvidia GPUs, Metal for Apple Silicon). Please refer to their official documentation if you encounter issues.
    > Ensure you have `ffmpeg` installed and available in your system's PATH if you encounter issues with audio file format conversions or direct playback (some underlying libraries might need it).
@@ -288,7 +291,9 @@ python main.py --backend kokoro --input-text "Hello" --output-file out.wav
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--no-watermark` | off | Disable watermarking (debug only — not recommended) |
+| `--no-watermark` | off | Disable **all** marking layers: audio watermark, metadata, C2PA (debug only) |
+| `--allow-unmarked` | off | Deliver output even if marking fails or is undetectable |
+| `--accept-marking-responsibility` | off | Required for any provenance opt-out; logged as `[MARKING]` |
 | `--watermark-model PATH` | — | Path to AudioSeal GGUF model for neural watermarking |
 | `--i-have-rights` | off | Consent attestation for voice-cloning models (required) |
 | `--c2pa-cert PEM` | — | X.509 PEM certificate for C2PA content credentials |
@@ -540,21 +545,100 @@ CrispASR/CrisperWeaver native runtime), see
 
 CrispTTS automatically marks all synthesized audio as AI-generated using a multi-layered provenance system.
 
-All outputs are watermarked — CLI, `--test-all`, and API server responses. CrispASR C++ backends watermark at the binary level; all other handlers are watermarked in Python post-synthesis.
+Every path that writes an audio file — CLI synthesis, `--batch`, `--test-all` and API server responses — marks it through the single `watermark.mark_audio_file()` entry point, in every supported format (WAV, MP3, FLAC, Opus/OGG). Marking is the **last** step, after trimming, normalization, resampling and the spoken disclaimer, so nothing downstream can strip it. CrispASR C++ backends watermark at the binary level; all other handlers are watermarked in Python post-synthesis.
+
+**Generation is gated on sufficient marking.** Three rules:
+
+1. **Preflight.** Before any model is loaded, CrispTTS checks that the requested
+   output *can* be marked — supported container, codec dependencies present. If
+   not, synthesis is refused up front, so unmarkable audio is never produced.
+2. **Verified, not assumed.** After marking, the watermark is read back. If it
+   is not detectable above threshold, the output is discarded. Container
+   metadata alone is never sufficient — any transcode strips it. This catches
+   audio too short (under ~0.25 s), silent, or otherwise unable to carry a
+   mark, and it applies to CrispASR backends too: their binary-level watermark
+   is verified rather than taken on trust.
+3. **Watermark floor.** `--no-watermark` is honoured only when another robust
+   layer (a C2PA manifest) still marks the output. When the container cannot
+   carry one, the watermark is forced back on — no path can emit a fully
+   unmarked AI file. This mirrors CrispASR's watertight-CLI guarantee.
+
+Any provenance opt-out (`--no-watermark`, `--allow-unmarked`,
+`--no-spoken-disclaimer`) additionally requires `--accept-marking-responsibility`,
+which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 
 ### Layers
 
 | Layer | What | Status | Install |
 |-------|------|--------|---------|
-| **WavMark** | Neural watermark (MIT license, 16-bit payload, >38 dB SNR) | Auto-detected (preferred) | `pip install wavmark` |
-| **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.08, ~38 dB SNR) | Always active | Built-in (numpy) |
+| **WavMark** | Neural watermark (MIT license, 16-bit payload, >38 dB SNR) | Auto-detected (preferred) | `pip install 'crisptts[robust]'` |
+| **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.08) | Always active | Built-in (numpy) |
 | **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
-| **WAV/MP3/FLAC/Opus metadata** | LIST/INFO, ID3v2, Vorbis comments — `AI_GENERATED=true` | Always active | Built-in (FLAC/Opus: `pip install mutagen`) |
-| **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) | Opt-in | c2pa-audio (native, ~160 KB) or `pip install c2pa-python` |
-| **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio | Auto for cloning | Built-in |
+| **WAV/MP3/FLAC/Opus metadata** | LIST/INFO, ID3v2, Vorbis comments — `AI_GENERATED=true` | Always active | Built-in (mutagen, core dep) |
+| **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) — self-signed unless you supply a certificate | **Always active** (WAV/MP3) | Built-in (c2pa-python, core dep) |
+| **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio, in the model's language | Auto for cloning | Built-in |
 | **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
 
 **Watermark backend priority**: WavMark (MIT) > AudioSeal (Python) > CrispASR GGUF > spread-spectrum (always-on fallback). Neural backends are lazy-loaded on first synthesis — `--list-models` and `--help` remain instant.
+
+### Robustness of the built-in fallback
+
+The built-in spread-spectrum watermark is imperceptible but **not robust to
+resampling or transcoding**. Measured on 20 s of speech:
+
+| Condition | Detection confidence |
+|-----------|---------------------|
+| Immediately after embedding | 0.94 |
+| After a 24k → 16k → 24k resample | **0.63** (below the 0.65 threshold) |
+| After additive noise at 30 dB SNR | 0.81 |
+| Unwatermarked human recording (false-positive check) | 0.44 |
+
+Measured SNR of the embed is ~33.6 dB on speech.
+
+This is why **C2PA signing is on by default** rather than opt-in: for WAV and
+MP3 output the signed manifest, not the spread-spectrum watermark, is the
+durable and interoperable provenance layer. The watermark is what survives
+having the manifest stripped; the manifest is what survives a resample. Neither
+alone is sufficient for every downstream path, so both are applied.
+
+For output in a container C2PA cannot sign (FLAC, Opus/OGG), or if the audio
+may be transcoded *and* stripped, install the neural backend — MIT-licensed and
+far more robust:
+
+```bash
+pip install 'crisptts[robust]'
+```
+
+CrispTTS logs a warning once per run when the spread-spectrum backend is the
+only robust layer present. WavMark is an extra rather than a core dependency
+because it pulls in PyTorch (~2 GB).
+
+### C2PA content credentials
+
+Every WAV and MP3 output is signed with a C2PA manifest asserting
+`digitalSourceType: trainedAlgorithmicMedia` — the standard, machine-readable
+claim that content is AI-generated — plus a `c2pa.training-mining` assertion
+opting the audio out of AI training.
+
+By default CrispTTS signs with the **bundled development certificate** in
+`c2pa_dev_cert.py`. Its private key is public, by design: it is in the source
+tree and in every wheel. A manifest signed with it proves the file has not been
+altered since signing, but it does **not** attest to who produced the file and
+will **not** validate against C2PA trust lists. CrispTTS never reports such a
+signature as trusted — `MarkResult.c2pa_signer` is `"self-signed"`, and it logs
+a warning once per run.
+
+For a credential others can attribute to you, obtain a certificate from a
+C2PA-recognised authority and pass `--c2pa-cert` / `--c2pa-key` (or set
+`C2PA_CERT_PATH` / `C2PA_KEY_PATH`); the signer is then reported as
+`"ca-issued"`. The certificate must be a **chain** (leaf followed by its CA)
+and the key must be **PKCS#8** — c2pa-python rejects a bare self-signed leaf
+and a SEC1 key. `scripts/make_dev_cert.sh` shows a working profile.
+
+FLAC, M4A and Opus/OGG cannot currently carry a manifest: c2pa-python lists
+them among its supported MIME types but fails to embed into them. Those
+containers rely on the audio watermark alone, which is why `--no-watermark` is
+overridden for them.
 
 ### Voice cloning safety
 
@@ -562,9 +646,69 @@ Voice-cloning models require explicit consent attestation before synthesis is al
 
 - **CLI**: `--i-have-rights` flag required (synthesis blocked without it)
 - **API**: `"i_have_rights": true` in request body (returns 403 without it)
-- **Detection**: triggered by handler key, model ID keywords (`clone`, `xtts`, `zeroshot`, `vibevoice`, `indextts`, `voxcpm2`, `qwen3_tts`, `f5_tts`, `zonos`, `chatterbox`), or `.wav` voice path
-- **Audit log**: written to stderr AND `~/.cache/crisptts/consent_audit.log`
-- **Spoken disclaimer**: "This audio was generated by artificial intelligence." prepended to cloned output (generated via CrispASR kokoro, Edge TTS fallback, beep marker last resort)
+- **Audit log**: written to stderr AND `~/.cache/crisptts/consent_audit.log`,
+  including a SHA-256 digest of the reference recording. `--test-all` logs the
+  attestation too, not just the gate check.
+
+**Detection**, strongest signal first:
+
+1. **A reference recording as the voice** (`.wav`, `.mp3`, `.flac`, `.ogg`,
+   `.opus`, `.m4a`). Handing the system somebody's voice to imitate is the
+   cloning act itself, so this always gates — even for a model declared
+   `voice_cloning: false`.
+2. **The model's explicit `voice_cloning` key in `config.py`.** Every shipped
+   model sets it, in both directions; a test asserts this so a new backend
+   cannot be added without answering the question.
+3. **Handler key / model-ID keywords**, as a fallback for user-supplied model
+   dicts that predate the explicit key. This tier fails *open*, which is why
+   tier 2 exists.
+
+**Spoken disclosure** — prepended to cloned output, in the language of the
+model being used (German by default, not English), generated via CrispASR
+kokoro or Edge TTS. If no real spoken disclosure can be produced, the output is
+**discarded rather than delivered**: a tone marker is an audible signal, not a
+disclosure a listener can understand, so it is not accepted as one. Offline
+installs with no TTS backend for the disclosure should either
+`pip install edge-tts` or pass `--no-spoken-disclaimer
+--accept-marking-responsibility` to take the Art. 50(4) disclosure duty on
+explicitly.
+
+### EU AI Act: what this tool does, and what you must still do
+
+Article 50 of Regulation (EU) 2024/1689 sits in Chapter IV and applies from
+**2 August 2026** under Art. 113. Releasing under an open-source licence does
+**not** exempt Article 50 — Art. 2(12) expressly carves it back in.
+
+**What CrispTTS does for you** (provider-side, Art. 50(2)):
+
+- Marks every synthetic audio output in a machine-readable format
+- Signs WAV/MP3 output with an interoperable C2PA manifest by default, so the
+  provenance claim is readable by any C2PA verifier and not only by Crisp tools
+- Fails closed rather than emitting unmarked audio
+- Reports honestly what was applied (`MarkResult`, server `X-CrispTTS-*`
+  headers), and never presents a bundled-certificate signature as trusted
+- Gates voice cloning behind an attestation and logs it with a digest of the
+  reference recording
+- Prepends a spoken AI disclosure, in the right language, to voice-cloned
+  output — and refuses to deliver cloned audio without one
+
+**What remains your responsibility as the deployer** (Art. 50(4)):
+
+- Disclosing that content is artificially generated where you publish it —
+  a watermark is machine-readable, not a disclosure to the audience
+- Obtaining genuine consent from anyone whose voice you clone. The
+  `--i-have-rights` flag is an unverified self-attestation; it records your
+  claim, it does not establish a legal basis
+- Checking the voice/model licences you use (see the licensing section above)
+- GDPR: a cloned voice is personal data, and the consent audit log at
+  `~/.cache/crisptts/consent_audit.log` contains reference-audio paths
+
+C2PA manifests signed with the bundled development certificate prove the file
+is unaltered since signing, but will **not** validate against C2PA trust lists.
+Supply `--c2pa-cert` / `--c2pa-key` for a credential others can verify.
+
+This is a summary of how the implementation is intended to map onto the
+regulation, not legal advice.
 
 ### Compliance comparison across the Crisp ecosystem
 
@@ -576,13 +720,34 @@ Voice-cloning models require explicit consent attestation before synthesis is al
 | WAV LIST/INFO metadata | ISFT + ICMT | ISFT + ICMT | ISFT + ICMT + IART + ICRD |
 | MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) |
 | FLAC/Opus metadata | Vorbis comments (mutagen) | — | — |
-| C2PA content credentials | c2pa-audio (native, preferred) or c2pa-python | c2pa-c (compile-time) | — |
-| Spoken AI disclaimer | CrispASR kokoro / Edge TTS / beep | Native TTS (cached) | Beep marker |
+| C2PA content credentials | c2pa-python, signed by default (WAV/MP3) | c2pa-c (compile-time) | — |
+| Spoken AI disclaimer | CrispASR kokoro / Edge TTS, localized; refuses if unavailable | Native TTS (cached) | Beep marker |
 | Voice-cloning consent gate | CLI + API (403) | CLI + server JSON | GDPR Art. 9(2)(a) consent files |
 | Consent audit logging | stderr + `consent_audit.log` | `[CONSENT]` stderr | `[CONSENT]` log + `.consent.json` |
 | Post-embed verification | detect after save | detect after save | detect after embed |
 | Watermark detection CLI | `--detect-watermark` | `--detect-watermark` | detect in service |
 | Cross-project detection | Yes (shared PRNG key) | Yes (shared PRNG key) | Yes (via CrispASR FFI) |
+
+### Marking-enforcement strength across the ecosystem
+
+The layers above answer *what* is applied. This answers *what happens when it
+doesn't work* — which is where the projects genuinely differ:
+
+| Enforcement | CrispTTS | CrispASR | Susurrus | CrisperWeaver |
+|---|---|---|---|---|
+| Refuse **before** generating if unmarkable | Yes | — | — | — |
+| Marking verified after embedding | Yes (gates) | — | — | — |
+| Unmarkable output discarded | Yes | — | No (warns) | No |
+| Watermark floor (opt-out only if C2PA carries it) | Yes | Yes | No | No |
+| Opt-out requires marking attestation | Yes | Yes | No (single flag) | No |
+| `[MARKING]` audit line | Yes | Yes | — | — |
+| Non-WAV outputs marked | Yes | Yes | **No** (WAV only) | — |
+| Silent no-op on short audio | Refused | — | — | Yes (<4608 samples) |
+
+CrispASR contributed the watermark floor and the attestation gate, which
+CrispTTS adopts here. CrispTTS adds preflight refusal and verification-as-gate,
+which the others do not yet have — in Susurrus and CrisperWeaver a failed or
+skipped mark currently produces a warning and the audio still ships.
 
 ### Usage
 
@@ -590,8 +755,8 @@ Voice-cloning models require explicit consent attestation before synthesis is al
 # Default: spread-spectrum watermark + metadata (no extra deps)
 python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 
-# With WavMark neural watermark (MIT, preferred)
-pip install wavmark
+# With WavMark neural watermark (MIT, preferred — survives transcoding)
+pip install 'crisptts[robust]'
 python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 
 # With C2PA content credentials
@@ -604,8 +769,11 @@ python main.py --model-id coqui_xtts_v2_de_clone --i-have-rights --input-text "H
 # Detect watermark in existing audio
 python main.py --detect-watermark out.wav
 
-# Disable watermarking (debug only)
+# Disable ALL marking layers (debug only — you take on the Art. 50 responsibility)
 python main.py --no-watermark --model-id edge --input-text "Hallo" --output-file out.mp3
+
+# Keep output even if marking fails (default is to discard it and exit non-zero)
+python main.py --allow-unmarked --model-id edge --input-text "Hallo" --output-file out.mp3
 ```
 
 ### Detection (Python API)
@@ -659,11 +827,18 @@ python server.py --host 0.0.0.0 --port 8880
 The `i_have_rights` field is required (and must be `true`) for voice-cloning models. Omit it or set to `false` for non-cloning models.
 
 Response: audio bytes with `Content-Type` and `Content-Disposition: attachment` headers. Features:
-- All output watermarked (`X-CrispTTS-Watermarked: true`)
-- Voice-cloning models return 403 unless `i_have_rights` is set
+- All output marked, in every response format. Provenance headers report what
+  was actually applied — `X-CrispTTS-Watermarked` is `true` only when marking
+  really happened, alongside `X-CrispTTS-Watermark-Backend`,
+  `X-CrispTTS-Watermark-Confidence` and `X-CrispTTS-Provenance-Layers`
+- A response that cannot be marked is a `500`, never unmarked audio
+- Voice-cloning models return 403 unless `i_have_rights` is set. The consent
+  gate runs **before** the cache lookup, so cached audio cannot bypass it
 - Concurrent requests handled via threaded server
 - Rate limiting: 10 requests/minute/IP (configurable via `--rate-limit`)
-- Synthesis caching: identical requests served from cache (`X-CrispTTS-Cache: hit`)
+- Synthesis caching: identical requests served from cache (`X-CrispTTS-Cache: hit`).
+  Cache keys include the marking mode, so unmarked audio can never be served
+  to a marking-enabled request
 - Enhanced `/health`: reports loaded handlers, memory RSS, registered backends
 
 ## Troubleshooting & Notes

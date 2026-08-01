@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crisptts"
-version = "0.8.0"
+version = "0.9.1"
 description = "Modular German Text-to-Speech synthesizer with 28+ TTS engines"
 readme = "readme.md"
 license = "EUPL-1.2"
@@ -12,6 +12,19 @@ requires-python = ">=3.10"
 dependencies = [
     "requests>=2.25.0",
     "numpy>=1.26.0,<2.0.0",
+    # soundfile and pydub are NOT optional: without them the AI-provenance
+    # marking required by EU AI Act Art. 50(2) cannot be applied, and CrispTTS
+    # fails closed rather than emitting unmarked synthetic audio.
+    "soundfile>=0.12.0",
+    "pydub>=0.25.1",
+    # Container metadata for FLAC/Opus provenance tags.
+    "mutagen>=1.47.0",
+    # C2PA content credentials, signed by default with the bundled development
+    # certificate. Art. 50(2) asks for marking that is *interoperable*; the
+    # audio watermark is readable only by Crisp tooling, so a signed C2PA
+    # manifest is the layer anyone else's verifier can read. Core, not optional
+    # — as an extra it was inactive in every default install.
+    "c2pa-python>=0.37.0",
 ]
 
 [project.optional-dependencies]
@@ -36,11 +49,21 @@ watermark = [
 watermark-mit = [
     "wavmark>=0.3.0",
 ]
+# Recommended for production: the built-in spread-spectrum watermark is
+# imperceptible but does not reliably survive resampling or transcoding
+# (measured: 0.94 after embed, 0.63 after a 24k->16k->24k roundtrip, against a
+# 0.65 detection threshold). WavMark is MIT-licensed and robust, but pulls in
+# torch — hence an extra rather than a core dependency.
+robust = [
+    "wavmark>=0.3.0",
+]
 metadata = [
     "mutagen>=1.47.0",
 ]
+# Retained so `pip install crisptts[provenance]` keeps working; C2PA signing is
+# part of the core install now, so this adds nothing.
 provenance = [
-    "c2pa-python>=0.6.0",
+    "c2pa-python>=0.37.0",
 ]
 text-extraction = [
     "pypdfium2>=4.0.0",
@@ -56,7 +79,8 @@ crisptts = "main:main_cli_entrypoint"
 # Explicit discovery prevents setuptools from tripping over tests/ and local
 # scratch dirs (e.g. tts_test_outputs/) during the build.
 [tool.setuptools]
-py-modules = ["main", "config", "utils", "decoder", "watermark", "chunking", "server", "cache", "ssml"]
+py-modules = ["main", "config", "utils", "decoder", "watermark", "chunking", "server", "cache", "ssml",
+              "c2pa_dev_cert"]
 
 [tool.setuptools.packages.find]
 include = ["handlers*"]

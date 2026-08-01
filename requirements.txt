@@ -17,8 +17,10 @@ huggingface_hub>=0.20.0
 safetensors>=0.4.0
 
 # Audio Processing
-soundfile>=0.12.0
-pydub>=0.25.1
+soundfile>=0.12.0   # REQUIRED for AI-provenance marking (EU AI Act Art. 50(2))
+pydub>=0.25.1       # REQUIRED for marking MP3/Opus/OGG output
+mutagen>=1.47.0     # REQUIRED for FLAC/Opus/MP3 provenance tags
+c2pa-python>=0.37.0 # REQUIRED for the interoperable C2PA provenance manifest
 librosa>=0.10.0,<0.11.0  # Avoid 0.11.0 which conflicts with chatterbox
 
 # Text Processing

@@ -3,6 +3,18 @@
 import argparse
 import unittest
 
+# These tests drive the real marking and disclosure pipeline, which needs the
+# audio codecs. Skip rather than error where they are absent, so a missing
+# dependency reads as "not exercised here" instead of a broken suite.
+try:
+    import soundfile  # noqa: F401
+    _HAVE_SOUNDFILE = True
+except ImportError:
+    _HAVE_SOUNDFILE = False
+
+requires_soundfile = unittest.skipUnless(
+    _HAVE_SOUNDFILE, "soundfile not installed — marking pipeline tests cannot run")
+
 
 def _build_parser():
     """Build the argparser by extracting it from main_cli_entrypoint.
@@ -160,6 +172,213 @@ class TestMainEntrypoint(unittest.TestCase):
     def test_main_has_load_handlers_if_needed(self):
         from main import _load_handlers_if_needed
         self.assertTrue(callable(_load_handlers_if_needed))
+
+
+@requires_soundfile
+class TestRunSynthesisMarking(unittest.TestCase):
+    """End-to-end: run_synthesis must mark output, and fail closed if it can't.
+
+    Uses a stub handler so the pipeline is exercised without loading a model.
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+
+    def _args(self, output_file, **overrides):
+        base = dict(
+            model_id="edge", german_voice_id=None, model_params=None,
+            output_file=output_file, play_direct=False, input_text="Hallo Welt",
+            input_file=None, speech_speed=1.0, trim_silence=False, tts_steps=None,
+            tts_language=None, pitch_shift=0.0, instruct=None, ref_text=None,
+            no_spoken_disclaimer=False, lexicon=None, normalize=False,
+            output_sample_rate=None, stream=False, verify=False,
+            verify_backend="parakeet", i_have_rights=False, allow_unmarked=False,
+            c2pa_cert=None, c2pa_key=None, batch=False, translate=False,
+            accept_marking_responsibility=False, no_watermark=False,
+            override_main_model_repo=None, override_model_filename=None,
+            override_tokenizer_repo=None, override_vocoder_repo=None,
+            override_speaker_embed_repo=None, override_piper_voices_repo=None,
+            lm_studio_api_url=None, gguf_model_name_in_api=None,
+            ollama_api_url=None, ollama_model_name=None,
+        )
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def _run_with_stub(self, args, stub):
+        from unittest.mock import patch
+
+        import main
+        from config import GERMAN_TTS_MODELS
+
+        # Register the stub under whichever handler key the model under test
+        # actually uses, so tests can exercise cloning models too.
+        handler_key = GERMAN_TTS_MODELS.get(args.model_id, {}).get(
+            "handler_function_key", args.model_id)
+        with patch.object(main, "_load_handlers_if_needed",
+                          return_value={"edge": stub, handler_key: stub}), \
+                patch.object(main, "_HANDLERS_LOADED", True):
+            main.run_synthesis(args)
+
+    def test_output_is_marked(self):
+        import os
+
+        import numpy as np
+        import soundfile as sf
+
+        from watermark import is_marked, watermark_detect
+
+        out = os.path.join(self.tmpdir, "out.wav")
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            t = np.linspace(0, 2, 44100, endpoint=False, dtype=np.float32)
+            sf.write(output_file, (0.3 * np.sin(2 * np.pi * 180 * t)).astype(np.float32), 22050)
+
+        self._run_with_stub(self._args(out), stub)
+        self.assertTrue(os.path.isfile(out))
+        self.assertTrue(is_marked(out), "CLI output must carry AI-provenance metadata")
+        data, sr = sf.read(out, dtype="float32")
+        self.assertGreater(watermark_detect(data, sample_rate=sr), 0.65)
+
+    def test_unmarkable_output_is_discarded(self):
+        """Fail closed: an output that cannot be marked must not survive."""
+        import os
+
+        out = os.path.join(self.tmpdir, "out.xyz")
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            with open(output_file, "wb") as f:
+                f.write(b"not real audio" * 100)
+
+        self._run_with_stub(self._args(out), stub)
+        self.assertFalse(os.path.exists(out),
+                         "unmarkable output should have been discarded")
+
+    def test_opt_out_without_attestation_is_refused(self):
+        """--allow-unmarked alone must not produce output."""
+        import os
+
+        out = os.path.join(self.tmpdir, "noattest.wav")
+        called = {"n": 0}
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            called["n"] += 1
+
+        self._run_with_stub(self._args(out, allow_unmarked=True), stub)
+        self.assertEqual(called["n"], 0, "synthesis must be refused before the handler runs")
+        self.assertFalse(os.path.exists(out))
+
+    def test_unwatermarkable_format_refused_before_handler(self):
+        """Gate runs before generation: the handler is never invoked."""
+        import os
+
+        out = os.path.join(self.tmpdir, "out.aiff")
+        called = {"n": 0}
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            called["n"] += 1
+
+        self._run_with_stub(self._args(out), stub)
+        self.assertEqual(called["n"], 0)
+        self.assertFalse(os.path.exists(out))
+
+    def test_allow_unmarked_keeps_output(self):
+        import os
+
+        out = os.path.join(self.tmpdir, "keep.xyz")
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            with open(output_file, "wb") as f:
+                f.write(b"not real audio" * 100)
+
+        self._run_with_stub(
+            self._args(out, allow_unmarked=True, accept_marking_responsibility=True), stub)
+        self.assertTrue(os.path.exists(out))
+
+    def test_handler_never_plays_unmarked_audio(self):
+        """With --play-direct the handler must not do the playback itself."""
+        import os
+
+        import numpy as np
+        import soundfile as sf
+
+        out = os.path.join(self.tmpdir, "play.wav")
+        seen = {}
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            seen["play_direct"] = play_direct
+            t = np.linspace(0, 2, 44100, endpoint=False, dtype=np.float32)
+            sf.write(output_file, (0.3 * np.sin(2 * np.pi * 180 * t)).astype(np.float32), 22050)
+
+        from unittest.mock import patch
+        with patch("utils.play_audio"):
+            self._run_with_stub(self._args(out, play_direct=True), stub)
+        self.assertFalse(seen["play_direct"],
+                         "playback must happen after marking, not inside the handler")
+
+    def _cloning_stub(self):
+        import numpy as np
+        import soundfile as sf
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            t = np.linspace(0, 2, 44100, endpoint=False, dtype=np.float32)
+            sf.write(output_file, (0.3 * np.sin(2 * np.pi * 180 * t)).astype(np.float32), 22050)
+        return stub
+
+    def test_cloned_output_discarded_when_disclosure_fails(self):
+        """A deepfake with no AI disclosure must not reach the user.
+
+        Regression: the spoken disclosure used to be best-effort — its failure
+        was logged and the cloned audio was delivered anyway.
+        """
+        import os
+
+        import watermark
+        out = os.path.join(self.tmpdir, "cloned.wav")
+        original = watermark.generate_spoken_disclaimer
+        watermark.generate_spoken_disclaimer = lambda sr=24000, language=None: (None, "none")
+        try:
+            self._run_with_stub(
+                self._args(out, model_id="f5_tts_german", i_have_rights=True),
+                self._cloning_stub())
+        finally:
+            watermark.generate_spoken_disclaimer = original
+        self.assertFalse(os.path.exists(out),
+                         "cloned audio was delivered without its AI disclosure")
+
+    def test_cloned_output_kept_when_disclosure_succeeds(self):
+        import os
+
+        import numpy as np
+
+        import watermark
+        out = os.path.join(self.tmpdir, "cloned_ok.wav")
+        original = watermark.generate_spoken_disclaimer
+        watermark.generate_spoken_disclaimer = lambda sr=24000, language=None: (
+            np.full(int(sr * 1.0), 0.05, dtype=np.float32), "spoken")
+        watermark._disclaimer_cache.clear()
+        try:
+            self._run_with_stub(
+                self._args(out, model_id="f5_tts_german", i_have_rights=True),
+                self._cloning_stub())
+        finally:
+            watermark.generate_spoken_disclaimer = original
+            watermark._disclaimer_cache.clear()
+        self.assertTrue(os.path.exists(out))
+
+    def test_disclosure_opt_out_needs_attestation(self):
+        """--no-spoken-disclaimer alone must not silently drop the disclosure."""
+        import os
+
+        out = os.path.join(self.tmpdir, "cloned_optout.wav")
+        self._run_with_stub(
+            self._args(out, model_id="f5_tts_german", i_have_rights=True,
+                       no_spoken_disclaimer=True),
+            self._cloning_stub())
+        self.assertFalse(os.path.exists(out),
+                         "opting out of the disclosure must require an attestation")
 
 
 if __name__ == "__main__":

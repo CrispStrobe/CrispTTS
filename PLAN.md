@@ -706,6 +706,11 @@ Add `omnivoice` to VOICE_CLONING_MODEL_KEYWORDS.
 
 ## Phase 13: EU AI Act compliance audit + c2pa-audio (v0.7.1)
 
+> **SUPERSEDED by Phase 16.** The "all gaps closed" claim below was accurate
+> for `dbbcb21` but is no longer true: `server.py` and `cache.py` landed
+> afterwards and reopened several of these gaps on paths that did not exist
+> when this audit was run. See Phase 16 for the current state.
+
 Implemented 2026-07-16. Full Art. 50 audit identified 6 compliance gaps,
 all closed in commit `dbbcb21`.
 
@@ -833,3 +838,287 @@ stale entries, preventing serving unwatermarked audio from old cache.
 | Commit | Tests |
 |--------|-------|
 | `dcb8545` | 285 pass |
+
+---
+
+## Phase 16: EU AI Act Art. 50 re-audit (v0.9.0)
+
+Audited 2026-08-01, one day before Art. 50 becomes applicable (2 Aug 2026).
+The Phase 13 claim that "all gaps are closed" is **stale**: the server
+(`server.py`) and synthesis cache (`cache.py`) were added after `dbbcb21`
+and reopened five of them, plus five new issues found on re-audit.
+
+### 16.0 Regulatory context
+
+| Item | Status |
+|------|--------|
+| Art. 50 applicable | **2 Aug 2026** — not deferred by the Digital Omnibus |
+| Art. 50(2) marking, systems on market before 2 Aug 2026 | Grace period to **2 Dec 2026** |
+| Annex III high-risk | Deferred to Dec 2027 — not applicable here (no biometric ID, no emotion recognition) |
+| EUPL-1.2 / FOSS exemption (Art. 2(12)) | Does **not** exempt Art. 50 — expressly carved back in |
+| Art. 50(4) deepfake disclosure | Binds the **deployer**, not this tool; we can only enable it |
+
+Whether the maintainer is a "provider placing on the market" at all is
+arguable for non-commercial FOSS distribution. Phase 16 assumes the
+stricter reading and makes the tool sufficient for a deployer to comply.
+
+### 16.1 Fail-closed marking + soundfile as a core dependency
+
+**Problem.** `main.py:828`, `server.py:268`, `utils.py:321` wrap the whole
+marking block in a `try` that also covers `import soundfile`. `soundfile`
+is not a core dependency (`pyproject.toml` ships `requests` + `numpy`
+only), so a default install raises ImportError, logs at **DEBUG**, and
+emits a completely unmarked WAV. Every other failure logs a warning and
+still ships the file. No fail-closed mode exists.
+
+**Fix.** Promote `soundfile` to a core dependency. Add
+`CRISPTTS_ALLOW_UNMARKED=1` / `--allow-unmarked` as the only escape hatch.
+Default behaviour on marking failure: log ERROR, delete the output file,
+exit non-zero (CLI) or return HTTP 500 (server).
+
+**Files**: `pyproject.toml`, `watermark.py`, `main.py`, `server.py`, `utils.py`
+
+### 16.2 Central `mark_audio_file()` — one marking path
+
+**Problem.** Marking is reimplemented four times (`main.py:840` single
+synthesis, `main.py:461` `--test-all`, `server.py:277`, `utils.py:343`),
+each with different coverage. This is the root cause of 16.3–16.6.
+
+**Fix.** One function in `watermark.py`:
+
+```python
+def mark_audio_file(path, *, handler_key=None, is_voice_cloning=False,
+                    allow_unmarked=False) -> MarkResult
+```
+
+It embeds the PCM watermark at the file's **true** sample rate, injects
+container metadata, optionally C2PA-signs, verifies the result, and returns
+a structured `MarkResult` (backend used, confidence, layers applied). It is
+idempotent — an already-marked file is detected and not re-marked. All four
+call sites collapse onto it.
+
+**Files**: `watermark.py`, `main.py`, `server.py`, `utils.py`
+
+### 16.3 Audio watermark on compressed formats everywhere
+
+**Problem.** `server.py:289` and `main.py:477` (`--test-all`) inject ID3 /
+Vorbis tags but never call `watermark_embed`, unlike the CLI single-synthesis
+path which does a proper decode→embed→re-encode (`main.py:855`). Tags do not
+survive transcoding. `readme.md:543` ("All outputs are watermarked — CLI,
+`--test-all`, and API server responses") is therefore inaccurate.
+
+**Fix.** Folded into 16.2 — `mark_audio_file()` handles wav/mp3/flac/opus
+uniformly with a real PCM embed.
+
+### 16.4 No double embedding; idempotent metadata
+
+**Problem.** The five handlers that use `save_audio` (edge, piper, coqui,
+kokoro_onnx, mlx_audio) are watermarked at `utils.py:445` and then **again**
+at `main.py:840`. Measured cost: SNR 33.6 dB → **27.5 dB**.
+`inject_wav_metadata` (`watermark.py:525`) is not idempotent either, so
+those files carry two LIST/INFO chunks — `inject_mp3_metadata` does guard
+(`watermark.py:584`).
+
+**Fix.** `save_audio` stops marking; marking becomes the caller's
+responsibility via 16.2. Add an idempotency guard to `inject_wav_metadata`
+and an `is_marked()` probe.
+
+### 16.5 Correct sample rate to the neural backends
+
+**Problem.** `utils.py:325` and `utils.py:355` call `wm.watermark_embed(data)`
+with no `sample_rate`, defaulting to 24000 (`watermark.py:404`). A 16 kHz or
+44.1 kHz file is watermarked as though it were 24 kHz while detection passes
+the true rate — so WavMark/AudioSeal, the *preferred* backends, are the ones
+silently broken on this path.
+
+**Fix.** Folded into 16.2; the true rate is always read from the file.
+
+### 16.6 Truthful server provenance header
+
+**Problem.** `server.py:204` and `server.py:328` send
+`X-CrispTTS-Watermarked: true` unconditionally — on cache hits, under
+`CRISPTTS_NO_WATERMARK`, and when the embed raised and was swallowed at
+`server.py:300`. A false machine-readable provenance claim is worse than none.
+
+**Fix.** Derive the header from the `MarkResult` of 16.2. Add
+`X-CrispTTS-Watermark-Backend` and `X-CrispTTS-Watermark-Confidence`.
+
+### 16.7 Cache: consent gate first, marking state in the key
+
+**Problem.** `server.py:187-210` runs the cache lookup **before** the consent
+gate at `server.py:212-227`. Once any caller has synthesised a cloned phrase
+with `i_have_rights`, every later caller receives it with no 403 and **no
+attestation logged**. Separately, `cache.py:43` hashes only
+model/voice/text/params/version, so audio produced once under
+`--no-watermark` is served indefinitely to marking-enabled requests.
+
+**Fix.** Move the consent gate above the cache lookup; log the attestation on
+hits too. Add marking mode + disclaimer state to the cache key.
+
+**Files**: `server.py`, `cache.py`
+
+### 16.8 Robust-by-default watermark
+
+**Problem.** Measured on a 20 s speech sample:
+
+| Condition | Confidence |
+|---|---|
+| After embed | 0.938 |
+| After 24k→16k→24k resample | **0.625** |
+| Documented threshold | 0.65 |
+| Real human recording (false-positive check) | 0.438 |
+
+A plain resample drops the built-in watermark below its own detection
+threshold. Measured SNR is 33.6 dB, not the ~38 dB claimed at
+`readme.md:550`. The robust neural backends are optional extras, so the
+default install ships the weakest layer — against Art. 50(2)'s "robust and
+reliable **as far as technically feasible**".
+
+**Decision.** WavMark pulls in `torch` (~2 GB), which is too heavy to force
+on every install of a CLI. Instead: a one-time prominent WARNING when
+synthesis runs on the bare spread-spectrum backend, a `robust` extra, install
+docs recommending it, and honest measured numbers in the README. Making it a
+hard dependency is a one-line change in `pyproject.toml` if that trade is
+preferred later.
+
+**Files**: `watermark.py`, `pyproject.toml`, `readme.md`
+
+### 16.9 Coherent `--no-watermark` semantics
+
+**Problem.** `--no-watermark` (`main.py:1094`) suppresses the PCM embed
+(`watermark.py:417`) but `utils.py:359,374` still inject metadata and
+C2PA-sign. For a provider under Art. 50(2), marking is not an end-user
+preference in any case.
+
+**Fix.** Make it disable **all** layers coherently, print a prominent
+stderr warning that the output is unmarked and the user carries the Art. 50
+responsibility, and document it as debug-only.
+
+### 16.10 C2PA self-signed disclosure
+
+**Problem.** `utils.py:374` signs with the c2pa-audio bundled **self-signed**
+cert. Those manifests fail trust-list validation but are presented as
+"signed provenance credentials".
+
+**Fix.** Return signer identity from `c2pa_sign_file`, log
+self-signed vs CA-issued distinctly, qualify the README.
+
+### 16.11 Residual items
+
+- `--play-direct` with `--output-file` plays pre-watermark audio
+  (`main.py:750`) — always synthesize → mark → play.
+- Consent log records no evidence (`watermark.py:695`) — add a SHA-256 of the
+  reference audio.
+- Keyword-based cloning detection (`watermark.py:666`) has zero misses today
+  (verified: 32/61 models gated) but fails **open** for future backends — add
+  an explicit `voice_cloning: true` config key with the keywords as fallback,
+  plus a test asserting coverage.
+
+### 16.12 Documentation corrections
+
+- `readme.md:543` — "all outputs watermarked" claim, narrow to what is true.
+- `readme.md:550` — 38 dB → measured 33.6 dB.
+- `PLAN.md` Phase 13 — mark the "all gaps closed" claim as superseded.
+- README: Art. 50 section stating what the tool does and what the **deployer**
+  must still do (Art. 50(4) disclosure is theirs, not ours).
+
+### Execution order
+
+1. 16.2 central `mark_audio_file()` (unblocks 16.3, 16.4, 16.5)
+2. 16.1 fail-closed + `soundfile` core dep
+3. 16.9 coherent `--no-watermark`
+4. Wire call sites: `utils.py`, `main.py` (single + `--test-all`), `server.py`
+5. 16.7 cache + consent ordering
+6. 16.6 truthful headers
+7. 16.8 robustness warning + extra
+8. 16.10 C2PA disclosure
+9. 16.11 residual items
+10. Tests for every item above
+11. 16.12 docs
+
+### Status: COMPLETE (v0.9.0)
+
+| Item | Change | Verified by |
+|------|--------|-------------|
+| 16.1 | Fail-closed marking; `soundfile`/`pydub`/`mutagen` promoted to core deps; `--allow-unmarked` escape hatch | `test_fails_closed_on_unsupported_format`, `test_unmarkable_output_is_discarded` |
+| 16.2 | `watermark.mark_audio_file()` — one marking path for all four call sites | `TestMarkAudioFile` (10 tests) |
+| 16.3 | Real audio watermark on MP3/FLAC/Opus everywhere, not just metadata | `TestMp3Marking` |
+| 16.4 | `save_audio()` no longer marks; `inject_wav_metadata` idempotent; `is_marked()` probe | `test_marking_is_idempotent`, `test_no_duplicate_metadata_chunks` |
+| 16.5 | True sample rate always passed to the embed | `test_uses_true_sample_rate_not_default` (16k + 44.1k) |
+| 16.6 | Provenance headers derived from `MarkResult` | `TestProvenanceHeaders` |
+| 16.7 | Consent gate moved above cache lookup; marking mode in cache key | `TestConsentBeforeCache`, `TestMarkingCacheKey` |
+| 16.8 | One-time weak-backend warning, `robust` extra, measured numbers documented | manual |
+| 16.9 | `--no-watermark` disables every layer coherently | `test_no_watermark_env_disables_every_layer` |
+| 16.10 | `c2pa_sign_file_ex()` reports self-signed vs CA-issued | `TestC2paSignerDisclosure` |
+| 16.11 | Playback after marking; consent log records reference digest; explicit `voice_cloning` config key | `test_handler_never_plays_unmarked_audio`, `TestConsentAuditEvidence`, `TestConsentGateConfig` |
+| 16.12 | README Art. 50 section, corrected claims; Phase 13 marked superseded | — |
+
+**Measured after the fix** (20 s of speech, full pipeline through a
+`save_audio` handler): detection confidence 0.938, SNR **33.6 dB** (was
+27.5 dB while double-embedding), exactly one LIST/INFO chunk.
+
+314 tests pass (31 new), ruff clean, bandit clean of medium/high findings.
+
+---
+
+## Phase 17: Gate generation on sufficient marking (v0.9.1)
+
+Cross-checked against the sibling projects and adopted the strongest policy
+from each. Phase 16 made marking *fail closed when it errored*; it still
+shipped audio whose mark was applied but undetectable.
+
+### 17.1 What the siblings do
+
+| | Mechanism | Where |
+|---|---|---|
+| **CrispASR** | *Watermark floor* — if the container can't carry a C2PA manifest, `--no-watermark` is overridden so at least one robust mark remains | `examples/cli/crispasr_run.cpp:141` |
+| **CrispASR** | *Marking attestation* — any provenance opt-out hard-refuses without `--accept-marking-responsibility`; emits a `[MARKING]` audit line | `crispasr_run.cpp:163` |
+| **Susurrus** | Dependency-free declarative RIFF marker so a default install still marks; `--accept-marking-responsibility` as a single explicit opt-out; consent refused before any model loads | `utils/ai_marking.py`, `workers/tts/backends/base.py:64` |
+| **CrisperWeaver** | LSB watermark + consent gate on the HTTP server | `lib/services/audio_watermark_service.dart` |
+
+Gaps found in the siblings while reading them (not fixed here — different
+repos): Susurrus `apply_provenance` only *warns* when both layers fail and is
+WAV-only, so MP3 output is silently unmarked; CrisperWeaver's `embedWatermark`
+returns the input unchanged for audio under 4 608 samples.
+
+### 17.2 The hole this closes in CrispTTS
+
+Marking reported success on audio that carried no detectable watermark:
+
+| Input | Reported | Actually detectable |
+|---|---|---|
+| 0.02 s (under one FFT frame) | `marked=True` | 0.000 |
+| 0.1 s | `marked=True` | 0.500 |
+| digital silence | `marked=True` | 0.000 |
+
+The embed silently no-ops below one FFT frame and on silence, leaving only
+strippable container metadata. Detection is reliable from ~0.25 s upward
+(0.69 at 0.25 s, 0.91 from 0.5 s) and is level-invariant.
+
+### 17.3 Implemented
+
+- `preflight_marking()` — refuses **before** synthesis when the output cannot
+  be marked (unsupported container, missing codec dependency), so no model is
+  loaded and no unmarkable audio is ever written. Wired into `run_synthesis`
+  and the server's `do_POST`.
+- Verification is now a **gate**: `mark_audio_file()` reads the mark back and
+  refuses when confidence < 0.65 and no C2PA manifest was produced.
+  Container metadata alone never counts as sufficient.
+- CrispASR-backend output is **verified rather than trusted** — an old build or
+  one run with its own `--no-watermark` no longer slips through on `handler_key`.
+- Watermark floor ported from CrispASR, including `watermark_embed(force=True)`
+  so the env opt-out cannot strip a forced mark.
+- `--accept-marking-responsibility` gates every provenance opt-out; honoured
+  opt-outs emit a `[MARKING]` audit line in CrispASR's format.
+
+### Status: COMPLETE — 329 tests pass (15 new), ruff clean
+
+### Known limitation, deliberately not closed
+
+The built-in spread-spectrum watermark still does not survive resampling
+(0.63 against a 0.65 threshold). Closing that properly means either a hard
+`torch` dependency or original signal-processing work on rate-invariant
+embedding. The chosen mitigation is the `robust` extra plus a loud warning
+and honest documentation — see 16.8. Revisit if CrispTTS is ever distributed
+in a context where the maintainer is clearly a "provider placing on the
+market" under Art. 3(9).
