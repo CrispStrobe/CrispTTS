@@ -76,11 +76,44 @@ class _Prng:
 # Bin pattern generation (matches generate_bin_pattern in C++)
 # ---------------------------------------------------------------------------
 
-def _generate_bin_pattern(key: int, n_fft: int, n_bins: int):
-    """Return list of (bin_index, sign) tuples."""
+#: Watermark comb placement, mirroring ``wm_params`` in CrispASR's
+#: ``crispasr_watermark.h``.
+#:
+#: CrispASR moved the comb down to the speech band (their #260): spreading 32
+#: bins across ~1.5–11.7 kHz put ~20 of them where clean TTS speech is nearly
+#: silent, so the comb was audible as a "tinny" tone. Capping it below ~4.8 kHz
+#: hides it under the formants and *improves* detection on voiced speech.
+#:
+#: CrispTTS stayed on the old band, which broke both directions of
+#: cross-detection: measured on crispasr 0.8.25 kokoro output, CrispASR's own
+#: detector reads 0.72 while CrispTTS read 0.41 on the same bytes — below its
+#: 0.65 threshold. Same key, same PRNG, same FFT size; only the band differed.
+#:
+#: ``CRISPASR_WATERMARK_LEGACY=1`` selects the old wideband/louder behaviour,
+#: exactly as in CrispASR, so the two can be A/B'd together.
+def wm_params(n_fft: int, legacy: bool | None = None) -> tuple[int, int, float]:
+    """Return ``(lo_bin, hi_bin, default_alpha)`` for the active band."""
+    if legacy is None:
+        legacy = bool(os.environ.get("CRISPASR_WATERMARK_LEGACY"))
+    lo_bin = n_fft // 16  # skip sub-bass; ~1.5 kHz @ 24 kHz
+    if legacy:
+        return lo_bin, n_fft // 2 - 1, 0.08  # ~11.7 kHz — audible comb
+    return lo_bin, n_fft // 5, 0.05  # ~4.8 kHz — inside the speech band
+
+
+def _generate_bin_pattern(key: int, n_fft: int, n_bins: int,
+                          lo_bin: int | None = None, hi_bin: int | None = None):
+    """Return list of (bin_index, sign) tuples.
+
+    ``lo_bin``/``hi_bin`` default to the active band. They are explicit
+    parameters — as in the C++ ``generate_bin_pattern`` — so detection can
+    sweep both bands without mutating global state.
+    """
+    if lo_bin is None or hi_bin is None:
+        band_lo, band_hi, _ = wm_params(n_fft)
+        lo_bin = band_lo if lo_bin is None else lo_bin
+        hi_bin = band_hi if hi_bin is None else hi_bin
     rng = _Prng(key)
-    lo_bin = n_fft // 16
-    hi_bin = n_fft // 2 - 1
     span = hi_bin - lo_bin
     if span <= 0 or n_bins <= 0:
         return []
@@ -96,12 +129,14 @@ def _generate_bin_pattern(key: int, n_fft: int, n_bins: int):
 # Spread-spectrum embed (mirrors crispasr_watermark_embed_impl)
 # ---------------------------------------------------------------------------
 
-def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.08) -> np.ndarray:
+def spread_spectrum_embed(pcm: np.ndarray, alpha: float | None = None) -> np.ndarray:
     """Embed a spread-spectrum watermark into float32 mono PCM.
 
     Args:
         pcm: 1-D float32 array of audio samples.
-        alpha: Watermark strength (0.08 = ~38 dB SNR, imperceptible on speech).
+        alpha: Watermark strength. ``None`` or negative selects the band
+            default (0.05 speech-band, 0.08 legacy), matching CrispASR's
+            convention. ``0`` is an explicit no-op.
 
     Returns:
         Watermarked copy of the PCM array.
@@ -110,7 +145,17 @@ def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.08) -> np.ndarray:
     if n < _FFT_SIZE:
         return pcm.copy()
 
-    bins = _generate_bin_pattern(WATERMARK_KEY, _FFT_SIZE, WATERMARK_NBINS)
+    lo_bin, hi_bin, default_alpha = wm_params(_FFT_SIZE)
+    if alpha is None or alpha < 0:
+        alpha = default_alpha
+    if alpha == 0.0:
+        # Explicit zero strength leaves the signal untouched, as in CrispASR.
+        # Returning early matters: the STFT analysis/synthesis round-trip is
+        # not bit-exact, so running it with a zero nudge would still perturb
+        # the audio while embedding nothing.
+        return pcm.copy()
+
+    bins = _generate_bin_pattern(WATERMARK_KEY, _FFT_SIZE, WATERMARK_NBINS, lo_bin, hi_bin)
     if not bins:
         return pcm.copy()
 
@@ -153,7 +198,24 @@ def spread_spectrum_embed(pcm: np.ndarray, alpha: float = 0.08) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def spread_spectrum_detect(pcm: np.ndarray) -> float:
-    """Detect spread-spectrum watermark in float32 mono PCM.
+    """Detect a spread-spectrum watermark in float32 mono PCM.
+
+    Sweeps **both** comb placements and returns the stronger reading, so a file
+    marked by an older CrispTTS (or by CrispASR with
+    ``CRISPASR_WATERMARK_LEGACY=1``) still verifies after the band change.
+    Detection is the one place where being permissive is right: the cost of
+    checking a second band is one extra correlation pass, while missing a real
+    mark means discarding correctly-marked audio.
+    """
+    best = 0.0
+    for legacy in (False, True):
+        lo_bin, hi_bin, _ = wm_params(_FFT_SIZE, legacy=legacy)
+        best = max(best, _spread_spectrum_detect_band(pcm, lo_bin, hi_bin))
+    return best
+
+
+def _spread_spectrum_detect_band(pcm: np.ndarray, lo_bin: int, hi_bin: int) -> float:
+    """Correlate one comb placement against the averaged spectrum.
 
     Uses averaged-spectrum detection: computes the mean magnitude spectrum
     across all frames, then correlates the watermark bin pattern against
@@ -167,7 +229,7 @@ def spread_spectrum_detect(pcm: np.ndarray) -> float:
     if n < _FFT_SIZE:
         return 0.0
 
-    bins = _generate_bin_pattern(WATERMARK_KEY, _FFT_SIZE, WATERMARK_NBINS)
+    bins = _generate_bin_pattern(WATERMARK_KEY, _FFT_SIZE, WATERMARK_NBINS, lo_bin, hi_bin)
     if not bins:
         return 0.0
 
@@ -1858,11 +1920,12 @@ def allow_unmarked_default() -> bool:
 def _warn_if_weak_backend(has_c2pa: bool = False) -> None:
     """Warn once when only the built-in spread-spectrum watermark is active.
 
-    Measured on 20 s of speech: the built-in mark reads 0.94 after embedding
-    but drops to 0.63 after a plain 24k->16k->24k resample, i.e. below its own
-    0.65 detection threshold. Art. 50(2) asks for marking that is robust "as
-    far as technically feasible", and a robust neural backend is one install
-    away, so this is worth telling the user about exactly once.
+    On the speech-band comb the built-in mark now survives the transforms that
+    used to defeat it — measured on 20 s of speech: 0.84 after embedding, 0.78
+    after a 44.1k->16k->44.1k resample, 0.81 after an MP3 round-trip. It is
+    still a fixed-key comb rather than a learned watermark, so a neural backend
+    remains the stronger option under adversarial removal, and Art. 50(2) asks
+    for marking robust "as far as technically feasible" — worth saying once.
 
     Args:
         has_c2pa: True when this output also carries a signed C2PA manifest.
@@ -1875,18 +1938,18 @@ def _warn_if_weak_backend(has_c2pa: bool = False) -> None:
         return
     _weak_backend_warned = True
     if has_c2pa:
-        logger.info(
-            "Audio watermarking uses the built-in spread-spectrum backend, which "
-            "does not reliably survive resampling or transcoding; the signed C2PA "
-            "manifest is this output's durable provenance layer. For a watermark "
-            "that survives transcoding too: pip install 'crisptts[robust]'"
+        logger.debug(
+            "Audio watermarking uses the built-in spread-spectrum backend "
+            "alongside a signed C2PA manifest. For a learned watermark that is "
+            "harder to remove deliberately: pip install 'crisptts[robust]'"
         )
         return
-    logger.warning(
-        "Watermarking with the built-in spread-spectrum backend only, and this "
-        "container carries no C2PA manifest. The mark is imperceptible but does "
-        "NOT reliably survive resampling or transcoding. For a robust neural "
-        "watermark: pip install 'crisptts[robust]'"
+    logger.info(
+        "Watermarking with the built-in spread-spectrum backend only; this "
+        "container carries no C2PA manifest. The mark survives resampling and "
+        "transcoding but is a fixed-key comb, so it is removable by someone who "
+        "knows the scheme. For a learned neural watermark: "
+        "pip install 'crisptts[robust]'"
     )
 
 

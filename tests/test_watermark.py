@@ -1386,6 +1386,86 @@ class TestUpstreamManifestPreserved(unittest.TestCase):
             self.assertNotIn("audio-watermark:upstream", result.layers)
 
 
+class TestWatermarkBandMatchesCrispASR(unittest.TestCase):
+    """The comb placement is an interop contract with CrispASR's wm_params.
+
+    Regression: CrispTTS stayed on the pre-#260 wideband comb after CrispASR
+    moved to the speech band, so neither could detect the other's watermark.
+    Measured on crispasr 0.8.25 kokoro output, CrispASR read 0.72 and CrispTTS
+    read 0.41 on the same bytes.
+    """
+
+    def setUp(self):
+        self._env = os.environ.pop("CRISPASR_WATERMARK_LEGACY", None)
+
+    def tearDown(self):
+        os.environ.pop("CRISPASR_WATERMARK_LEGACY", None)
+        if self._env is not None:
+            os.environ["CRISPASR_WATERMARK_LEGACY"] = self._env
+
+    def test_default_band_matches_crispasr_speech_band(self):
+        from watermark import wm_params
+        lo, hi, alpha = wm_params(1024)
+        self.assertEqual((lo, hi), (1024 // 16, 1024 // 5))
+        self.assertAlmostEqual(alpha, 0.05)
+
+    def test_legacy_env_restores_the_old_band(self):
+        from watermark import wm_params
+        os.environ["CRISPASR_WATERMARK_LEGACY"] = "1"
+        lo, hi, alpha = wm_params(1024)
+        self.assertEqual((lo, hi), (1024 // 16, 1024 // 2 - 1))
+        self.assertAlmostEqual(alpha, 0.08)
+
+    def test_legacy_flag_overrides_env_explicitly(self):
+        from watermark import wm_params
+        self.assertEqual(wm_params(1024, legacy=True)[1], 1024 // 2 - 1)
+        self.assertEqual(wm_params(1024, legacy=False)[1], 1024 // 5)
+
+    def _speech_like(self, seconds=3.0, sr=24000):
+        t = np.linspace(0, seconds, int(sr * seconds), endpoint=False, dtype=np.float32)
+        return (0.30 * np.sin(2 * np.pi * 180 * t)
+                + 0.12 * np.sin(2 * np.pi * 420 * t)
+                + 0.05 * np.sin(2 * np.pi * 1800 * t)).astype(np.float32)
+
+    def test_detection_sweeps_both_bands(self):
+        """Audio marked on the old band must still verify after the change."""
+        from watermark import spread_spectrum_detect, spread_spectrum_embed
+        pcm = self._speech_like()
+        os.environ["CRISPASR_WATERMARK_LEGACY"] = "1"
+        legacy_marked = spread_spectrum_embed(pcm)
+        del os.environ["CRISPASR_WATERMARK_LEGACY"]
+        self.assertGreater(spread_spectrum_detect(legacy_marked), 0.65,
+                           "a legacy-band watermark must still be detectable")
+
+    def test_current_band_roundtrip(self):
+        from watermark import spread_spectrum_detect, spread_spectrum_embed
+        pcm = self._speech_like()
+        self.assertGreater(spread_spectrum_detect(spread_spectrum_embed(pcm)), 0.65)
+
+    def test_sweeping_does_not_raise_false_positives(self):
+        """Checking two bands must not make unmarked audio look marked."""
+        from watermark import _VERIFY_THRESHOLD, spread_spectrum_detect
+        self.assertLess(spread_spectrum_detect(self._speech_like()), _VERIFY_THRESHOLD)
+
+    def test_alpha_none_selects_band_default(self):
+        from watermark import spread_spectrum_embed
+        pcm = self._speech_like()
+        np.testing.assert_allclose(spread_spectrum_embed(pcm),
+                                   spread_spectrum_embed(pcm, alpha=-1.0), atol=1e-6)
+
+    def test_alpha_zero_is_an_explicit_noop(self):
+        from watermark import spread_spectrum_embed
+        pcm = self._speech_like()
+        np.testing.assert_allclose(spread_spectrum_embed(pcm, alpha=0.0), pcm, atol=1e-6)
+
+    def test_survives_resample_on_the_speech_band(self):
+        """The transform that defeated the old band: 0.63 then, above 0.65 now."""
+        from watermark import _resample_linear, spread_spectrum_detect, spread_spectrum_embed
+        marked = spread_spectrum_embed(self._speech_like(seconds=6.0))
+        there_and_back = _resample_linear(_resample_linear(marked, 24000, 16000), 16000, 24000)
+        self.assertGreater(spread_spectrum_detect(there_and_back), 0.65)
+
+
 class TestDisclosureWordingMatchesSusurrus(unittest.TestCase):
     """The Crisp projects should disclose in the same words."""
 

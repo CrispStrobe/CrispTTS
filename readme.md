@@ -583,17 +583,26 @@ which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 
 ### Robustness of the built-in fallback
 
-The built-in spread-spectrum watermark is imperceptible but **not robust to
-resampling or transcoding**. Measured on 20 s of speech:
+The built-in spread-spectrum watermark places a 32-bin comb inside the speech
+band (~1.5–4.8 kHz), matching CrispASR's `wm_params`. Measured on 20 s of real
+speech (`german.wav`, 44.1 kHz), detection threshold 0.65:
 
 | Condition | Detection confidence |
 |-----------|---------------------|
-| Immediately after embedding | 0.94 |
-| After a 24k → 16k → 24k resample | **0.63** (below the 0.65 threshold) |
+| Immediately after embedding | 0.84 |
+| After a 44.1k → 16k → 44.1k resample | 0.78 |
+| After an MP3 round-trip (128 kbps / 64 kbps) | 0.81 / 0.81 |
 | After additive noise at 30 dB SNR | 0.81 |
 | Unwatermarked human recording (false-positive check) | 0.44 |
 
-Measured SNR of the embed is ~33.6 dB on speech.
+Measured SNR of the embed is ~39.5 dB on speech.
+
+These numbers supersede an earlier table measured on the pre-#260 wideband comb
+(0.94 after embed but **0.63** after a resample — below threshold, i.e. the mark
+was lost). Moving the comb into the speech band lowered the immediate reading
+while making it survive resampling and transcoding, and made it ~6 dB quieter.
+`CRISPASR_WATERMARK_LEGACY=1` restores the old band for A/B against older files;
+detection always sweeps both, so previously-marked audio still verifies.
 
 This is why **C2PA signing is on by default** rather than opt-in: for WAV and
 MP3 output the signed manifest, not the spread-spectrum watermark, is the
