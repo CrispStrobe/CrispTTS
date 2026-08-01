@@ -40,10 +40,26 @@ except Exception:  # noqa: S110 — version lookup is best-effort
     pass
 
 
+def _marking_mode() -> str:
+    """Current AI-provenance marking mode, as a cache-key component.
+
+    Without this, audio synthesized once under CRISPTTS_NO_WATERMARK would be
+    served indefinitely to marking-enabled requests — unmarked output escaping
+    through the cache, and reported as watermarked.
+    """
+    if os.environ.get("CRISPTTS_NO_WATERMARK"):
+        return "unmarked"
+    try:
+        import watermark as _wm
+        return f"marked:{_wm._backend}"
+    except ImportError:
+        return "unmarked:no-module"
+
+
 def _cache_key(model_id: str, voice: str | None, text: str, params: str | None) -> str:
-    """Compute a cache key from synthesis parameters + version."""
+    """Compute a cache key from synthesis parameters + version + marking mode."""
     raw = json.dumps({"m": model_id, "v": voice or "", "t": text, "p": params or "",
-                      "_ver": _VERSION},
+                      "_ver": _VERSION, "_mark": _marking_mode()},
                      sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 

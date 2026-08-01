@@ -100,5 +100,89 @@ class TestCacheVersioning(unittest.TestCase):
         self.assertGreater(len(cache._VERSION), 0)
 
 
+class TestMarkingCacheKey(unittest.TestCase):
+    """Unmarked audio must not leak to marking-enabled callers via the cache."""
+
+    def test_marking_mode_changes_key(self):
+        import os
+
+        import cache
+        key_marked = cache._cache_key("kokoro", "af_heart", "Hello", None)
+        os.environ["CRISPTTS_NO_WATERMARK"] = "1"
+        try:
+            key_unmarked = cache._cache_key("kokoro", "af_heart", "Hello", None)
+        finally:
+            del os.environ["CRISPTTS_NO_WATERMARK"]
+        self.assertNotEqual(key_marked, key_unmarked)
+
+    def test_marking_mode_reports_disabled(self):
+        import os
+
+        import cache
+        os.environ["CRISPTTS_NO_WATERMARK"] = "1"
+        try:
+            self.assertEqual(cache._marking_mode(), "unmarked")
+        finally:
+            del os.environ["CRISPTTS_NO_WATERMARK"]
+        self.assertTrue(cache._marking_mode().startswith("marked:"))
+
+
+class TestProvenanceHeaders(unittest.TestCase):
+    """X-CrispTTS-Watermarked must reflect reality, never assert blindly."""
+
+    def _collect(self, mark_result):
+        from server import TTSRequestHandler
+        sent = {}
+
+        class _Stub:
+            send_header = lambda self, k, v: sent.__setitem__(k, v)  # noqa: E731
+
+        TTSRequestHandler._send_marking_headers(_Stub(), mark_result)
+        return sent
+
+    def test_none_result_reports_false(self):
+        self.assertEqual(self._collect(None)["X-CrispTTS-Watermarked"], "false")
+
+    def test_unmarked_result_reports_false(self):
+        from watermark import MarkResult
+        headers = self._collect(MarkResult(marked=False, reason="disabled"))
+        self.assertEqual(headers["X-CrispTTS-Watermarked"], "false")
+        self.assertNotIn("X-CrispTTS-Watermark-Backend", headers)
+
+    def test_marked_result_reports_details(self):
+        from watermark import MarkResult
+        headers = self._collect(MarkResult(
+            marked=True, backend="wavmark", layers=("audio-watermark", "metadata"),
+            confidence=0.91))
+        self.assertEqual(headers["X-CrispTTS-Watermarked"], "true")
+        self.assertEqual(headers["X-CrispTTS-Watermark-Backend"], "wavmark")
+        self.assertEqual(headers["X-CrispTTS-Watermark-Confidence"], "0.910")
+        self.assertIn("audio-watermark", headers["X-CrispTTS-Provenance-Layers"])
+
+    def test_cached_state_follows_marking_mode(self):
+        import os
+
+        from server import _cached_mark_state
+        self.assertTrue(_cached_mark_state().marked)
+        os.environ["CRISPTTS_NO_WATERMARK"] = "1"
+        try:
+            self.assertFalse(_cached_mark_state().marked)
+        finally:
+            del os.environ["CRISPTTS_NO_WATERMARK"]
+
+
+class TestConsentBeforeCache(unittest.TestCase):
+    """The consent gate must precede the cache lookup in do_POST."""
+
+    def test_gate_runs_before_lookup(self):
+        import inspect
+
+        import server
+        src = inspect.getsource(server.TTSRequestHandler.do_POST)
+        self.assertLess(
+            src.index("requires_consent"), src.index("_cache.lookup"),
+            "cache lookup must not short-circuit the voice-cloning consent gate")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,23 @@ _rate_limit_max = 10  # requests per minute (configurable via run_server)
 _rate_limit_window = 60.0  # seconds
 
 
+def _cached_mark_state():
+    """Provenance state for a cache hit.
+
+    Cache keys include the marking mode (see ``cache._cache_key``), so an
+    entry can only be hit under the same mode that produced it: a hit while
+    marking is enabled is necessarily a marked file.
+    """
+    try:
+        from watermark import MarkResult, marking_enabled
+        if not marking_enabled():
+            return MarkResult(marked=False, reason="disabled via CRISPTTS_NO_WATERMARK")
+        import watermark as _wm
+        return MarkResult(marked=True, backend=_wm._backend, layers=("cached",))
+    except ImportError:
+        return None
+
+
 def _check_rate_limit(client_ip: str) -> bool:
     """Return True if request is allowed, False if rate limited."""
     import time as _time
@@ -84,6 +101,26 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
     def _send_error(self, code, message):
         self._send_json(code, {"error": {"message": message, "type": "invalid_request_error"}})
 
+    def _send_marking_headers(self, mark_result):
+        """Emit provenance headers that reflect what was actually applied.
+
+        These headers are a machine-readable provenance claim, so they must
+        never assert marking that did not happen — an unverified "true" is
+        worse than an honest "false".
+        """
+        marked = bool(mark_result is not None and getattr(mark_result, "marked", False))
+        self.send_header("X-CrispTTS-Watermarked", "true" if marked else "false")
+        if marked:
+            backend = getattr(mark_result, "backend", None)
+            if backend:
+                self.send_header("X-CrispTTS-Watermark-Backend", str(backend))
+            confidence = getattr(mark_result, "confidence", None)
+            if confidence is not None:
+                self.send_header("X-CrispTTS-Watermark-Confidence", f"{confidence:.3f}")
+            layers = getattr(mark_result, "layers", ())
+            if layers:
+                self.send_header("X-CrispTTS-Provenance-Layers", "+".join(layers))
+
     def do_GET(self):  # noqa: N802
         if self.path == "/v1/audio/models" or self.path == "/v1/models":
             models = []
@@ -97,7 +134,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 })
             self._send_json(200, {"object": "list", "data": models})
         elif self.path == "/health" or self.path == "/":
-            health = {"status": "ok", "server": "CrispTTS", "version": "0.8.0"}
+            health = {"status": "ok", "server": "CrispTTS", "version": "0.9.1"}
             try:
                 import resource
                 rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
@@ -184,6 +221,27 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
 
         effective_voice = voice or model_config.get("default_voice_id")
 
+        # --- Voice-cloning consent gate ---
+        # MUST run before the cache lookup: otherwise the first consenting
+        # request warms the cache and every later caller receives cloned audio
+        # without attesting and without an entry in the consent audit log.
+        _is_voice_cloning = False
+        try:
+            from watermark import log_consent_attestation, requires_consent
+            _is_voice_cloning = requires_consent(model, handler_key, effective_voice,
+                                                 model_config=model_config)
+            if _is_voice_cloning and not i_have_rights:
+                self._send_error(403,
+                    f"Model '{model}' involves voice cloning. Include "
+                    '"i_have_rights": true in the request body to attest '
+                    "that you have the consent of the speaker whose voice "
+                    "is being cloned, or that it is your own voice.")
+                return
+            if _is_voice_cloning:
+                log_consent_attestation(model, effective_voice, source="API i_have_rights field")
+        except ImportError:
+            pass
+
         # --- Synthesis cache check ---
         try:
             import cache as _cache
@@ -201,28 +259,13 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Disposition",
                                  f'attachment; filename="tts_output.{response_format}"')
                 self.send_header("X-CrispTTS-Model", model)
-                self.send_header("X-CrispTTS-Watermarked", "true")
+                # The cache key includes the marking mode (see cache._cache_key),
+                # so a hit was produced under the mode in force right now.
+                self._send_marking_headers(_cached_mark_state())
                 self.send_header("X-CrispTTS-Cache", "hit")
                 self.end_headers()
                 self.wfile.write(audio_data)
                 return
-        except ImportError:
-            pass
-
-        # --- Voice-cloning consent gate ---
-        _is_voice_cloning = False
-        try:
-            from watermark import log_consent_attestation, requires_consent
-            _is_voice_cloning = requires_consent(model, handler_key, effective_voice)
-            if _is_voice_cloning and not i_have_rights:
-                self._send_error(403,
-                    f"Model '{model}' involves voice cloning. Include "
-                    '"i_have_rights": true in the request body to attest '
-                    "that you have the consent of the speaker whose voice "
-                    "is being cloned, or that it is your own voice.")
-                return
-            if _is_voice_cloning:
-                log_consent_attestation(model, effective_voice, source="API i_have_rights field")
         except ImportError:
             pass
 
@@ -232,6 +275,20 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
 
         # Synthesize to temp file
         suffix = f".{response_format}" if response_format in ("wav", "mp3", "flac", "opus") else ".wav"
+
+        # --- Marking preflight: refuse before spending compute ---
+        marking_policy = None
+        try:
+            from watermark import MarkingError, preflight_marking
+            try:
+                marking_policy = preflight_marking(f"x{suffix}", handler_key=handler_key)
+            except MarkingError as e_pre:
+                logger.error("Marking preflight refused %s: %s", response_format, e_pre)
+                self._send_error(400, f"Cannot mark '{response_format}' output as AI-generated: {e_pre}")
+                return
+        except ImportError:
+            pass
+
         fd, tmp_path = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
 
@@ -250,55 +307,48 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 return
 
             # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
-            if _is_voice_cloning and tmp_path.endswith(".wav"):
+            # Applies to every response format, not only WAV. Fails closed:
+            # a cloned voice without its disclosure is a 500, not a response.
+            if _is_voice_cloning:
                 try:
-                    import soundfile as sf_disc
-
-                    from watermark import prepend_disclaimer
-                    data_disc, sr_disc = sf_disc.read(tmp_path, dtype="float32")
-                    if data_disc.ndim > 1:
-                        data_disc = data_disc[:, 0]
-                    data_disc = prepend_disclaimer(data_disc, sample_rate=sr_disc)
-                    sf_disc.write(tmp_path, data_disc, sr_disc, subtype="PCM_16")
-                except Exception as e_disc:
-                    logger.warning("Server disclaimer prepend failed: %s", e_disc)
-
-            # --- Watermark & metadata injection ---
-            if not os.environ.get("CRISPTTS_NO_WATERMARK"):
-                try:
-                    from watermark import (
-                        inject_flac_metadata,
-                        inject_mp3_metadata,
-                        inject_opus_metadata,
-                        inject_wav_metadata,
-                        watermark_embed,
-                    )
-
-                    if tmp_path.endswith(".wav"):
-                        if handler_key != "crispasr":
-                            import soundfile as sf_srv
-                            data_srv, sr_srv = sf_srv.read(tmp_path, dtype="float32")
-                            if data_srv.ndim > 1:
-                                data_srv = data_srv[:, 0]
-                            data_srv = watermark_embed(data_srv, sample_rate=sr_srv)
-                            sf_srv.write(tmp_path, data_srv, sr_srv, subtype="PCM_16")
-                        with open(tmp_path, "rb") as f_srv:
-                            wav_b = inject_wav_metadata(f_srv.read())
-                        with open(tmp_path, "wb") as f_srv:
-                            f_srv.write(wav_b)
-                    elif tmp_path.endswith(".mp3"):
-                        with open(tmp_path, "rb") as f_srv:
-                            mp3_b = inject_mp3_metadata(f_srv.read())
-                        with open(tmp_path, "wb") as f_srv:
-                            f_srv.write(mp3_b)
-                    elif tmp_path.endswith(".flac"):
-                        inject_flac_metadata(tmp_path)
-                    elif tmp_path.endswith(".opus"):
-                        inject_opus_metadata(tmp_path)
+                    from watermark import DisclosureError, prepend_disclaimer_file
                 except ImportError:
-                    logger.debug("watermark module not available in server.")
-                except Exception as e_wm:
-                    logger.warning("Server watermark embedding failed: %s", e_wm)
+                    logger.error("watermark module not available in server.")
+                    self._send_error(500, "Cannot add the AI disclosure to voice-cloned "
+                                          "audio; refusing to return undisclosed output.")
+                    return
+                try:
+                    prepend_disclaimer_file(tmp_path,
+                                            language=model_config.get("language"))
+                except DisclosureError as e_disc:
+                    logger.error("Server disclosure failed: %s", e_disc)
+                    self._send_error(500, f"Cannot add the AI disclosure to voice-cloned "
+                                          f"audio ({e_disc}); refusing to return "
+                                          f"undisclosed output.")
+                    return
+
+            # --- AI-provenance marking (EU AI Act Art. 50(2)) ---
+            # Single shared path with the CLI, so every response format gets a
+            # real audio watermark — not just strippable container metadata.
+            # Fails closed: an unmarkable response is a 500, not unmarked audio.
+            mark_result = None
+            try:
+                from watermark import MarkingError, mark_audio_file
+            except ImportError:
+                logger.error("watermark module not available in server.")
+                if not os.environ.get("CRISPTTS_ALLOW_UNMARKED"):
+                    self._send_error(500, "Cannot mark synthetic audio (watermark module "
+                                          "unavailable); refusing to return unmarked output.")
+                    return
+            else:
+                try:
+                    mark_result = mark_audio_file(tmp_path, handler_key=handler_key,
+                                                  policy=marking_policy, model_id=model)
+                except MarkingError as e_wm:
+                    logger.error("Server marking failed: %s", e_wm)
+                    self._send_error(500, f"Cannot mark synthetic audio as AI-generated "
+                                          f"({e_wm}); refusing to return unmarked output.")
+                    return
 
             with open(tmp_path, "rb") as f_out:
                 audio_data = f_out.read()
@@ -325,7 +375,8 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Disposition",
                              f'attachment; filename="tts_output.{response_format}"')
             self.send_header("X-CrispTTS-Model", model)
-            self.send_header("X-CrispTTS-Watermarked", "true")
+            self._send_marking_headers(mark_result)
+            self.send_header("X-CrispTTS-Cache", "miss")
             self.end_headers()
             self.wfile.write(audio_data)
 

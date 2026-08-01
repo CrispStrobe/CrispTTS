@@ -175,6 +175,7 @@ OUTETTS_VERSION_STRING_MODEL_CONFIG_DATA = {
 GERMAN_TTS_MODELS = {
     "zonos_transformer_de": {
         "handler_function_key": "zonos",
+        "voice_cloning": True,
         "model_repo_id": ZONOS_TRANSFORMER_MODEL_ID,
         # reference audio file for the voice
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
@@ -186,12 +187,14 @@ GERMAN_TTS_MODELS = {
     },
     "edge": {
         "handler_function_key": "edge",
+        "voice_cloning": False,
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
         "available_voices": EDGE_TTS_ALL_GERMAN_VOICES,
         "notes": "MS Edge TTS (cloud). Output: MP3. Internet required."
     },
     "orpheus_kartoffel_natural": {
         "handler_function_key": "orpheus_kartoffel", # Standardized key
+        "voice_cloning": False,
         "model_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
         "tokenizer_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
         "snac_model_id": KARTORPHEUS_SNAC_MODEL_ID,
@@ -210,6 +213,7 @@ GERMAN_TTS_MODELS = {
     },
     "piper_local": {
         "handler_function_key": "piper", # Standardized key
+        "voice_cloning": False,
         "piper_voice_repo_id": "rhasspy/piper-voices",
         "default_model_path_in_repo": PIPER_DEFAULT_GERMAN_VOICE_PATH,
         "available_voices": PIPER_GERMAN_VOICE_PATHS,
@@ -218,6 +222,7 @@ GERMAN_TTS_MODELS = {
     },
     "orpheus_lex_au": {
         "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
+        "voice_cloning": False,
         "model_repo_id": "lex-au/Orpheus-3b-FT-Q4_K_M.gguf",
         "model_filename": "Orpheus-3b-FT-Q4_K_M.gguf",
         "requires_hf_token": False,
@@ -227,6 +232,7 @@ GERMAN_TTS_MODELS = {
     },
     "orpheus_sauerkraut": {
         "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
+        "voice_cloning": False,
         "model_repo_id": "VAGOsolutions/SauerkrautTTS-Preview-0.1-Q4_K_M-GGUF",
         "model_filename": "sauerkrauttts_preview_0_1.Q4_K_M.gguf",
         "requires_hf_token": False,
@@ -236,6 +242,7 @@ GERMAN_TTS_MODELS = {
     },
     "orpheus_lm_studio": {
         "handler_function_key": "orpheus_lm_studio",
+        "voice_cloning": False,
         "api_url": LM_STUDIO_API_URL_DEFAULT,
         "gguf_model_name_in_api": "SauerkrautTTS-Preview-0.1",
         "default_voice_id": "Tom",
@@ -244,6 +251,7 @@ GERMAN_TTS_MODELS = {
     },
     "orpheus_ollama": {
         "handler_function_key": "orpheus_ollama",
+        "voice_cloning": False,
         "api_url": OLLAMA_API_URL_DEFAULT,
         "ollama_model_name": "legraphista/Orpheus",
         "default_voice_id": "tara",
@@ -252,6 +260,7 @@ GERMAN_TTS_MODELS = {
     },
     "oute_llamacpp": {
         "handler_function_key": "outetts", # Standardized key for OuteTTS
+        "voice_cloning": True,
         "outetts_model_enum": OuteTTSModels_Enum.VERSION_1_0_SIZE_1B if OUTETTS_AVAILABLE_FOR_CONFIG else "VERSION_1_0_SIZE_1B_STR_FALLBACK",  # noqa: E501
         "backend_to_use": OuteTTSBackend_Enum.LLAMACPP if OUTETTS_AVAILABLE_FOR_CONFIG else "LLAMACPP_STR_FALLBACK",
         "quantization_to_use": OuteTTSLlamaCppQuantization_Enum.FP16 if OUTETTS_AVAILABLE_FOR_CONFIG else "FP16_STR_FALLBACK",  # noqa: E501
@@ -262,6 +271,7 @@ GERMAN_TTS_MODELS = {
     },
     "oute_hf": {
         "handler_function_key": "outetts", # Standardized key for OuteTTS
+        "voice_cloning": True,
         "outetts_model_version_str": "1.0",
         "onnx_repo_id": OUTETTS_HF_REPO_ID,
         "tokenizer_path": "OuteAI/Llama-OuteTTS-1.0-1B",
@@ -278,6 +288,7 @@ GERMAN_TTS_MODELS = {
     },
     "speecht5_german_transformers": {
         "handler_function_key": "speecht5", # Standardized key
+        "voice_cloning": False,
         "model_id": "sjdata/speecht5_finetuned_common_voice_11_de",
         "vocoder_id": "microsoft/speecht5_hifigan",
         "speaker_embeddings_repo": "Matthijs/cmu-arctic-xvectors",
@@ -287,6 +298,7 @@ GERMAN_TTS_MODELS = {
     },
     "fastpitch_german_nemo": {
         "handler_function_key": "nemo_fastpitch", # Standardized key
+        "voice_cloning": False,
         "spectrogram_model_repo_id": "inOXcrm/German_multispeaker_FastPitch_nemo",
         "spectrogram_model_filename": "German_multispeaker_FastPitch_nemo.nemo",
         "vocoder_model_name": "tts_de_hui_hifigan_ft_fastpitch_multispeaker_5",
@@ -298,6 +310,7 @@ GERMAN_TTS_MODELS = {
     "kokoro_onnx": {
         "crisptts_model_id": "kokoro_onnx",
         "handler_function_key": "kokoro_onnx",
+        "voice_cloning": False,
         "onnx_model_path": KOKORO_ONNX_MODEL_PATH,
         "voices_bin_path": KOKORO_ONNX_VOICES_PATH,
         "default_voice_id": KOKORO_ONNX_DEFAULT_VOICE,
@@ -311,6 +324,7 @@ GERMAN_TTS_MODELS = {
     "tts_cpp_kokoro": {
         "crisptts_model_id": "tts_cpp_kokoro",
         "handler_function_key": "tts_cpp",
+        "voice_cloning": False,
         "tts_cpp_executable_path": TTS_CPP_EXECUTABLE_PATH,
         "gguf_model_path": TTS_CPP_KOKORO_GGUF_PATH,
         "default_voice_id": KOKORO_DEFAULT_VOICE,
@@ -322,6 +336,7 @@ GERMAN_TTS_MODELS = {
     "tts_cpp_dia": {
         "crisptts_model_id": "tts_cpp_dia",
         "handler_function_key": "tts_cpp",
+        "voice_cloning": True,
         "tts_cpp_executable_path": TTS_CPP_EXECUTABLE_PATH,
         "gguf_model_path": TTS_CPP_DIA_GGUF_PATH,
         "default_voice_id": None, # Dia does not use named voices
@@ -332,6 +347,7 @@ GERMAN_TTS_MODELS = {
     },
     "coqui_tts_thorsten_ddc": {
         "handler_function_key": "coqui_tts", # Standardized Coqui key
+        "voice_cloning": False,
         "coqui_model_name": "tts_models/de/thorsten/tacotron2-DDC",
         "default_coqui_speaker": None,
         "language": "de",
@@ -341,6 +357,7 @@ GERMAN_TTS_MODELS = {
     },
     "coqui_tts_thorsten_vits": {
         "handler_function_key": "coqui_tts",
+        "voice_cloning": False,
         "coqui_model_name": "tts_models/de/thorsten/vits",
         "default_coqui_speaker": None,
         "language": "de",
@@ -350,6 +367,7 @@ GERMAN_TTS_MODELS = {
     },
     "coqui_tts_thorsten_dca": {
         "handler_function_key": "coqui_tts",
+        "voice_cloning": False,
         "coqui_model_name": COQUI_THORSTEN_TACOTRON2_DCA,
         "default_coqui_speaker": None,
         "language": "de",
@@ -359,6 +377,7 @@ GERMAN_TTS_MODELS = {
     },
     "coqui_xtts_v2_de_clone": {
         "handler_function_key": "coqui_tts", # XTTS also uses the Coqui TTS API
+        "voice_cloning": True,
         "coqui_model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
         "default_coqui_speaker": None,
         "language": "de",
@@ -369,6 +388,7 @@ GERMAN_TTS_MODELS = {
     },
     "coqui_css10_de_vits": {
         "handler_function_key": "coqui_tts",
+        "voice_cloning": False,
         "coqui_model_name": "tts_models/de/css10/vits-neon",
         "default_coqui_speaker": None,
         "language": "de",
@@ -378,6 +398,7 @@ GERMAN_TTS_MODELS = {
     },
     "coqui_vctk_en_vits": {
         "handler_function_key": "coqui_tts",
+        "voice_cloning": False,
         "coqui_model_name": "tts_models/en/vctk/vits",
         "default_coqui_speaker": "p225",
         "available_voices": ["p225", "p228", "p232", "p249"],
@@ -387,6 +408,7 @@ GERMAN_TTS_MODELS = {
     },
     "llasa_hybrid_de_clone": {
         "handler_function_key": "llasa_hybrid",
+        "voice_cloning": True,
         "llm_model_id": LLASA_MLX_LLM_MODEL_ID,
         "chat_tokenizer_id": LLASA_CHAT_TEMPLATE_TOKENIZER_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -399,6 +421,7 @@ GERMAN_TTS_MODELS = {
     },
     "llasa_hybrid_de_zeroshot": {
         "handler_function_key": "llasa_hybrid",
+        "voice_cloning": True,
         "llm_model_id": LLASA_MLX_LLM_MODEL_ID, # e.g., "nhe-ai/Llasa-1B-Multilingual-mlx-4Bit"
         "chat_tokenizer_id": LLASA_CHAT_TEMPLATE_TOKENIZER_ID, # e.g., "HKUSTAudio/Llasa-1B-Multilingual"
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID, # PyTorch-based XCodec2
@@ -412,6 +435,7 @@ GERMAN_TTS_MODELS = {
     "llasa_german_transformers_clone": {
         "crisptts_model_id": "llasa_german_transformers_clone",
         "handler_function_key": "llasa_german_transformers",  # NEW: Use German-specific handler
+        "voice_cloning": True,
         "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -426,6 +450,7 @@ GERMAN_TTS_MODELS = {
     "llasa_german_transformers_zeroshot": {
         "crisptts_model_id": "llasa_german_transformers_zeroshot",
         "handler_function_key": "llasa_german_transformers",  # NEW: Use German-specific handler
+        "voice_cloning": True,
         "llm_model_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "tokenizer_id": LLASA_GERMAN_TRANSFORMERS_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -439,6 +464,7 @@ GERMAN_TTS_MODELS = {
     "llasa_multilingual_hf_clone": {
         "crisptts_model_id": "llasa_multilingual_hf_clone",
         "handler_function_key": "llasa_multilingual_transformers",  # NEW: Use Multilingual-specific handler
+        "voice_cloning": True,
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -452,6 +478,7 @@ GERMAN_TTS_MODELS = {
     "llasa_multilingual_hf_zeroshot": {
         "crisptts_model_id": "llasa_multilingual_hf_zeroshot",
         "handler_function_key": "llasa_multilingual_transformers",  # NEW: Use Multilingual-specific handler
+        "voice_cloning": True,
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
@@ -466,6 +493,7 @@ GERMAN_TTS_MODELS = {
     # --- MLX-AUDIO MODEL ENTRIES using "mlx_audio" handler_function_key ---
     "mlx_audio_kokoro_de": { # Your original ID for Kokoro
         "handler_function_key": "mlx_audio",
+        "voice_cloning": False,
         "mlx_model_path": MLX_AUDIO_KOKORO_MODEL_ID,
         "default_voice_id": MLX_AUDIO_KOKORO_DEFAULT_VOICE,
         "available_voices": MLX_AUDIO_KOKORO_VOICES,
@@ -475,6 +503,7 @@ GERMAN_TTS_MODELS = {
     },
     "mlx_audio_csm_clone": { # Your existing ID for CSM/Sesame
         "handler_function_key": "mlx_audio",
+        "voice_cloning": True,
         "mlx_model_path": MLX_AUDIO_CSM_MODEL_ID,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
@@ -484,6 +513,7 @@ GERMAN_TTS_MODELS = {
     },
     "mlx_audio_outetts_clone": { # Your existing ID for OuteTTS via mlx-audio
         "handler_function_key": "mlx_audio",
+        "voice_cloning": True,
         "mlx_model_path": MLX_AUDIO_OUTETTS_MAIN_REPO_ID,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
@@ -493,6 +523,7 @@ GERMAN_TTS_MODELS = {
     # --- NEW MLX-AUDIO ENTRIES with standardized IDs ---
     "mlx_audio_spark_clone": {
         "handler_function_key": "mlx_audio",
+        "voice_cloning": True,
         "mlx_model_path": MLX_AUDIO_SPARK_REPO_ID,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
@@ -501,6 +532,7 @@ GERMAN_TTS_MODELS = {
     },
     "mlx_audio_spark_control": {
         "handler_function_key": "mlx_audio",
+        "voice_cloning": False,
         "mlx_model_path": MLX_AUDIO_SPARK_REPO_ID,
         "default_voice_id": "female",
         "available_voices": ["female", "male"],
@@ -511,6 +543,7 @@ GERMAN_TTS_MODELS = {
     },
     "mlx_audio_bark_de": {
         "handler_function_key": "mlx_audio",
+        "voice_cloning": False,
         "mlx_model_path": "mlx-community/bark-small", # For the main MLX model
         "default_voice_id": "v2/de_speaker_3",        # This voice will be fetched from "suno/bark-small" by the patch
         "available_voices": [
@@ -527,6 +560,7 @@ GERMAN_TTS_MODELS = {
     "kartoffelbox_clone": {
         "crisptts_model_id": "kartoffelbox_clone",
         "handler_function_key": "chatterbox",
+        "voice_cloning": True,
         "model_repo_id": "SebastianBodza/Kartoffelbox-v0.1",
         "t3_checkpoint_file": "t3_cfg.safetensors",
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
@@ -539,6 +573,7 @@ GERMAN_TTS_MODELS = {
     "kartoffelbox_zeroshot": {
         "crisptts_model_id": "kartoffelbox_zeroshot",
         "handler_function_key": "chatterbox",
+        "voice_cloning": True,
         "model_repo_id": "SebastianBodza/Kartoffelbox-v0.1",
         "t3_checkpoint_file": "t3_cfg.safetensors",
         "default_voice_id": None,  # Zero-shot mode
@@ -551,6 +586,7 @@ GERMAN_TTS_MODELS = {
     # --- F5-TTS entries, experimentally including non-standard repos ---
     "f5_tts_multilingual": {
         "handler_function_key": "f5_tts",
+        "voice_cloning": True,
         "model_repo_id": "cstr/aihpi_f5_german_mlx_q4",  # lucasnewman/f5-tts-mlx # This is a working MLX model
         "use_mlx": True,  # This model is compatible with MLX
         "language": "multilingual",
@@ -564,6 +600,7 @@ GERMAN_TTS_MODELS = {
     },
     "f5_tts_german": {
         "handler_function_key": "f5_tts",
+        "voice_cloning": True,
         "model_repo_id": "cstr/aihpi_f5_german_mlx_q4",  # lucasnewman/f5-tts-mlx # Use the working repository
         "use_mlx": True,
         "language": "de",
@@ -577,6 +614,7 @@ GERMAN_TTS_MODELS = {
     },
     "f5_tts_german_hpi": {
         "handler_function_key": "f5_tts",
+        "voice_cloning": True,
         "model_repo_id": "aihpi/F5-TTS-German",
         "use_mlx": False,  # Force PyTorch backend
         "language": "de",
@@ -592,6 +630,7 @@ GERMAN_TTS_MODELS = {
     },
     "f5_tts_german_marduk": {
         "handler_function_key": "f5_tts",
+        "voice_cloning": True,
         "model_repo_id": "marduk-ra/F5-TTS-German",
         "use_mlx": False, # Force PyTorch backend, as MLX fails
         "language": "de",
@@ -607,6 +646,7 @@ GERMAN_TTS_MODELS = {
     },
     "f5_tts_german_eamag": {
         "handler_function_key": "f5_tts",
+        "voice_cloning": True,
         "model_repo_id": "eamag/f5-tts-mlx-german",
         "use_mlx": True, # Let this attempt MLX first, so the fallback can be triggered
         "language": "de",
@@ -621,6 +661,7 @@ GERMAN_TTS_MODELS = {
     # --- mlx audio endpoint test ---
     "mlx_audio_orpheus_llama": { # For the Orpheus-Llama in mlx-audio
         "handler_function_key": "mlx_audio",
+        "voice_cloning": False,
         "mlx_model_path": MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID,
         "default_voice_id": "zac", # Orpheus-style voice name
         "available_voices": ORPHEUS_AVAILABLE_VOICES_BASE + ORPHEUS_GERMAN_VOICES,
@@ -633,6 +674,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_kokoro": {
         "crisptts_model_id": "crispasr_kokoro",
         "handler_function_key": "crispasr",
+        "voice_cloning": False,
         "crispasr_backend": "kokoro",
         "crispasr_model_path": "auto",
         "default_voice_id": "af_heart",
@@ -645,6 +687,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_kokoro_de": {
         "crisptts_model_id": "crispasr_kokoro_de",
         "handler_function_key": "crispasr",
+        "voice_cloning": False,
         "crispasr_backend": "kokoro",
         "crispasr_model_path": "auto",
         "default_voice_id": "df_victoria",
@@ -656,6 +699,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_orpheus": {
         "crisptts_model_id": "crispasr_orpheus",
         "handler_function_key": "crispasr",
+        "voice_cloning": False,
         "crispasr_backend": "orpheus",
         "crispasr_model_path": "auto",
         "crispasr_codec_model": "auto",
@@ -667,6 +711,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_orpheus_de": {
         "crisptts_model_id": "crispasr_orpheus_de",
         "handler_function_key": "crispasr",
+        "voice_cloning": False,
         "crispasr_backend": "orpheus",
         "crispasr_model_path": "auto:kartoffel-orpheus-de-natural",
         "crispasr_codec_model": "auto",
@@ -681,6 +726,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_qwen3_tts": {
         "crisptts_model_id": "crispasr_qwen3_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "qwen3-tts",
         "crispasr_model_path": "auto",
         "crispasr_codec_model": "auto",
@@ -692,6 +738,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_qwen3_tts_voicedesign": {
         "crisptts_model_id": "crispasr_qwen3_tts_voicedesign",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "qwen3-tts",
         "crispasr_model_path": "auto",
         "crispasr_codec_model": "auto",
@@ -704,6 +751,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_chatterbox": {
         "crisptts_model_id": "crispasr_chatterbox",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "chatterbox",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -714,6 +762,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_vibevoice_tts": {
         "crisptts_model_id": "crispasr_vibevoice_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "vibevoice-tts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -724,6 +773,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_indextts": {
         "crisptts_model_id": "crispasr_indextts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "indextts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -734,6 +784,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_voxcpm2": {
         "crisptts_model_id": "crispasr_voxcpm2",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "voxcpm2-tts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -745,6 +796,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_f5_tts": {
         "crisptts_model_id": "crispasr_f5_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "f5-tts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -755,6 +807,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_melotts": {
         "crisptts_model_id": "crispasr_melotts",
         "handler_function_key": "crispasr",
+        "voice_cloning": False,
         "crispasr_backend": "melotts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -765,6 +818,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_piper": {
         "crisptts_model_id": "crispasr_piper",
         "handler_function_key": "crispasr",
+        "voice_cloning": False,
         "crispasr_backend": "piper",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -777,6 +831,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_bananamind_tts": {
         "crisptts_model_id": "crispasr_bananamind_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": False,
         "crispasr_backend": "bananamind-tts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -788,6 +843,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_dots_tts": {
         "crisptts_model_id": "crispasr_dots_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "dots-tts",
         "crispasr_model_path": "auto",
         "crispasr_codec_model": "auto",
@@ -799,6 +855,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_cosyvoice3_tts": {
         "crisptts_model_id": "crispasr_cosyvoice3_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "cosyvoice3-tts",
         "crispasr_model_path": "auto",
         "crispasr_codec_model": "auto",
@@ -810,6 +867,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_csm_tts": {
         "crisptts_model_id": "crispasr_csm_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "csm-tts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -821,6 +879,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_omnivoice_tts": {
         "crisptts_model_id": "crispasr_omnivoice_tts",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "omnivoice",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -831,6 +890,7 @@ GERMAN_TTS_MODELS = {
     "crispasr_moss_tts_local": {
         "crisptts_model_id": "crispasr_moss_tts_local",
         "handler_function_key": "crispasr",
+        "voice_cloning": True,
         "crispasr_backend": "moss-tts-local",
         "crispasr_model_path": "auto",
         "crispasr_codec_model": "auto",
@@ -843,6 +903,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_dia_clone": {
         "crisptts_model_id": "mlx_audio_dia_clone", # Add this for better logging
         "handler_function_key": "mlx_audio",
+        "voice_cloning": True,
         "mlx_model_path": MLX_AUDIO_DIA_REPO_ID,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],

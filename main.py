@@ -430,19 +430,58 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
 
             logger.info(f"\n>>> Testing Model: {model_id} (Voice/Speaker: {voice_id_for_test}) <<<")
 
-            # Voice-cloning consent gate in test mode
+            # --- Voice-cloning consent gate (same rules as real synthesis) ---
+            _is_voice_cloning = False
             try:
+                from watermark import log_consent_attestation as _test_log_consent
                 from watermark import requires_consent as _test_requires_consent
                 _voice_str = str(voice_id_for_test) if voice_id_for_test else None
-                if _test_requires_consent(model_id, handler_key, _voice_str) and not getattr(cli_args, 'i_have_rights', False):  # noqa: E501
+                _is_voice_cloning = _test_requires_consent(
+                    model_id, handler_key, _voice_str,
+                    model_config=current_config_for_handler)
+                if _is_voice_cloning and not getattr(cli_args, 'i_have_rights', False):
                     current_model_status = "SKIPPED (Consent Required)"
                     logger.info(f"Skipping voice-cloning model '{model_id}': --i-have-rights not set.")
                     benchmark_results.append({"model_id": model_id, "voice_id": current_voice_id_tested,
                         "status": current_model_status, "gen_time_sec": "N/A", "file_size_bytes": "N/A",
                         "audio_duration_sec": "N/A", "output_file": "N/A"})
                     continue
+                if _is_voice_cloning:
+                    # The attestation is logged where it is honoured, not only
+                    # in run_synthesis — otherwise --test-all clones voices
+                    # with no entry in the audit trail.
+                    _test_log_consent(model_id, _voice_str,
+                                      source="CLI --i-have-rights flag (--test-all)")
             except ImportError:
                 pass
+
+            # --- Marking preflight, before any model is loaded ---
+            _test_marking_policy = None
+            try:
+                from watermark import MarkingError as _TestMarkingError
+                from watermark import preflight_marking as _test_preflight
+                try:
+                    _test_marking_policy = _test_preflight(
+                        str(output_filename),
+                        handler_key=handler_key,
+                        no_watermark=getattr(cli_args, 'no_watermark', False),
+                        allow_unmarked=getattr(cli_args, 'allow_unmarked', False),
+                        responsibility_accepted=getattr(cli_args, 'accept_marking_responsibility', False),
+                        no_spoken_disclaimer=getattr(cli_args, 'no_spoken_disclaimer', False),
+                        c2pa_cert=getattr(cli_args, 'c2pa_cert', None),
+                        c2pa_key=getattr(cli_args, 'c2pa_key', None),
+                    )
+                except _TestMarkingError as e_test_pre:
+                    logger.error("Skipping '%s': %s", model_id, e_test_pre)
+                    benchmark_results.append({"model_id": model_id, "voice_id": current_voice_id_tested,
+                        "status": "SKIPPED (Unmarkable)", "gen_time_sec": "N/A",
+                        "file_size_bytes": "N/A", "audio_duration_sec": "N/A", "output_file": "N/A"})
+                    continue
+            except ImportError:
+                if not os.environ.get("CRISPTTS_ALLOW_UNMARKED"):
+                    logger.error("watermark module unavailable — refusing to synthesize "
+                                 "unmarkable audio in --test-all.")
+                    return benchmark_results
 
             start_time_model_test = time.time()
             current_gen_time_sec = None
@@ -457,30 +496,59 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                     current_model_status = "SUCCESS"
                     logger.info(f"SUCCESS: Output for {model_id} (Voice: {voice_id_for_test}) saved to {output_filename}")  # noqa: E501
 
-                    # Watermark test outputs
-                    if not os.environ.get("CRISPTTS_NO_WATERMARK"):
+                    # Spoken AI disclosure, then marking — the same sequence and
+                    # the same fail-closed rules as run_synthesis. --test-all
+                    # writes real cloned audio to disk, so it gets the real
+                    # obligations, not a relaxed subset.
+                    try:
+                        from watermark import DisclosureError, MarkingError, mark_audio_file
+                        if (_is_voice_cloning
+                                and not getattr(cli_args, 'no_spoken_disclaimer', False)):
+                            from watermark import prepend_disclaimer_file
+                            prepend_disclaimer_file(
+                                str(output_filename),
+                                language=current_config_for_handler.get("language"))
+                        mark_audio_file(
+                            str(output_filename),
+                            handler_key=handler_key,
+                            allow_unmarked=True if getattr(cli_args, 'allow_unmarked', False) else None,
+                            c2pa_cert=getattr(cli_args, 'c2pa_cert', None),
+                            c2pa_key=getattr(cli_args, 'c2pa_key', None),
+                            policy=_test_marking_policy,
+                            model_id=model_id,
+                        )
+                    except DisclosureError as e_td:
+                        logger.error("Test output has no AI disclosure: %s", e_td)
+                        current_model_status = "FAILED (No Disclosure)"
                         try:
-                            from watermark import inject_mp3_metadata, inject_wav_metadata, watermark_embed
-                            out_ext = output_filename.suffix.lower()
-                            if out_ext == ".wav":
-                                if handler_key != "crispasr":
-                                    import soundfile as sf_tw
-                                    d_tw, sr_tw = sf_tw.read(str(output_filename), dtype="float32")
-                                    if d_tw.ndim > 1:
-                                        d_tw = d_tw[:, 0]
-                                    d_tw = watermark_embed(d_tw, sample_rate=sr_tw)
-                                    sf_tw.write(str(output_filename), d_tw, sr_tw, subtype="PCM_16")
-                                with open(str(output_filename), "rb") as f_tw:
-                                    wb = inject_wav_metadata(f_tw.read())
-                                with open(str(output_filename), "wb") as f_tw:
-                                    f_tw.write(wb)
-                            elif out_ext == ".mp3":
-                                with open(str(output_filename), "rb") as f_tw:
-                                    mb = inject_mp3_metadata(f_tw.read())
-                                with open(str(output_filename), "wb") as f_tw:
-                                    f_tw.write(mb)
-                        except Exception as e_tw:
-                            logger.debug("Test watermark failed: %s", e_tw)
+                            output_filename.unlink()
+                        except OSError:
+                            pass
+                    except MarkingError as e_tw:
+                        logger.error("Test output could not be marked: %s", e_tw)
+                        current_model_status = "FAILED (Unmarked)"
+                        try:
+                            output_filename.unlink()
+                        except OSError:
+                            pass
+                    except ImportError:
+                        if os.environ.get("CRISPTTS_ALLOW_UNMARKED"):
+                            logger.warning("watermark module unavailable — test output is UNMARKED.")
+                        else:
+                            logger.error("watermark module unavailable — discarding unmarked "
+                                         "test output for %s.", model_id)
+                            current_model_status = "FAILED (Unmarked)"
+                            try:
+                                output_filename.unlink()
+                            except OSError:
+                                pass
+
+                    if not output_filename.exists():
+                        # Discarded because it could not be marked.
+                        benchmark_results.append({"model_id": model_id, "voice_id": current_voice_id_tested,
+                            "status": current_model_status, "gen_time_sec": f"{current_gen_time_sec:.2f}",
+                            "file_size_bytes": "N/A", "audio_duration_sec": "N/A", "output_file": "N/A"})
+                        continue
 
                     current_file_size_bytes = output_filename.stat().st_size
                     try:
@@ -545,6 +613,24 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
         logger.info(separator)
     else:
         logger.info("No benchmark results to display.")
+
+def _discard_output(args, temp_play_file=None):
+    """Delete synthesized audio that could not be AI-provenance marked.
+
+    Under EU AI Act Art. 50(2) synthetic audio must carry a machine-readable
+    mark, so an output we failed to mark must not be left on disk where it
+    could be mistaken for a compliant file.
+    """
+    for path in {getattr(args, "output_file", None), temp_play_file}:
+        if path and os.path.isfile(path):
+            try:
+                os.unlink(path)
+                logger.info("Discarded unmarked output: %s", path)
+            except OSError as e:
+                logger.warning("Could not discard unmarked output %s: %s", path, e)
+    if temp_play_file:
+        args.output_file = None
+
 
 def run_synthesis(args):
     current_all_handlers = _load_handlers_if_needed()
@@ -714,7 +800,8 @@ def run_synthesis(args):
         _is_voice_cloning = False
         try:
             from watermark import log_consent_attestation, requires_consent
-            _is_voice_cloning = requires_consent(args.model_id, handler_key, effective_voice_id)
+            _is_voice_cloning = requires_consent(args.model_id, handler_key, effective_voice_id,
+                                                 model_config=current_config_for_handler)
             if _is_voice_cloning and not getattr(args, 'i_have_rights', False):
                 logger.error(
                     "Model '%s' involves voice cloning. You must pass --i-have-rights to attest "
@@ -726,17 +813,47 @@ def run_synthesis(args):
         except ImportError:
             pass  # watermark module missing — skip consent check
 
-        # If --play-direct without --output-file, use a temp file so watermarking
-        # can be applied before playback (compliance: all output must be marked).
+        # --- Marking preflight: refuse BEFORE generating anything ---
+        # Gating here rather than after synthesis means unmarkable audio is
+        # never produced at all, and no model is loaded to produce it.
+        _marking_policy = None
+        try:
+            from watermark import MarkingError, preflight_marking
+            try:
+                _marking_policy = preflight_marking(
+                    args.output_file,
+                    handler_key=handler_key,
+                    no_watermark=getattr(args, 'no_watermark', False),
+                    allow_unmarked=getattr(args, 'allow_unmarked', False),
+                    responsibility_accepted=getattr(args, 'accept_marking_responsibility', False),
+                    no_spoken_disclaimer=getattr(args, 'no_spoken_disclaimer', False),
+                    c2pa_cert=getattr(args, 'c2pa_cert', None),
+                    c2pa_key=getattr(args, 'c2pa_key', None),
+                )
+            except MarkingError as e_pre:
+                logger.error("%s", e_pre)
+                return
+        except ImportError:
+            if not os.environ.get("CRISPTTS_ALLOW_UNMARKED"):
+                logger.error("watermark module unavailable — refusing to synthesize unmarkable audio. "
+                             "Pass --allow-unmarked --accept-marking-responsibility to override.")
+                return
+
+        # Playback must happen AFTER marking, never during synthesis — otherwise
+        # the user hears audio that was never marked. So we always let the
+        # handler write a file and play it ourselves once marking is done.
+        # (CrispASR is exempt: its binary marks and streams internally.)
         _temp_play_file = None
+        _play_after_marking = False
         _effective_output = args.output_file
-        if args.play_direct and not args.output_file and handler_key != "crispasr":
-            import tempfile
-            fd, _temp_play_file = tempfile.mkstemp(suffix=".wav")
-            os.close(fd)
-            _effective_output = _temp_play_file
-            # Tell handler to write to temp file, we'll play after watermarking
-            args.output_file = _temp_play_file
+        if args.play_direct and handler_key != "crispasr":
+            _play_after_marking = True
+            if not args.output_file:
+                import tempfile
+                fd, _temp_play_file = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                _effective_output = _temp_play_file
+                args.output_file = _temp_play_file
 
         try:
             # Use streaming handler if --stream and crispasr backend
@@ -747,7 +864,7 @@ def run_synthesis(args):
                     args.model_params, _effective_output, args.play_direct)
             else:
                 handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
-                    _effective_output, False if _temp_play_file else args.play_direct)
+                    _effective_output, False if _play_after_marking else args.play_direct)
 
             # --- Post-synthesis silence trimming (Python fallback for non-crispasr) ---
             if getattr(args, 'trim_silence', False) and args.output_file and os.path.isfile(args.output_file):
@@ -786,127 +903,78 @@ def run_synthesis(args):
                 except Exception as e_rs:
                     logger.warning("Could not resample output: %s", e_rs)
 
-            # --- Spoken disclaimer for voice-cloned audio ---
+            # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
+            # Format-agnostic; runs before marking so the disclaimer itself
+            # ends up inside the watermarked audio. Fails closed, like marking:
+            # a deepfake delivered without its disclosure is the failure mode
+            # this exists to prevent, so a silent skip is not acceptable.
             if (_is_voice_cloning and args.output_file and os.path.isfile(args.output_file)
                     and not getattr(args, 'no_spoken_disclaimer', False)):
                 try:
-                    out_lower_disc = args.output_file.lower()
-                    from watermark import prepend_disclaimer
-                    if out_lower_disc.endswith(".wav"):
-                        import soundfile as sf_disc
-                        data, sr = sf_disc.read(args.output_file, dtype="float32")
-                        if data.ndim > 1:
-                            data = data[:, 0]
-                        data_with_disclaimer = prepend_disclaimer(data, sample_rate=sr)
-                        sf_disc.write(args.output_file, data_with_disclaimer, sr, subtype="PCM_16")
-                        logger.info("AI disclaimer prepended to voice-cloned output.")
-                    elif out_lower_disc.endswith(".mp3"):
-                        try:
-                            import numpy as np
-                            from pydub import AudioSegment as _DiscSeg
-                            seg = _DiscSeg.from_file(args.output_file)
-                            pcm_d = np.frombuffer(
-                                seg.set_channels(1).set_sample_width(2).raw_data,
-                                dtype=np.int16).astype(np.float32) / 32767.0
-                            pcm_d = prepend_disclaimer(pcm_d, sample_rate=seg.frame_rate)
-                            disc_seg = seg._spawn(
-                                (pcm_d * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
-                            ).set_channels(1).set_sample_width(2)
-                            disc_seg.export(args.output_file, format="mp3")
-                            logger.info("AI disclaimer prepended to voice-cloned MP3.")
-                        except ImportError:
-                            logger.warning("pydub not available — MP3 disclaimer skipped.")
-                except Exception as e_disc:
-                    logger.warning("Could not prepend spoken disclaimer: %s", e_disc)
+                    from watermark import DisclosureError, prepend_disclaimer_file
+                except ImportError:
+                    logger.error("watermark module unavailable — cannot add the spoken AI "
+                                 "disclosure to voice-cloned audio. Pass "
+                                 "--no-spoken-disclaimer --accept-marking-responsibility "
+                                 "to take on the disclosure duty yourself.")
+                    _discard_output(args, _temp_play_file)
+                    return
+                try:
+                    prepend_disclaimer_file(
+                        args.output_file,
+                        language=current_config_for_handler.get("language"))
+                except DisclosureError as e_disc:
+                    logger.error("%s", e_disc)
+                    _discard_output(args, _temp_play_file)
+                    return
 
-            # --- Watermark embedding & metadata injection ---
-            # CrispASR binary already embeds audio watermarks, so skip embed for crispasr.
-            # Metadata injection applies to all outputs. Minimizes file I/O by combining
-            # the watermark write and metadata injection into a single read-modify-write.
+            # --- AI-provenance marking (EU AI Act Art. 50(2)) ---
+            # Deliberately the LAST step: silence trimming, normalization,
+            # resampling and the spoken disclaimer all rewrite the file, so
+            # marking earlier would be stripped or weakened. Fails closed —
+            # if the output cannot be marked it is not delivered at all.
             if args.output_file and os.path.isfile(args.output_file):
-                if not os.environ.get("CRISPTTS_NO_WATERMARK"):
+                _allow_unmarked = True if getattr(args, 'allow_unmarked', False) else None
+                try:
+                    from watermark import MarkingError, mark_audio_file
+                except ImportError:
+                    if _allow_unmarked or os.environ.get("CRISPTTS_ALLOW_UNMARKED"):
+                        logger.warning("watermark module unavailable — output is UNMARKED.")
+                    else:
+                        logger.error(
+                            "watermark module unavailable — refusing to deliver unmarked "
+                            "synthetic audio. Pass --allow-unmarked to override.")
+                        _discard_output(args, _temp_play_file)
+                        return
+                else:
                     try:
-                        from watermark import (
-                            c2pa_sign_file,
-                            inject_flac_metadata,
-                            inject_mp3_metadata,
-                            inject_opus_metadata,
-                            inject_wav_metadata,
-                            watermark_embed,
+                        mark_audio_file(
+                            args.output_file,
+                            handler_key=handler_key,
+                            allow_unmarked=_allow_unmarked,
+                            c2pa_cert=getattr(args, 'c2pa_cert', None),
+                            c2pa_key=getattr(args, 'c2pa_key', None),
+                            policy=_marking_policy,
+                            model_id=args.model_id,
                         )
+                    except MarkingError as e_mark:
+                        logger.error("%s", e_mark)
+                        _discard_output(args, _temp_play_file)
+                        return
 
-                        out_lower = args.output_file.lower()
-
-                        if out_lower.endswith(".wav"):
-                            import soundfile as sf_wm
-                            # Single read → watermark embed → write → metadata inject
-                            if handler_key != "crispasr":
-                                data_wm, sr_wm = sf_wm.read(args.output_file, dtype="float32")
-                                if data_wm.ndim > 1:
-                                    data_wm = data_wm[:, 0]
-                                data_wm = watermark_embed(data_wm, sample_rate=sr_wm)
-                                sf_wm.write(args.output_file, data_wm, sr_wm, subtype="PCM_16")
-                                logger.info("Audio watermark embedded.")
-                            # Read the (possibly watermarked) WAV, inject metadata, write once
-                            with open(args.output_file, "rb") as f_wm:
-                                wav_bytes = inject_wav_metadata(f_wm.read())
-                            with open(args.output_file, "wb") as f_wm:
-                                f_wm.write(wav_bytes)
-                        elif out_lower.endswith(".mp3"):
-                            # Embed audio watermark in MP3: decode→watermark→re-encode
-                            if handler_key != "crispasr":
-                                try:
-                                    import numpy as np
-                                    from pydub import AudioSegment as _MP3Seg
-                                    seg = _MP3Seg.from_file(args.output_file)
-                                    pcm_mp3 = np.frombuffer(
-                                        seg.set_channels(1).set_sample_width(2).raw_data,
-                                        dtype=np.int16).astype(np.float32) / 32767.0
-                                    pcm_mp3 = watermark_embed(pcm_mp3, sample_rate=seg.frame_rate)
-                                    wm_seg = seg._spawn(
-                                        (pcm_mp3 * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
-                                    ).set_channels(1).set_sample_width(2)
-                                    wm_seg.export(args.output_file, format="mp3")
-                                    logger.info("Audio watermark embedded in MP3.")
-                                except ImportError:
-                                    logger.warning("pydub not available — MP3 audio watermark skipped.")
-                                except Exception as e_mp3wm:
-                                    logger.warning("MP3 audio watermark failed: %s", e_mp3wm)
-                            with open(args.output_file, "rb") as f_wm:
-                                mp3_bytes = inject_mp3_metadata(f_wm.read())
-                            with open(args.output_file, "wb") as f_wm:
-                                f_wm.write(mp3_bytes)
-                        elif out_lower.endswith(".flac"):
-                            inject_flac_metadata(args.output_file)
-                        elif out_lower.endswith(".opus") or out_lower.endswith(".ogg"):
-                            inject_opus_metadata(args.output_file)
-
-                        # C2PA content credentials (if configured).
-                        # Skip for CrispASR backends — the binary signs by default since v0.8.8.
-                        if handler_key != "crispasr":
-                            c2pa_cert = getattr(args, 'c2pa_cert', None) or os.environ.get("C2PA_CERT_PATH")
-                            c2pa_key = getattr(args, 'c2pa_key', None) or os.environ.get("C2PA_KEY_PATH")
-                            if c2pa_cert and c2pa_key:
-                                c2pa_sign_file(args.output_file, cert_path=c2pa_cert, key_path=c2pa_key)
-
-                    except ImportError:
-                        logger.debug("watermark module not available — skipping watermark embedding.")
-                    except Exception as e_wm:
-                        logger.warning("Watermark embedding failed: %s", e_wm)
-
-            # --- Play temp file if --play-direct without --output-file ---
-            if _temp_play_file and os.path.isfile(_temp_play_file):
+            # --- Playback (only ever of marked audio) ---
+            if _play_after_marking and args.output_file and os.path.isfile(args.output_file):
                 try:
                     from utils import play_audio
-                    play_audio(_temp_play_file, is_path=True)
+                    play_audio(args.output_file, is_path=True)
                 except Exception as e_play:
                     logger.warning("Playback failed: %s", e_play)
-                finally:
-                    try:
-                        os.unlink(_temp_play_file)
-                    except OSError:
-                        pass
-                    args.output_file = None  # restore original
+            if _temp_play_file:
+                try:
+                    os.unlink(_temp_play_file)
+                except OSError:
+                    pass
+                args.output_file = None  # restore original
 
             # --- Post-synthesis ASR verification (CrispASR integration) ---
             if getattr(args, 'verify', False) and args.output_file and os.path.isfile(args.output_file):
@@ -1092,7 +1160,18 @@ def main_cli_entrypoint():
     # Watermarking / provenance options
     wm_group = parser.add_argument_group(title="Watermarking & Provenance")
     wm_group.add_argument("--no-watermark", action="store_true",
-        help="Disable audio watermarking (debug only — not recommended for production).")
+        help="Disable ALL AI-provenance marking: audio watermark, container metadata\n"
+             "and C2PA (debug only). EU AI Act Art. 50(2) requires synthetic audio to\n"
+             "be machine-readably marked; responsibility for unmarked output is yours.")
+    wm_group.add_argument("--allow-unmarked", action="store_true",
+        help="Deliver output even if marking fails or is not detectable.\n"
+             "Without this, an output that cannot be marked is deleted and\n"
+             "synthesis exits non-zero. Equivalent to CRISPTTS_ALLOW_UNMARKED=1.")
+    wm_group.add_argument("--accept-marking-responsibility", action="store_true",
+        help="Required alongside any provenance opt-out (--no-watermark,\n"
+             "--allow-unmarked, --no-spoken-disclaimer). Affirms that you accept\n"
+             "the AI-content marking and disclosure duty for this output.\n"
+             "Logged as a [MARKING] audit line, like --i-have-rights.")
     wm_group.add_argument("--watermark-model", type=str, metavar="GGUF_PATH",
         help="Path to AudioSeal GGUF model for neural watermarking (optional upgrade).")
     wm_group.add_argument("--i-have-rights", action="store_true",
@@ -1200,9 +1279,18 @@ def main_cli_entrypoint():
     # watermark_embed() call to avoid 200MB+ model load on --list-models etc.
     # Only explicit --watermark-model triggers eager loading.
     if args.no_watermark:
+        # The "output will be UNMARKED" warning is deliberately NOT emitted
+        # here. At this point we do not yet know whether the opt-out will be
+        # honoured: preflight refuses it without an attestation, and the
+        # watermark floor overrides it when nothing else marks the output.
+        # mark_audio_file() warns if and when marking is actually skipped.
         os.environ["CRISPTTS_NO_WATERMARK"] = "1"
-        logger.warning("Audio watermarking disabled via --no-watermark.")
-    elif args.watermark_model:
+    if getattr(args, 'allow_unmarked', False):
+        os.environ["CRISPTTS_ALLOW_UNMARKED"] = "1"
+    if getattr(args, 'accept_marking_responsibility', False):
+        os.environ["CRISPTTS_ACCEPT_MARKING_RESPONSIBILITY"] = "1"
+
+    if not args.no_watermark and args.watermark_model:
         try:
             from watermark import load_audioseal_model
             if load_audioseal_model(args.watermark_model):
