@@ -627,8 +627,13 @@ class TestC2paSigning(unittest.TestCase):
                         self.skipTest("pydub not installed")
                     raw = (pcm * 32767).astype(np.int16).tobytes()
                     fmt = {".mp3": "mp3", ".m4a": "ipod", ".flac": "flac"}[ext]
-                    AudioSegment(data=raw, sample_width=2, frame_rate=24000,
-                                 channels=1).export(path, format=fmt)
+                    try:
+                        AudioSegment(data=raw, sample_width=2, frame_rate=24000,
+                                     channels=1).export(path, format=fmt)
+                    except (FileNotFoundError, OSError):
+                        # Encoding these needs ffmpeg. CI installs it so this
+                        # assertion really runs there; skip on checkouts without.
+                        self.skipTest(f"ffmpeg not available to encode {ext}")
                 ok, _ = c2pa_sign_file_ex(path, model_id="t")
                 self.assertTrue(ok, f"{ext} is in C2PA_CAPABLE_EXTS but cannot be signed")
 
