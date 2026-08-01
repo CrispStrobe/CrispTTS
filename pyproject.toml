@@ -35,7 +35,10 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
 ]
-edge = ["edge-tts>=6.1.0"]
+# <7.2 computes the Sec-MS-GEC auth token with a scheme Microsoft has
+# retired; those versions get a 403 handshake on every request. Measured:
+# 7.0.2 fails, 7.2.8 succeeds, same network, same moment.
+edge = ["edge-tts>=7.2.0"]
 piper = ["piper-tts>=1.2.0"]
 ml = [
     "torch>=2.6.0",

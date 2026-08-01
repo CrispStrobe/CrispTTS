@@ -30,7 +30,7 @@ pypdfium2
 EbookLib>=0.17
 
 # TTS Engines - Core Working Set
-edge-tts>=6.0
+edge-tts>=7.2.0   # <7.2 computes a stale Sec-MS-GEC token; Microsoft 403s it
 chatterbox-tts==0.1.2
 diffusers>=0.29.0
 resemble-perth>=1.0.0
