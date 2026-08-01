@@ -953,6 +953,40 @@ def disclaimer_text(language: str | None = None) -> str:
 DISCLAIMER_TEXT = DISCLAIMER_TEXTS["en"]
 
 
+def bundled_disclosure_path(language: str | None = None) -> str | None:
+    """Path to the pre-rendered disclosure clip for a language, if bundled."""
+    lang = normalize_disclaimer_lang(language)
+    try:
+        from importlib.resources import files
+        resource = files("crisptts_assets").joinpath(f"disclosure_{lang}.flac")
+        if resource.is_file():
+            return str(resource)
+    except (ImportError, ModuleNotFoundError, TypeError, FileNotFoundError):
+        pass
+    # Source checkout without the package installed.
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "crisptts_assets", f"disclosure_{lang}.flac")
+    return local if os.path.isfile(local) else None
+
+
+def _load_bundled_disclosure(sample_rate: int, language: str) -> np.ndarray | None:
+    """Decode the bundled disclosure clip, resampled to ``sample_rate``."""
+    path = bundled_disclosure_path(language)
+    if not path:
+        return None
+    try:
+        import soundfile as sf_bundled
+        data, rate = sf_bundled.read(path, dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        if rate != sample_rate:
+            data = _resample_linear(data, rate, sample_rate)
+        return data if len(data) else None
+    except Exception as e:
+        logger.debug("Could not load the bundled disclosure clip %s: %s", path, e)
+        return None
+
+
 def generate_spoken_disclaimer(sample_rate: int = 24000,
                                language: str | None = None) -> tuple[np.ndarray | None, str]:
     """Synthesize the spoken AI disclosure with a non-cloning TTS backend.
@@ -1042,6 +1076,16 @@ def generate_spoken_disclaimer(sample_rate: int = 24000,
             return data, "spoken"
     except Exception as e:
         logger.info("Edge TTS disclaimer generation failed: %s", e)
+
+    # Bundled pre-rendered clip. This is what makes the disclosure work with no
+    # TTS backend, no model download and no network — the one configuration in
+    # which Art. 50(4) disclosure would otherwise fail and the cloned output
+    # would have to be discarded. It is a real spoken disclosure in the right
+    # language, so it counts as one.
+    bundled = _load_bundled_disclosure(sample_rate, lang)
+    if bundled is not None:
+        logger.info("Spoken disclaimer (%s) taken from the bundled clip.", lang)
+        return bundled, "spoken"
 
     # Last resort: an audible tone marker. NOT a disclosure — it signals that
     # something precedes the content, but conveys nothing to a listener who
@@ -1256,7 +1300,7 @@ def c2pa_sign_file(
 
 #: Backend selection for C2PA signing, via ``CRISPTTS_C2PA_BACKEND``:
 #: ``auto`` (default), ``python``, ``audio``, ``crispasr``, or ``off``.
-_C2PA_BACKENDS = ("auto", "python", "audio", "crispasr", "off")
+_C2PA_BACKENDS = ("auto", "python", "audio", "off")
 
 #: IPTC digital-source-type that marks content as AI-generated. Its presence
 #: is what makes a manifest an Art. 50(2) provenance claim rather than a plain
@@ -1347,67 +1391,19 @@ def _sign_with_c2pa_audio(input_path: str, output_path: str,
         return False
 
 
-_crispasr_c2pa_flag: str | None | bool = False  # False = not yet probed
-
-
-def _crispasr_c2pa_support() -> tuple[str, str] | None:
-    """Discover whether the installed CrispASR binary can sign a file.
-
-    Probed from ``--help`` rather than assumed: the flag differs between
-    builds, and hardcoding one that a given binary does not have is how the
-    c2pa-audio path came to be dead code. Returns ``(executable, flag)`` or
-    None. Cached for the process.
-    """
-    global _crispasr_c2pa_flag
-    if _crispasr_c2pa_flag is not False:
-        return _crispasr_c2pa_flag  # type: ignore[return-value]
-    _crispasr_c2pa_flag = None
-
-    import shutil
-    import subprocess
-    exe = shutil.which("crispasr") or os.environ.get("CRISPASR_EXECUTABLE")
-    if not exe:
-        return None
-    try:
-        proc = subprocess.run([exe, "--help"], capture_output=True,  # noqa: S603
-                              text=True, timeout=20)
-    except Exception as e:
-        logger.debug("Could not probe crispasr for C2PA support: %s", e)
-        return None
-
-    help_text = (proc.stdout or "") + (proc.stderr or "")
-    for flag in ("--c2pa-sign-file", "--c2pa-sign", "--sign-c2pa", "--c2pa"):
-        if flag in help_text:
-            _crispasr_c2pa_flag = (exe, flag)
-            logger.debug("CrispASR advertises C2PA signing via %s", flag)
-            return _crispasr_c2pa_flag
-    return None
-
-
-def _sign_with_crispasr(input_path: str, output_path: str,
-                        cert_path: str | None, key_path: str | None) -> bool:
-    """Sign via the CrispASR binary, if it advertises the capability."""
-    support = _crispasr_c2pa_support()
-    if not support:
-        return False
-    exe, flag = support
-
-    import subprocess
-    cmd = [exe, flag, input_path]
-    if output_path != input_path:
-        cmd.extend(["--c2pa-output", output_path])
-    if cert_path and key_path:
-        cmd.extend(["--c2pa-cert", cert_path, "--c2pa-key", key_path])
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)  # noqa: S603
-    except Exception as e:
-        logger.debug("crispasr C2PA signing failed for %s: %s", input_path, e)
-        return False
-    if proc.returncode != 0:
-        logger.debug("crispasr C2PA signing returned %d: %s",
-                     proc.returncode, (proc.stderr or "").strip()[:200])
-        return False
-    return os.path.isfile(output_path) and os.path.getsize(output_path) > 0
+# CrispASR is deliberately NOT a signing backend here.
+#
+# Probed against crispasr 0.8.25: its --c2pa-cert/--c2pa-key configure signing
+# of its *own* synthesis output, and there is no flag that signs an existing
+# file. An earlier version of this module probed --help for
+# "--c2pa-sign-file|--c2pa-sign|--sign-c2pa|--c2pa" and would have matched the
+# last of those as a substring of "--c2pa-cert", then built a command the
+# binary does not accept.
+#
+# What CrispASR *does* provide is better than a signing backend: it signs
+# during synthesis, by default, with a manifest that already asserts
+# trainedAlgorithmicMedia. mark_audio_file() detects that manifest and
+# preserves it rather than overwriting it — see _preserve_existing_manifest.
 
 
 def _sign_with_c2pa_python(input_path: str, output_path: str,
@@ -1465,11 +1461,10 @@ def c2pa_sign_file_ex(
     does. A signer that does not take a manifest cannot be taken on trust.
 
       1. c2pa-audio, if importable (native, not on PyPI)
-      2. the CrispASR binary, if it advertises C2PA signing in ``--help``
-      3. c2pa-python — always available, and the only path where CrispTTS
+      2. c2pa-python — always available, and the only path where CrispTTS
          controls the manifest contents
 
-    Selectable with ``CRISPTTS_C2PA_BACKEND=auto|python|audio|crispasr|off``.
+    Selectable with ``CRISPTTS_C2PA_BACKEND=auto|python|audio|off``.
 
     Args:
         input_path: Path to the audio file (WAV or MP3).
@@ -1522,10 +1517,6 @@ def c2pa_sign_file_ex(
         native.append(("c2pa-audio", lambda: _sign_with_c2pa_audio(
             input_path, effective_output,
             cert_pem.decode(errors="replace"), key_pem.decode(errors="replace"))))
-    if backend in ("auto", "crispasr"):
-        native.append(("crispasr", lambda: _sign_with_crispasr(
-            input_path, effective_output, cert_path, key_path)))
-
     for name, attempt in native:
         if not attempt():
             continue
@@ -1542,9 +1533,9 @@ def c2pa_sign_file_ex(
             name, "no AI assertion" if asserts_ai is False else "manifest unreadable")
         break  # fall through to the path where we control the manifest
 
-    if backend == "audio" or backend == "crispasr":
-        logger.warning("CRISPTTS_C2PA_BACKEND=%s requested but that backend could not "
-                       "sign %s; falling back to c2pa-python.", backend, input_path)
+    if backend == "audio":
+        logger.warning("CRISPTTS_C2PA_BACKEND=audio requested but c2pa-audio could not "
+                       "sign %s; falling back to c2pa-python.", input_path)
 
     # --- c2pa-python: the manifest is ours, so the AI assertion is certain ---
     if not _sign_with_c2pa_python(input_path, effective_output, cert_pem, key_pem, model_id):
@@ -2052,14 +2043,52 @@ def mark_audio_file(
     confidence: float | None = None
     sample_rate: int | None = None
 
+    # --- Layer 0: an upstream manifest we must not destroy ---
+    #
+    # CrispASR signs its own TTS output during synthesis, by default, with a
+    # manifest that already asserts trainedAlgorithmicMedia. Everything below
+    # rewrites the file, and any rewrite breaks that manifest's hash — measured:
+    # injecting the LIST/INFO chunk alone takes a CrispASR WAV from
+    # validation_state "Valid" to "Invalid". Re-signing afterwards papered over
+    # it, at the cost of discarding the upstream signer's identity and leaving
+    # a *tamper-looking* file behind whenever the re-sign failed.
+    #
+    # So an existing AI-asserting manifest is preserved as-is: it is already the
+    # strongest layer available, and container metadata is strippable anyway.
+    preserved_manifest = manifest_asserts_ai(filepath) is True
+    if preserved_manifest:
+        logger.info("Preserving the existing C2PA manifest on %s — it already asserts "
+                    "AI generation, and re-marking would invalidate it.", filepath)
+        confidence = None
+        if verify:
+            try:
+                check_pcm, check_sr = _read_pcm_any(filepath, ext)
+                confidence = watermark_detect(check_pcm, sample_rate=check_sr)
+            except Exception as e:
+                logger.debug("Could not measure the watermark on %s: %s", filepath, e)
+        watermark_layers: tuple[str, ...] = ()
+        if confidence is not None and confidence >= _VERIFY_THRESHOLD:
+            watermark_layers = ("audio-watermark:upstream",)
+        return MarkResult(marked=True, backend=_backend,
+                          layers=("c2pa:preserved", *watermark_layers),
+                          confidence=confidence, c2pa_signer="preserved",
+                          reason="upstream manifest preserved")
+
     # --- Layer 1: audio watermark (the layer that survives transcoding) ---
     if skip_watermark_layer:
         # --no-watermark honoured because C2PA will carry the provenance.
         logger.info("Audio watermark skipped for %s — C2PA manifest carries provenance.",
                     filepath)
     elif handler_key == "crispasr":
-        # The CrispASR binary embeds its watermark during synthesis.
-        layers.append("audio-watermark:crispasr")
+        # The CrispASR binary watermarks during synthesis — but that is a claim
+        # about another program's behaviour, so it is not recorded as a layer
+        # here. The verification below decides whether a watermark is really
+        # present; measured on crispasr 0.8.25 kokoro output, CrispTTS's
+        # detector reads 0.44 (its noise floor), so asserting the layer
+        # unconditionally would have put a mark in MarkResult.layers that no
+        # detector can find.
+        logger.debug("Skipping the PCM embed for CrispASR output; its own watermark "
+                     "is measured during verification rather than assumed.")
     else:
         try:
             pcm, sample_rate = _read_pcm_any(filepath, ext)
@@ -2116,6 +2145,10 @@ def mark_audio_file(
             verified = confidence is not None and confidence >= _VERIFY_THRESHOLD
             if verified:
                 logger.debug("Watermark verified for %s (confidence=%.3f).", filepath, confidence)
+                if handler_key == "crispasr":
+                    # Only now is the upstream watermark a fact rather than an
+                    # assumption, so only now does it become a reported layer.
+                    layers.append("audio-watermark:upstream")
             else:
                 logger.warning(
                     "Watermark NOT detectable in %s (confidence=%.3f, threshold=%.2f).",

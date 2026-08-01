@@ -648,8 +648,12 @@ Three signers are tried in order, selectable with
 | Order | Backend | Availability |
 |-------|---------|--------------|
 | 1 | [`c2pa-audio`](https://github.com/CrispStrobe/c2pa-audio) | Native, fast. Not on PyPI — build from source |
-| 2 | CrispASR binary | Used only if `crispasr --help` advertises a C2PA signing flag |
-| 3 | `c2pa-python` | **Always** — core dependency, and the only path where CrispTTS controls the manifest |
+| 2 | `c2pa-python` | **Always** — core dependency, and the only path where CrispTTS controls the manifest |
+
+CrispASR is deliberately *not* a signing backend. Checked against crispasr
+0.8.25: `--c2pa-cert` / `--c2pa-key` configure signing of its **own** synthesis
+output and there is no flag that signs an existing file. What it does instead
+is better — see *Upstream manifests* below.
 
 **Every native result is verified before it is accepted.** c2pa-audio's
 `sign_wav()` takes a certificate and a key but no manifest, so the library
@@ -659,9 +663,23 @@ reads the manifest back after any native signer runs; if the AI assertion is
 missing, that result is discarded and c2pa-python re-signs with a manifest that
 carries it. `watermark.manifest_asserts_ai(path)` exposes the same check.
 
-The CrispASR flag is discovered by probing `--help` rather than hardcoded,
-since it differs between builds — assuming a flag a binary does not have is how
-an earlier signing path became silently dead code.
+#### Upstream manifests are preserved, not overwritten
+
+CrispASR signs its TTS output during synthesis, by default, with a manifest that
+already asserts `trainedAlgorithmicMedia`. Every marking step rewrites the file,
+and any rewrite breaks that manifest's hash — injecting the WAV `LIST/INFO`
+chunk alone takes a CrispASR output from `validation_state: Valid` to `Invalid`.
+
+So when a file already carries a manifest asserting AI generation, CrispTTS
+leaves it exactly as it is: no metadata injection, no re-signing, reported as
+`c2pa:preserved`. This keeps the upstream signer's identity (`softwareAgent:
+CrispASR TTS`) instead of replacing it with ours, and removes the failure mode
+where a broken-then-not-repaired manifest made an untampered file look tampered.
+
+CrispTTS also no longer *claims* the CrispASR watermark as a layer. Measured on
+crispasr 0.8.25 kokoro output, CrispTTS's spread-spectrum detector reads 0.44 —
+its noise floor — so `audio-watermark:upstream` is reported only when
+verification actually detects a mark.
 
 ### Voice cloning safety
 
@@ -687,16 +705,25 @@ Voice-cloning models require explicit consent attestation before synthesis is al
    tier 2 exists.
 
 **Spoken disclosure** — prepended to cloned output, in the language of the
-model being used (German by default, not English), generated via CrispASR
-kokoro or Edge TTS. The German and English wording is kept identical to
-Susurrus's `disclosure.spoken` string, so the Crisp projects disclose in the
-same words. If no real spoken disclosure can be produced, the output is
-**discarded rather than delivered**: a tone marker is an audible signal, not a
-disclosure a listener can understand, so it is not accepted as one. Offline
-installs with no TTS backend for the disclosure should either
-`pip install edge-tts` or pass `--no-spoken-disclaimer
---accept-marking-responsibility` to take the Art. 50(4) disclosure duty on
-explicitly.
+model being used (German by default, not English). The German and English
+wording is kept identical to Susurrus's `disclosure.spoken` string, so the Crisp
+projects disclose in the same words. Sources, in order:
+
+1. CrispASR kokoro, if the binary is available — local, no network
+2. Edge TTS, if installed — needs network
+3. **A pre-rendered clip bundled in `crisptts_assets/`** — no backend, no model
+   download, no network, no configuration
+
+Tier 3 is why disclosure does not fail on an offline machine. It is a real
+spoken sentence in the right language, so it counts as a disclosure. Regenerate
+the clips with `python scripts/make_disclosure_assets.py` after editing
+`DISCLAIMER_TEXTS`.
+
+Only if all three fail does CrispTTS fall back to a tone marker, which is
+**refused**: three beeps are an audible signal, not a disclosure a listener can
+understand. In that case the output is discarded rather than delivered, and
+`--no-spoken-disclaimer --accept-marking-responsibility` is the way to take the
+Art. 50(4) duty on explicitly.
 
 ### EU AI Act: what this tool does, and what you must still do
 

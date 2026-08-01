@@ -83,7 +83,12 @@ py-modules = ["main", "config", "utils", "decoder", "watermark", "chunking", "se
               "c2pa_dev_cert"]
 
 [tool.setuptools.packages.find]
-include = ["handlers*"]
+include = ["handlers*", "crisptts_assets*"]
+
+# The pre-rendered spoken disclosures must ship in the wheel: they are what
+# lets Art. 50(4) disclosure work with no TTS backend and no network.
+[tool.setuptools.package-data]
+crisptts_assets = ["*.flac"]
 
 [tool.ruff]
 line-length = 120

@@ -838,7 +838,9 @@ class TestMarkAudioFile(unittest.TestCase):
         sf.write(path, watermark_embed(pcm, sample_rate=22050), 22050)
         result = mark_audio_file(path, handler_key="crispasr")
         self.assertTrue(result.marked)
-        self.assertIn("audio-watermark:crispasr", result.layers)
+        # Reported as "upstream" and only because verification found it — the
+        # layer is evidence, not a claim about what the binary was asked to do.
+        self.assertIn("audio-watermark:upstream", result.layers)
         self.assertIn("metadata", result.layers)
         self.assertGreater(result.confidence, 0.65)
 
@@ -1201,42 +1203,15 @@ class TestC2paBackendTiering(unittest.TestCase):
         os.environ["CRISPTTS_C2PA_BACKEND"] = "not-a-backend"
         self.assertEqual(_c2pa_backend_preference(), "auto")
 
-    def test_crispasr_probe_returns_none_without_binary(self):
-        """The flag is discovered from --help, never assumed."""
-        from unittest.mock import patch
+    def test_crispasr_is_not_a_signing_backend(self):
+        """crispasr 0.8.25 has no flag that signs an existing file.
 
-        import watermark
-        with patch("shutil.which", return_value=None), \
-                patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("CRISPASR_EXECUTABLE", None)
-            watermark._crispasr_c2pa_flag = False
-            self.assertIsNone(watermark._crispasr_c2pa_support())
-
-    def test_crispasr_probe_detects_advertised_flag(self):
-        import subprocess
-        from unittest.mock import patch
-
-        import watermark
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout="usage: crispasr\n  --c2pa-sign-file PATH  sign a file\n", stderr="")
-        with patch("shutil.which", return_value="/usr/local/bin/crispasr"), \
-                patch("subprocess.run", return_value=completed):
-            watermark._crispasr_c2pa_flag = False
-            self.assertEqual(watermark._crispasr_c2pa_support(),
-                             ("/usr/local/bin/crispasr", "--c2pa-sign-file"))
-
-    def test_crispasr_probe_ignores_binary_without_c2pa(self):
-        import subprocess
-        from unittest.mock import patch
-
-        import watermark
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="usage: crispasr\n  --tts TEXT\n", stderr="")
-        with patch("shutil.which", return_value="/usr/local/bin/crispasr"), \
-                patch("subprocess.run", return_value=completed):
-            watermark._crispasr_c2pa_flag = False
-            self.assertIsNone(watermark._crispasr_c2pa_support())
+        It was briefly probed for one, and "--c2pa" would have matched as a
+        substring of "--c2pa-cert". Its output is handled by preserving the
+        manifest it already wrote — see TestUpstreamManifestPreserved.
+        """
+        from watermark import _C2PA_BACKENDS
+        self.assertNotIn("crispasr", _C2PA_BACKENDS)
 
     @requires_c2pa
     @requires_soundfile
@@ -1279,6 +1254,136 @@ class TestC2paBackendTiering(unittest.TestCase):
     def test_manifest_asserts_ai_on_missing_file(self):
         from watermark import manifest_asserts_ai
         self.assertIsNone(manifest_asserts_ai("/nonexistent/file.wav"))
+
+
+@requires_soundfile
+class TestBundledDisclosureAssets(unittest.TestCase):
+    """The disclosure must work with no TTS backend and no network."""
+
+    def test_default_language_clip_is_bundled(self):
+        from watermark import DEFAULT_DISCLAIMER_LANG, bundled_disclosure_path
+        path = bundled_disclosure_path(DEFAULT_DISCLAIMER_LANG)
+        self.assertIsNotNone(path, "the default-language disclosure must ship in the wheel")
+        self.assertTrue(os.path.isfile(path))
+
+    def test_bundled_clip_decodes_to_audio(self):
+        from watermark import DEFAULT_DISCLAIMER_LANG, _load_bundled_disclosure
+        pcm = _load_bundled_disclosure(24000, DEFAULT_DISCLAIMER_LANG)
+        self.assertIsNotNone(pcm)
+        self.assertGreater(len(pcm) / 24000, 1.0, "a disclosure sentence is over a second")
+        self.assertGreater(float(np.max(np.abs(pcm))), 0.05, "clip must not be silence")
+
+    def test_bundled_clip_resamples_to_requested_rate(self):
+        from watermark import DEFAULT_DISCLAIMER_LANG, _load_bundled_disclosure
+        at_16k = _load_bundled_disclosure(16000, DEFAULT_DISCLAIMER_LANG)
+        at_48k = _load_bundled_disclosure(48000, DEFAULT_DISCLAIMER_LANG)
+        self.assertAlmostEqual(len(at_48k) / len(at_16k), 3.0, delta=0.05)
+
+    def test_generator_falls_back_to_bundled_not_tone_marker(self):
+        """With every TTS route dead, the result must still be a disclosure."""
+        from unittest.mock import patch
+
+        import watermark
+        from watermark import generate_spoken_disclaimer
+        with patch("shutil.which", return_value=None), \
+                patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CRISPASR_EXECUTABLE", None)
+            # Make the edge-tts route unavailable too.
+            with patch.dict("sys.modules", {"edge_tts": None}):
+                pcm, kind = generate_spoken_disclaimer(
+                    24000, watermark.DEFAULT_DISCLAIMER_LANG)
+        self.assertEqual(kind, "spoken",
+                         "bundled clip must count as a real spoken disclosure")
+        self.assertIsNotNone(pcm)
+
+    def test_unbundled_language_returns_none(self):
+        from watermark import bundled_disclosure_path
+        # normalize_disclaimer_lang maps unknown codes to the default, which is
+        # bundled — so this asserts the lookup is by resolved language.
+        self.assertEqual(bundled_disclosure_path("klingon"),
+                         bundled_disclosure_path(None))
+
+    def test_every_bundled_clip_matches_a_known_language(self):
+        import glob
+
+        from watermark import DISCLAIMER_TEXTS
+        asset_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "crisptts_assets")
+        for path in glob.glob(os.path.join(asset_dir, "disclosure_*.flac")):
+            lang = os.path.basename(path)[len("disclosure_"):-len(".flac")]
+            self.assertIn(lang, DISCLAIMER_TEXTS,
+                          f"bundled clip {lang} has no matching disclosure text")
+
+
+class TestUpstreamManifestPreserved(unittest.TestCase):
+    """An upstream AI manifest is stronger than anything we would add."""
+
+    @requires_c2pa
+    @requires_soundfile
+    def test_existing_ai_manifest_is_not_overwritten(self):
+        import tempfile
+
+        from watermark import c2pa_sign_file_ex, manifest_asserts_ai, mark_audio_file
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "upstream.wav")
+            _write_tone_wav(path)
+            # Stand in for CrispASR: a file that arrives already signed.
+            ok, _ = c2pa_sign_file_ex(path, model_id="upstream_engine")
+            self.assertTrue(ok)
+            before = os.path.getsize(path)
+
+            result = mark_audio_file(path, handler_key="crispasr")
+            self.assertTrue(result.marked)
+            self.assertIn("c2pa:preserved", result.layers)
+            self.assertEqual(result.c2pa_signer, "preserved")
+            self.assertIs(manifest_asserts_ai(path), True,
+                          "the preserved manifest must still assert AI generation")
+            self.assertEqual(os.path.getsize(path), before,
+                             "preserving means leaving the bytes alone")
+
+    @requires_c2pa
+    @requires_soundfile
+    def test_metadata_injection_would_have_invalidated_it(self):
+        """Documents why preservation is necessary, not merely tidier."""
+        import json
+        import tempfile
+
+        import c2pa
+
+        from watermark import _inject_container_metadata, c2pa_sign_file_ex
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "upstream.wav")
+            _write_tone_wav(path)
+            c2pa_sign_file_ex(path, model_id="upstream_engine")
+            state_before = json.loads(c2pa.Reader(path).json()).get("validation_state")
+            self.assertEqual(state_before, "Valid")
+
+            _inject_container_metadata(path, ".wav")
+            try:
+                state_after = json.loads(c2pa.Reader(path).json()).get("validation_state")
+            except Exception:
+                state_after = "unreadable"
+            self.assertNotEqual(state_after, "Valid",
+                                "if this ever passes, preservation can be relaxed")
+
+    @requires_soundfile
+    def test_crispasr_watermark_layer_only_claimed_when_detected(self):
+        """We must not report a mark that no detector can find."""
+        import tempfile
+
+        import watermark
+        from watermark import mark_audio_file
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "plain.wav")
+            _write_tone_wav(path)  # never watermarked by anyone
+            original = watermark.c2pa_sign_file_ex
+            watermark.c2pa_sign_file_ex = lambda *a, **k: (True, "self-signed")
+            try:
+                result = mark_audio_file(path, handler_key="crispasr")
+            finally:
+                watermark.c2pa_sign_file_ex = original
+            self.assertNotIn("audio-watermark:crispasr", result.layers)
+            self.assertNotIn("audio-watermark:upstream", result.layers)
 
 
 class TestDisclosureWordingMatchesSusurrus(unittest.TestCase):
