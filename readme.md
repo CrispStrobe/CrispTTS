@@ -53,9 +53,9 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - Spread-spectrum watermark (always on, imperceptible, ~38 dB SNR)
   - AudioSeal neural watermark (optional upgrade via `pip install audioseal` or CrispASR GGUF)
   - WAV LIST/INFO, MP3 ID3v2, FLAC Vorbis comment, and Opus/OGG metadata marking audio as AI-generated
-  - C2PA content credentials signing (optional, `pip install c2pa-python`)
+  - C2PA content credentials signed by default (core dep; c2pa-audio / CrispASR used as fast paths when present)
   - Voice-cloning consent gate (`--i-have-rights` CLI / `"i_have_rights": true` API)
-  - Spoken AI disclaimer prepended to voice-cloned audio
+  - Spoken AI disclaimer prepended to voice-cloned audio, in 8 languages
   - Persistent consent audit log at `~/.cache/crisptts/consent_audit.log`
 - **CrispASR Integration**:
   - `--verify`: ASR roundtrip verification of TTS output quality
@@ -640,6 +640,29 @@ them among its supported MIME types but fails to embed into them. Those
 containers rely on the audio watermark alone, which is why `--no-watermark` is
 overridden for them.
 
+#### Signing backends
+
+Three signers are tried in order, selectable with
+`CRISPTTS_C2PA_BACKEND=auto|python|audio|crispasr|off` (default `auto`):
+
+| Order | Backend | Availability |
+|-------|---------|--------------|
+| 1 | [`c2pa-audio`](https://github.com/CrispStrobe/c2pa-audio) | Native, fast. Not on PyPI — build from source |
+| 2 | CrispASR binary | Used only if `crispasr --help` advertises a C2PA signing flag |
+| 3 | `c2pa-python` | **Always** — core dependency, and the only path where CrispTTS controls the manifest |
+
+**Every native result is verified before it is accepted.** c2pa-audio's
+`sign_wav()` takes a certificate and a key but no manifest, so the library
+decides its own assertions — and a manifest without `trainedAlgorithmicMedia`
+marks a file as *unaltered* rather than as *AI-generated*. CrispTTS therefore
+reads the manifest back after any native signer runs; if the AI assertion is
+missing, that result is discarded and c2pa-python re-signs with a manifest that
+carries it. `watermark.manifest_asserts_ai(path)` exposes the same check.
+
+The CrispASR flag is discovered by probing `--help` rather than hardcoded,
+since it differs between builds — assuming a flag a binary does not have is how
+an earlier signing path became silently dead code.
+
 ### Voice cloning safety
 
 Voice-cloning models require explicit consent attestation before synthesis is allowed:
@@ -665,7 +688,9 @@ Voice-cloning models require explicit consent attestation before synthesis is al
 
 **Spoken disclosure** — prepended to cloned output, in the language of the
 model being used (German by default, not English), generated via CrispASR
-kokoro or Edge TTS. If no real spoken disclosure can be produced, the output is
+kokoro or Edge TTS. The German and English wording is kept identical to
+Susurrus's `disclosure.spoken` string, so the Crisp projects disclose in the
+same words. If no real spoken disclosure can be produced, the output is
 **discarded rather than delivered**: a tone marker is an audible signal, not a
 disclosure a listener can understand, so it is not accepted as one. Offline
 installs with no TTS backend for the disclosure should either
@@ -720,8 +745,8 @@ regulation, not legal advice.
 | WAV LIST/INFO metadata | ISFT + ICMT | ISFT + ICMT | ISFT + ICMT + IART + ICRD |
 | MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) |
 | FLAC/Opus metadata | Vorbis comments (mutagen) | — | — |
-| C2PA content credentials | c2pa-python, signed by default (WAV/MP3) | c2pa-c (compile-time) | — |
-| Spoken AI disclaimer | CrispASR kokoro / Edge TTS, localized; refuses if unavailable | Native TTS (cached) | Beep marker |
+| C2PA content credentials | c2pa-python by default; c2pa-audio / CrispASR as fast paths, each verified | c2pa-c (compile-time) | — |
+| Spoken AI disclaimer | CrispASR kokoro / Edge TTS, 8 languages; refuses if unavailable | Native TTS (cached) | Beep marker |
 | Voice-cloning consent gate | CLI + API (403) | CLI + server JSON | GDPR Art. 9(2)(a) consent files |
 | Consent audit logging | stderr + `consent_audit.log` | `[CONSENT]` stderr | `[CONSENT]` log + `.consent.json` |
 | Post-embed verification | detect after save | detect after save | detect after embed |

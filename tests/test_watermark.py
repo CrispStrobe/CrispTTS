@@ -1174,6 +1174,133 @@ class TestC2paSignerDisclosure(unittest.TestCase):
         self.assertIsInstance(c2pa_sign_file("/nonexistent/file.wav"), bool)
 
 
+class TestC2paBackendTiering(unittest.TestCase):
+    """Native signers are fast paths, never trusted blindly."""
+
+    def setUp(self):
+        self._env = os.environ.pop("CRISPTTS_C2PA_BACKEND", None)
+        import watermark
+        watermark._crispasr_c2pa_flag = False  # reset the probe cache
+
+    def tearDown(self):
+        os.environ.pop("CRISPTTS_C2PA_BACKEND", None)
+        if self._env is not None:
+            os.environ["CRISPTTS_C2PA_BACKEND"] = self._env
+        import watermark
+        watermark._crispasr_c2pa_flag = False
+
+    def test_backend_off_skips_signing(self):
+        from watermark import c2pa_sign_file_ex
+        os.environ["CRISPTTS_C2PA_BACKEND"] = "off"
+        ok, signer = c2pa_sign_file_ex("/nonexistent/file.wav")
+        self.assertFalse(ok)
+        self.assertIsNone(signer)
+
+    def test_unknown_backend_falls_back_to_auto(self):
+        from watermark import _c2pa_backend_preference
+        os.environ["CRISPTTS_C2PA_BACKEND"] = "not-a-backend"
+        self.assertEqual(_c2pa_backend_preference(), "auto")
+
+    def test_crispasr_probe_returns_none_without_binary(self):
+        """The flag is discovered from --help, never assumed."""
+        from unittest.mock import patch
+
+        import watermark
+        with patch("shutil.which", return_value=None), \
+                patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CRISPASR_EXECUTABLE", None)
+            watermark._crispasr_c2pa_flag = False
+            self.assertIsNone(watermark._crispasr_c2pa_support())
+
+    def test_crispasr_probe_detects_advertised_flag(self):
+        import subprocess
+        from unittest.mock import patch
+
+        import watermark
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout="usage: crispasr\n  --c2pa-sign-file PATH  sign a file\n", stderr="")
+        with patch("shutil.which", return_value="/usr/local/bin/crispasr"), \
+                patch("subprocess.run", return_value=completed):
+            watermark._crispasr_c2pa_flag = False
+            self.assertEqual(watermark._crispasr_c2pa_support(),
+                             ("/usr/local/bin/crispasr", "--c2pa-sign-file"))
+
+    def test_crispasr_probe_ignores_binary_without_c2pa(self):
+        import subprocess
+        from unittest.mock import patch
+
+        import watermark
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="usage: crispasr\n  --tts TEXT\n", stderr="")
+        with patch("shutil.which", return_value="/usr/local/bin/crispasr"), \
+                patch("subprocess.run", return_value=completed):
+            watermark._crispasr_c2pa_flag = False
+            self.assertIsNone(watermark._crispasr_c2pa_support())
+
+    @requires_c2pa
+    @requires_soundfile
+    def test_native_signer_without_ai_assertion_is_discarded(self):
+        """The regression that started all this.
+
+        A native signer that produces a manifest with no AI-generation claim
+        must not be accepted — the file would carry an integrity seal that
+        looks like provenance but asserts nothing about being AI-generated.
+        """
+        import tempfile
+        from unittest.mock import patch
+
+        import watermark
+        from watermark import c2pa_sign_file_ex, manifest_asserts_ai
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.wav")
+            _write_tone_wav(path, seconds=1.0)
+            # A native signer that "succeeds" but writes no AI assertion.
+            with patch.object(watermark, "_sign_with_c2pa_audio", return_value=True):
+                ok, signer = c2pa_sign_file_ex(path, model_id="t")
+            self.assertTrue(ok)
+            self.assertEqual(signer, "self-signed")
+            self.assertIs(manifest_asserts_ai(path), True,
+                          "fallback must leave a manifest that asserts AI generation")
+
+    @requires_c2pa
+    @requires_soundfile
+    def test_manifest_asserts_ai_detects_real_manifest(self):
+        import tempfile
+
+        from watermark import c2pa_sign_file_ex, manifest_asserts_ai
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.wav")
+            _write_tone_wav(path, seconds=1.0)
+            self.assertIsNone(manifest_asserts_ai(path), "unsigned file has no manifest")
+            c2pa_sign_file_ex(path, model_id="t")
+            self.assertIs(manifest_asserts_ai(path), True)
+
+    def test_manifest_asserts_ai_on_missing_file(self):
+        from watermark import manifest_asserts_ai
+        self.assertIsNone(manifest_asserts_ai("/nonexistent/file.wav"))
+
+
+class TestDisclosureWordingMatchesSusurrus(unittest.TestCase):
+    """The Crisp projects should disclose in the same words."""
+
+    def test_de_and_en_match_susurrus_strings(self):
+        from watermark import DISCLAIMER_TEXTS
+        self.assertEqual(
+            DISCLAIMER_TEXTS["de"],
+            "Die folgende Aufnahme wurde von künstlicher Intelligenz erzeugt.")
+        self.assertEqual(
+            DISCLAIMER_TEXTS["en"],
+            "The following audio was generated by artificial intelligence.")
+
+    def test_all_disclosures_describe_what_follows(self):
+        """The disclosure is prepended, so it must not say "this audio"."""
+        from watermark import DISCLAIMER_TEXTS
+        for lang, text in DISCLAIMER_TEXTS.items():
+            self.assertTrue(text.strip().endswith("."), lang)
+            self.assertGreater(len(text), 20, lang)
+
+
 class TestConsentDetectionTiers(unittest.TestCase):
     """Every tier of the consent gate must actually be reachable.
 
