@@ -1739,33 +1739,55 @@ def _sign_with_c2pa_audio(input_path: str, output_path: str,
 # preserves it rather than overwriting it — see _preserve_existing_manifest.
 
 
+#: Extension -> the format string c2pa-rs wants for that container.
+#: Only containers that genuinely embed belong here; see C2PA_CAPABLE_EXTS.
+_C2PA_FORMATS = {".wav": "wav", ".mp3": "mp3", ".flac": "flac", ".m4a": "m4a"}
+
+
 def _sign_with_c2pa_python(input_path: str, output_path: str,
                            cert_pem: bytes, key_pem: bytes,
                            model_id: str | None) -> bool:
-    """Sign via c2pa-python, the one path where we control the manifest."""
+    """Sign via c2pa-python, the one path where we control the manifest.
+
+    Uses the streaming ``Builder.sign()`` rather than ``sign_file()``.
+    ``sign_file()`` refuses FLAC and M4A with "NotSupported: type is
+    unsupported" even though c2pa-rs advertises both in
+    ``get_supported_mime_types()``; ``sign()`` with an explicit format signs
+    them, and the result reads back ``validation_state: Valid`` carrying
+    ``trainedAlgorithmicMedia``. The stream path is a strict superset — WAV
+    and MP3 sign identically through it — so it is now the only path, and
+    FLAC and M4A gained a manifest they were previously denied.
+    """
     try:
         import c2pa as c2pa_rs
+
+        ext = os.path.splitext(input_path)[1].lower()
+        fmt = _C2PA_FORMATS.get(ext)
+        if fmt is None:
+            logger.debug("No C2PA format binding for '%s'; signing skipped.", ext)
+            return False
 
         signer = _c2pa_signer(cert_pem, key_pem)
         builder = c2pa_rs.Builder(_c2pa_manifest(model_id))
 
-        if output_path == input_path:
-            # sign_file refuses to write over its own source.
-            import tempfile
-            suffix = os.path.splitext(input_path)[1]
-            fd, tmp_path = tempfile.mkstemp(suffix=suffix)
-            os.close(fd)
-            try:
-                os.unlink(tmp_path)  # must not exist
-                builder.sign_file(input_path, tmp_path, signer)
-                import shutil
-                shutil.move(tmp_path, input_path)
-            except Exception:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-                raise
-        else:
-            builder.sign_file(input_path, output_path, signer)
+        # sign() streams source -> destination and cannot write over its own
+        # source, so it always goes via a temp file.
+        import tempfile
+        fd, tmp_path = tempfile.mkstemp(suffix=ext)
+        os.close(fd)
+        try:
+            with open(input_path, "rb") as src, open(tmp_path, "wb") as dst:
+                builder.sign(signer, fmt, src, dst)
+            # A signer that writes nothing must not be reported as success —
+            # the caller would take an unsigned file for a signed one.
+            if os.path.getsize(tmp_path) <= 0:
+                raise RuntimeError("C2PA signer produced an empty file")
+            import shutil
+            shutil.move(tmp_path, output_path)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise
         return True
     except ImportError:
         logger.debug("c2pa-python not installed; C2PA signing skipped.")
@@ -1944,15 +1966,18 @@ class MarkingError(RuntimeError):
 
 #: Containers into which c2pa-python can actually *embed* a signed manifest.
 #:
-#: Deliberately narrower than ``Builder.get_supported_mime_types()``, which
-#: also lists FLAC and M4A — both are accepted for reading but fail signing
-#: with "NotSupported: type is unsupported". This set feeds the watermark
-#: floor, so an over-broad entry is not cosmetic: it would let
-#: ``--no-watermark`` be honoured for a container that then carries no
-#: manifest, leaving only strippable metadata. ``.m4a`` was listed here for
-#: exactly that reason and is now removed.
+#: FLAC and M4A were excluded here on the evidence that they fail signing with
+#: "NotSupported: type is unsupported" — true of ``sign_file()``, but not of
+#: the streaming ``Builder.sign()``, which signs both into a manifest that
+#: reads back Valid. ``_sign_with_c2pa_python()`` now uses the stream path, so
+#: both belong here. Opus/OGG stays out: c2pa-rs does not list it among its
+#: supported types at all, and every format string tried returns NotSupported.
+#:
+#: This set feeds the watermark floor, so an over-broad entry is not cosmetic:
+#: it would let ``--no-watermark`` be honoured for a container that then
+#: carries no manifest, leaving only strippable metadata.
 #: ``tests/test_watermark.py`` verifies each entry by really signing a file.
-C2PA_CAPABLE_EXTS = frozenset({".wav", ".mp3"})
+C2PA_CAPABLE_EXTS = frozenset({".wav", ".mp3", ".flac", ".m4a"})
 
 
 def c2pa_available(cert_path: str | None = None, key_path: str | None = None) -> bool:
@@ -2110,6 +2135,27 @@ def preflight_marking(
                 f"Refusing to synthesize: {missing} is required to watermark '{ext}' output "
                 "and is not installed, so the result could not be marked as AI-generated."
             )
+
+        # --- A container with no manifest needs a strong watermark ---
+        # For WAV/MP3/FLAC/M4A the C2PA manifest is the durable, interoperable
+        # layer and the watermark is what survives the manifest being stripped.
+        # Opus and OGG can carry no manifest at all, so the watermark is the
+        # *only* robust layer — and on a default install that is the built-in
+        # fixed-key comb. Art. 50(2) asks for marking that is robust as far as
+        # technically feasible; when a neural backend is one pip install away,
+        # shipping the weakest layer as the sole layer is not that. Refuse
+        # rather than emit it.
+        if ext not in C2PA_CAPABLE_EXTS and not neural_watermark_available():
+            raise MarkingError(
+                f"Refusing to synthesize: '{ext}' cannot carry a C2PA manifest, so the "
+                "audio watermark would be its only robust mark — and only the built-in "
+                "spread-spectrum backend is installed.\n"
+                "  Either install a neural watermark:  pip install 'crisptts[robust]'\n"
+                f"  or choose a container that carries a manifest: "
+                f"{', '.join(sorted(C2PA_CAPABLE_EXTS))}\n"
+                "  or take the marking duty on yourself with "
+                "--allow-unmarked --accept-marking-responsibility."
+            )
     return policy
 
 
@@ -2181,6 +2227,28 @@ def marking_enabled() -> bool:
 def allow_unmarked_default() -> bool:
     """True when the environment permits delivering unmarked output."""
     return bool(os.environ.get("CRISPTTS_ALLOW_UNMARKED"))
+
+
+def neural_watermark_available() -> bool:
+    """True if a neural watermark backend could be loaded — without loading it.
+
+    Deliberately a package-presence check rather than a load: this runs in
+    preflight, before any model is pulled in, and ``--list-models`` has to
+    stay instant. It answers "would :func:`watermark_embed` have something
+    stronger than the built-in comb to reach for", not "is it loaded".
+    """
+    if _backend in ("wavmark", "audioseal_python", "audioseal_crispasr"):
+        return True
+    if _crispasr_wm is not None:
+        return True
+    import importlib.util
+    for package in ("wavmark", "audioseal"):
+        try:
+            if importlib.util.find_spec(package) is not None:
+                return True
+        except (ImportError, ValueError):
+            continue
+    return False
 
 
 def _warn_if_weak_backend(has_c2pa: bool = False) -> None:

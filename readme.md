@@ -53,7 +53,8 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - Spread-spectrum watermark (always on, imperceptible, ~38 dB SNR)
   - AudioSeal neural watermark (optional upgrade via `pip install audioseal` or CrispASR GGUF)
   - WAV LIST/INFO, MP3 ID3v2, FLAC Vorbis comment, and Opus/OGG metadata marking audio as AI-generated
-  - C2PA content credentials signed by default (core dep; c2pa-audio / CrispASR used as fast paths when present)
+  - C2PA content credentials signed by default for WAV/MP3/FLAC/M4A (core dep;
+    c2pa-audio / CrispASR used as fast paths when present)
   - Voice-cloning consent gate (`--i-have-rights` CLI / `"i_have_rights": true` API)
   - Spoken AI disclaimer prepended to voice-cloned audio, in all 24 EU official
     languages plus zh/ja/ko (`--list-disclosure-langs`), bundled for offline use
@@ -78,14 +79,16 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **Text Input Flexibility**: Synthesize from CLI, `.txt`, `.md`, `.html`, `.pdf`, `.epub`
 - **Smart Text Chunking**: Automatic sentence-boundary splitting for long texts
 - **SSML-lite**: Supports `<break>`, `<prosody rate>`, `<say-as>`, `<phoneme>` tags in input text
-- **Customizable Output**: Save audio to `.wav`, `.mp3`, `.flac`, or `.opus`
+- **Customizable Output**: Save audio to `.wav`, `.mp3`, `.flac`, `.m4a` or `.opus`
+  (`.opus`/`.ogg` carry no C2PA manifest, so they require a neural watermark —
+  `pip install 'crisptts[robust]'`)
 - **Direct Playback**: Play synthesized audio immediately
 - **Voice Selection**: Override default voices/speakers for most models
 - **Model Parameter Tuning**: JSON-formatted parameters for fine-tuning
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
-  - 410+ unit and live tests
+  - 433 unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -553,17 +556,23 @@ CrispTTS automatically marks all synthesized audio as AI-generated using a multi
 
 Every path that writes an audio file — CLI synthesis, `--batch`, `--test-all` and API server responses — marks it through the single `watermark.mark_audio_file()` entry point, in every supported format (WAV, MP3, FLAC, Opus/OGG). Marking is the **last** step, after trimming, normalization, resampling and the spoken disclaimer, so nothing downstream can strip it. CrispASR C++ backends watermark at the binary level; all other handlers are watermarked in Python post-synthesis.
 
+Marking follows the file that was **written**, not the one that was requested. Most handlers force their own container regardless of the extension you ask for — the Edge handler writes `.mp3`, most local ones `.wav` — so `--output-file out.wav --model-id edge` produces `out.mp3`, and that is the file disclosed, marked, verified and played.
+
 **Generation is gated on sufficient marking.** Three rules:
 
 1. **Preflight.** Before any model is loaded, CrispTTS checks that the requested
    output *can* be marked — supported container, codec dependencies present. If
    not, synthesis is refused up front, so unmarkable audio is never produced.
-2. **Verified, not assumed.** After marking, the watermark is read back. If it
-   is not detectable above threshold, the output is discarded. Container
-   metadata alone is never sufficient — any transcode strips it. This catches
-   audio too short (under ~0.25 s), silent, or otherwise unable to carry a
-   mark, and it applies to CrispASR backends too: their binary-level watermark
-   is verified rather than taken on trust.
+2. **Verified, not assumed.** After marking, the watermark is read back, and
+   the output is delivered only if at least one *robust* layer is confirmed:
+   the watermark detected above threshold, or a C2PA manifest signed. Container
+   metadata alone is never sufficient — any transcode strips it. So an
+   undetectable watermark is fatal for FLAC and Opus, which cannot carry a
+   manifest, while a WAV or MP3 may still ship on its manifest alone; the
+   `MarkResult` reports which layers actually applied. This catches audio that
+   is silent or otherwise unable to carry a mark, and it applies to CrispASR
+   backends too: their binary-level watermark is verified rather than taken on
+   trust.
 3. **Watermark floor.** `--no-watermark` is honoured only when another robust
    layer (a C2PA manifest) still marks the output. When the container cannot
    carry one, the watermark is forced back on — no path can emit a fully
@@ -581,7 +590,7 @@ which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 | **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.08) | Always active | Built-in (numpy) |
 | **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
 | **WAV/MP3/FLAC/Opus metadata** | LIST/INFO, ID3v2, Vorbis comments — `AI_GENERATED=true` | Always active | Built-in (mutagen, core dep) |
-| **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) — self-signed unless you supply a certificate | **Always active** (WAV/MP3) | Built-in (c2pa-python, core dep) |
+| **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) — self-signed unless you supply a certificate | **Always active** (WAV/MP3/FLAC/M4A) | Built-in (c2pa-python, core dep) |
 | **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio, in the model's language | Auto for cloning | Built-in |
 | **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
 
@@ -610,15 +619,16 @@ while making it survive resampling and transcoding, and made it ~6 dB quieter.
 `CRISPASR_WATERMARK_LEGACY=1` restores the old band for A/B against older files;
 detection always sweeps both, so previously-marked audio still verifies.
 
-This is why **C2PA signing is on by default** rather than opt-in: for WAV and
-MP3 output the signed manifest, not the spread-spectrum watermark, is the
-durable and interoperable provenance layer. The watermark is what survives
-having the manifest stripped; the manifest is what survives a resample. Neither
-alone is sufficient for every downstream path, so both are applied.
+This is why **C2PA signing is on by default** rather than opt-in: for WAV,
+MP3, FLAC and M4A output the signed manifest, not the spread-spectrum
+watermark, is the durable and interoperable provenance layer. The watermark is
+what survives having the manifest stripped; the manifest is what survives a
+resample. Neither alone is sufficient for every downstream path, so both are
+applied.
 
-For output in a container C2PA cannot sign (FLAC, Opus/OGG), or if the audio
-may be transcoded *and* stripped, install the neural backend — MIT-licensed and
-far more robust:
+For Opus/OGG, which C2PA cannot sign, a neural backend is **required** rather
+than recommended — see below. Install it also if audio in any container may be
+transcoded *and* stripped; it is MIT-licensed and far more robust:
 
 ```bash
 pip install 'crisptts[robust]'
@@ -650,10 +660,29 @@ C2PA-recognised authority and pass `--c2pa-cert` / `--c2pa-key` (or set
 and the key must be **PKCS#8** — c2pa-python rejects a bare self-signed leaf
 and a SEC1 key. `scripts/make_dev_cert.sh` shows a working profile.
 
-FLAC, M4A and Opus/OGG cannot currently carry a manifest: c2pa-python lists
-them among its supported MIME types but fails to embed into them. Those
-containers rely on the audio watermark alone, which is why `--no-watermark` is
-overridden for them.
+**WAV, MP3, FLAC and M4A all carry a manifest.** FLAC and M4A were excluded
+until it turned out that only `sign_file()` refuses them — c2pa-python's
+streaming `Builder.sign()` signs both, and the result reads back
+`validation_state: Valid` with the `trainedAlgorithmicMedia` assertion intact.
+CrispTTS uses the streaming path for every container, so those two gained a
+manifest they were previously denied. A test signs each listed format for
+real, so the set cannot drift back into overclaiming.
+
+**Opus/OGG cannot.** c2pa-rs does not list it among its supported types at
+all, and every format string tried (`opus`, `audio/opus`, `ogg`, `audio/ogg`,
+`application/ogg`) returns `NotSupported`. A detached `.c2pa` sidecar can be
+produced for it, but a manifest that travels as a separate file is a
+provenance record you hold, not a mark on the content — CrispTTS does not
+count it. So the audio watermark is Opus/OGG's only robust layer, which is why
+`--no-watermark` is overridden for it, and why:
+
+> **Opus and OGG output requires a neural watermark backend.** With only the
+> built-in spread-spectrum comb installed, synthesis to those containers is
+> refused up front — a fixed-key comb as the *sole* robust layer is not
+> marking that is "robust as far as technically feasible". Install one with
+> `pip install 'crisptts[robust]'`, choose a manifest-carrying container, or
+> take the duty on yourself with
+> `--allow-unmarked --accept-marking-responsibility`.
 
 #### Signing backends
 

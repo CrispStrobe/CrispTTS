@@ -1319,3 +1319,190 @@ Publishing-point disclosure; genuine consent (`--i-have-rights` remains an
 unverified self-attestation and says so); voice/model licence compliance; and
 **choosing the disclosure language** — the tool now warns when it cannot
 determine one, but only the deployer knows what language the audience speaks.
+
+## Phase 20: Art. 50 audit — the two paths marking never reached
+
+Audited 2026-08-02. Phase 19 concluded that "every file-writing path routes
+through `mark_audio_file()`". That was checked by reading the call sites, and
+every call site did indeed look right. Both defects below sit in the gap
+between the call site and the file: marking was invoked on a path, and the
+audio was somewhere else.
+
+### 20.1 Marking followed the requested path, not the written one (the defect)
+
+Sixteen of the twenty-three handlers force their own container regardless of
+the extension asked for — `edge_handler` writes `.mp3`, most local ones
+`with_suffix(".wav")`. Every post-synthesis step was guarded by
+`os.path.isfile(args.output_file)`, and when the handler had written next door
+that guard was simply false. Not an error, not a warning: the disclosure,
+the marking, the verification and the fail-closed discard were all skipped in
+silence.
+
+Measured on the default cloud backend — `--model-id edge --output-file
+out.wav` delivered `out.mp3` with watermark confidence **0.56** (below the
+0.65 threshold, i.e. the detector's floor on unmarked audio), no ID3
+`AI_GENERATED` tag and no C2PA manifest. Marking had reported nothing wrong
+because it never ran.
+
+`_resolve_written_output()` now finds the file the handler actually wrote —
+same stem, any audio extension, newer than the moment synthesis started — and
+`run_synthesis` and `--test-all` rebind to it before trimming, normalizing,
+resampling, disclosing, marking, playing or discarding. The candidate set is
+deliberately wider than what marking can handle: finding an output in an
+unmarkable container has to end in `mark_audio_file()` refusing it, not in
+never noticing the file. The `since` bound keeps a leftover from an earlier
+run from being adopted as this run's output.
+
+Two details that cost a debugging round each: `mkstemp` creates the requested
+path *before* the handler runs, so an empty stub is left behind whenever the
+handler writes elsewhere — the resolver requires >100 bytes, not mere
+existence. And `Path("./out.wav")` normalizes to `"out.wav"`, so a resolver
+returning `str(Path(...))` made the caller conclude the handler had written
+somewhere else and delete the real output. It returns the caller's own string.
+
+### 20.2 Multi-segment SSML was a second exit from run_synthesis
+
+`<break>`/`<prosody>` input with more than one segment synthesized each
+segment, crossfaded them, wrote the result and **returned** — above the
+disclosure and marking block, which it therefore never reached.
+
+The combined file kept only whatever audio watermark survived concatenation,
+with nothing verifying it still cleared threshold (measured 0.78, so in
+practice it did — but by luck, not by gate). Its LIST/INFO metadata and its
+C2PA manifest were gone, since `sf.write` builds a fresh container. The
+marking preflight had only ever seen the segments' temp `.wav`, so an
+unmarkable target format was not refused. And `--play-direct` played the
+result, contradicting 19.3 directly.
+
+Segments are now rendered *in place of* the handler call rather than instead
+of the rest of the function, so the combined output takes the same
+trim/normalize/resample/disclose/mark/play path as any other output and
+`run_synthesis` has one exit again. Segments carry `_ssml_segment`, which
+suppresses per-segment disclosure (it belongs once at the front; repeated
+before every segment the crossfade would partly bury all but the first) and
+per-segment marking (thrown-away work — and a hazard, since marking *deletes*
+what it cannot mark, so a segment failing verification would vanish from the
+output instead of failing the run).
+
+20.1 also fixed SSML with Edge, which had been silently falling back to
+speaking the text without its markup: the segment loop looked for a `.wav`
+that the handler had written as `.mp3`.
+
+### 20.3 A README claim stronger than the code
+
+"After marking, the watermark is read back. If it is not detectable above
+threshold, the output is discarded." The code requires one *robust* layer —
+watermark detected **or** C2PA signed. So an undetectable watermark is fatal
+for FLAC and Opus, which cannot carry a manifest, while a WAV or MP3 may still
+ship on its manifest alone. That is a defensible rule, and the next sentence
+("container metadata alone is never sufficient") was always accurate, but as
+written the passage promised a detectable watermark in every delivered file.
+Corrected to state the rule the code implements.
+
+### 20.4 The same assumption in the server, failing closed
+
+`/v1/audio/speech` read back only its `mkstemp` path, so a handler that wrote
+its own container produced "Synthesis produced no output" — a 500 rather than
+unmarked audio, so not a compliance defect, but the Edge backend was
+effectively unusable over HTTP.
+
+The server converts rather than merely following: the response carries a
+declared `Content-Type`, and returning MP3 bytes labelled `audio/wav` would be
+worse than the error it replaces. `save_audio()` re-containers to the
+requested format, and a missing codec leaves the path unwritten and falls into
+the same 500 — still fail-closed. `resolve_written_output()` moved to
+`utils.py` so both callers share one implementation.
+
+Verified live: `{"model":"edge","response_format":"wav"}` now returns a real
+`WAV PCM_16`, watermark 0.84, C2PA manifest present.
+
+### Status: COMPLETE — 430 tests pass (20 new), ruff clean
+
+Both defects were invisible to the 410 tests that preceded them, for the same
+reason: every stub handler wrote to the path it was handed, which no shipped
+handler reliably does, and no test combined SSML with marking. The new tests
+use handlers that override the extension, and were confirmed to fail against
+the previous `main.py`.
+
+Two of the new tests pass against the old code by design — the stale-file
+guard and the every-segment-survives check cover behaviour the rewrite
+introduces rather than bugs it fixed, and say so.
+
+### Deployer-side, and not closable in code
+
+Unchanged from Phase 19.
+
+## Phase 21: C2PA for FLAC and M4A; Opus gated on a neural watermark
+
+Phase 20 left FLAC and Opus with the audio watermark as their only robust
+layer, and the built-in spread-spectrum comb as that layer on a default
+install. The question was whether C2PA could cover them. For two of the three
+containers it can — the exclusion rested on a measurement of the wrong API.
+
+### 21.1 FLAC and M4A were never actually unsignable
+
+`C2PA_CAPABLE_EXTS` was `{".wav", ".mp3"}`, with a comment recording that
+c2pa-rs advertises FLAC and M4A in `get_supported_mime_types()` but fails them
+with `NotSupported: type is unsupported`. That is true — of
+`Builder.sign_file()`, which is what the code called.
+
+The streaming `Builder.sign(signer, format, source, dest)` signs both.
+Measured on c2pa-python 0.37.2 with the bundled dev certificate:
+
+| Container | `sign_file()` | `sign()` streaming |
+|---|---|---|
+| WAV | ok | ok |
+| MP3 | ok | ok |
+| FLAC | `NotSupported` | **ok** — `validation_state: Valid` |
+| M4A | `NotSupported` | **ok** — `validation_state: Valid` |
+| Opus/OGG | `NotSupported` | `NotSupported` |
+
+Both signed files read back with `manifest_asserts_ai() == True`, the correct
+`digitalSourceType: trainedAlgorithmicMedia`, the CrispTTS `softwareAgent`,
+and audio still decodable afterwards. The stream API is a strict superset —
+WAV and MP3 sign identically through it — so `_sign_with_c2pa_python()` now
+uses it exclusively, and `C2PA_CAPABLE_EXTS` gains `.flac` and `.m4a`.
+
+Widening that set is not cosmetic: it feeds the watermark floor, so an entry
+that could not really sign would let `--no-watermark` be honoured for a file
+carrying nothing but strippable metadata. The existing
+`test_every_capable_ext_really_signs` signs every listed extension for real
+and now additionally asserts the manifest carries the AI claim.
+
+One trap worth recording: probing this with a `BytesIO` destination and
+checking `.tell()` reports 0 bytes for every format, including ones that
+signed perfectly — the library seeks back. Measured against real files
+instead. `_sign_with_c2pa_python()` now treats a zero-byte result as failure
+rather than success for the same reason.
+
+### 21.2 Opus/OGG requires a neural watermark
+
+Opus is not in c2pa-rs's supported types at all, and `opus`, `audio/opus`,
+`ogg`, `audio/ogg` and `application/ogg` all return `NotSupported`. A detached
+`.c2pa` sidecar *can* be produced (verified: 13 KB, signs fine via
+`set_no_embed()`), but a manifest travelling as a separate file is a
+provenance record the operator holds, not a mark on the content — it does not
+count toward Art. 50(2), and the container cannot even carry a pointer to it,
+since `set_remote_url` needs the same missing embed support.
+
+So for Opus/OGG the watermark is the sole robust layer, and on a default
+install that means the fixed-key comb. `preflight_marking()` now refuses those
+containers unless a neural backend is installed, naming all three ways
+forward: `pip install 'crisptts[robust]'`, a manifest-carrying container, or
+`--allow-unmarked --accept-marking-responsibility`.
+
+`neural_watermark_available()` is a package-presence check via
+`importlib.util.find_spec`, deliberately not a load — preflight runs before
+any model is pulled in and `--list-models` has to stay instant.
+
+The gate sits inside the existing `handler_key != "crispasr"` block. CrispASR
+embeds its own watermark in the binary, so a Python-package check says nothing
+about what that path will produce; its Opus output stays gated by the
+post-marking verification instead, which for a manifestless container already
+requires the watermark to verify.
+
+### Status: COMPLETE — 433 tests pass (3 new), ruff clean
+
+Two pre-existing tests asserted the old behaviour (`output_carries_c2pa` false
+for FLAC; `.opus` passing preflight unconditionally) and were updated rather
+than deleted — both now state the rule the code implements and why.

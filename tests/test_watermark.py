@@ -636,6 +636,42 @@ class TestC2paSigning(unittest.TestCase):
                         self.skipTest(f"ffmpeg not available to encode {ext}")
                 ok, _ = c2pa_sign_file_ex(path, model_id="t")
                 self.assertTrue(ok, f"{ext} is in C2PA_CAPABLE_EXTS but cannot be signed")
+                from watermark import manifest_asserts_ai
+                self.assertTrue(manifest_asserts_ai(path),
+                                f"{ext} was signed but the manifest does not assert "
+                                "trainedAlgorithmicMedia")
+
+    @requires_c2pa
+    @requires_soundfile
+    def test_streaming_sign_covers_what_sign_file_refuses(self):
+        """FLAC and M4A are why the signer uses Builder.sign(), not sign_file().
+
+        c2pa-rs advertises both in get_supported_mime_types() but sign_file()
+        returns "NotSupported: type is unsupported" for them, which is what
+        kept them out of C2PA_CAPABLE_EXTS. The streaming API signs them. If a
+        future c2pa-python makes sign_file() work too this test still passes —
+        it pins the capability, not the workaround.
+        """
+        import tempfile
+
+        import soundfile as sf
+
+        from c2pa_dev_cert import DEV_CERT_CHAIN_PEM, DEV_PRIVATE_KEY_PEM
+        from watermark import _sign_with_c2pa_python as sign
+        from watermark import manifest_asserts_ai
+
+        pcm = 0.3 * np.sin(
+            2 * np.pi * 180 * np.linspace(0, 2, 48000, endpoint=False, dtype=np.float32))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.flac")
+            sf.write(path, pcm.astype(np.float32), 24000)
+            self.assertTrue(
+                sign(path, path, DEV_CERT_CHAIN_PEM.encode(),
+                     DEV_PRIVATE_KEY_PEM.encode(), "t"),
+                "FLAC signing failed; the streaming signer has regressed")
+            self.assertTrue(manifest_asserts_ai(path))
+            self.assertGreater(os.path.getsize(path), 0)
+            sf.info(path)  # still decodable audio, not just a signed blob
 
 
 class TestComplianceCoverage(unittest.TestCase):
@@ -998,11 +1034,41 @@ class TestMarkingPolicyPreflight(unittest.TestCase):
                 preflight_marking(path)
             self.assertIn("Refusing to synthesize", str(ctx.exception))
 
-    def test_supported_formats_pass(self):
+    def test_manifest_capable_formats_pass(self):
         from watermark import preflight_marking
-        for path in ("out.wav", "out.mp3", "out.flac", "out.opus", "out.ogg"):
+        for path in ("out.wav", "out.mp3", "out.flac", "out.m4a"):
             policy = preflight_marking(path)
             self.assertTrue(policy["embed_watermark"])
+
+    def test_manifestless_formats_need_a_neural_backend(self):
+        """Opus/OGG carry no manifest, so the watermark is their only robust layer.
+
+        The built-in comb is a fixed-key mark; being the *sole* layer is what
+        makes it insufficient, not being present. So these formats pass when a
+        neural backend is installed and are refused when it is not.
+        """
+        from unittest.mock import patch
+
+        from watermark import MarkingError, preflight_marking
+        for path in ("out.opus", "out.ogg"):
+            with patch("watermark.neural_watermark_available", return_value=False):
+                with self.assertRaises(MarkingError) as ctx:
+                    preflight_marking(path)
+                self.assertIn("crisptts[robust]", str(ctx.exception),
+                              "the refusal must name the way out of it")
+            with patch("watermark.neural_watermark_available", return_value=True):
+                policy = preflight_marking(path)
+                self.assertTrue(policy["embed_watermark"])
+
+    def test_manifestless_format_still_allows_the_documented_opt_out(self):
+        """The gate must not close the escape hatch the rest of the design offers."""
+        from unittest.mock import patch
+
+        from watermark import preflight_marking
+        with patch("watermark.neural_watermark_available", return_value=False):
+            policy = preflight_marking("out.opus", allow_unmarked=True,
+                                       responsibility_accepted=True)
+            self.assertTrue(policy["allow_unmarked"])
 
     def test_forced_policy_beats_env_opt_out(self):
         """A forced policy must survive CRISPTTS_NO_WATERMARK in the env."""
@@ -1031,9 +1097,14 @@ class TestMarkingPolicyPreflight(unittest.TestCase):
         with patch("watermark.c2pa_available", return_value=True):
             self.assertTrue(output_carries_c2pa("a.wav"))
             self.assertTrue(output_carries_c2pa("a.mp3"))
-            # Opus/FLAC cannot carry a manifest → watermark stays mandatory
+            # FLAC and M4A sign through the streaming Builder.sign(); only
+            # sign_file() refused them, which is what excluded them before.
+            self.assertTrue(output_carries_c2pa("a.flac"))
+            self.assertTrue(output_carries_c2pa("a.m4a"))
+            # Opus/OGG is not in c2pa-rs's supported types at all → the
+            # watermark stays mandatory and is the only robust layer.
             self.assertFalse(output_carries_c2pa("a.opus"))
-            self.assertFalse(output_carries_c2pa("a.flac"))
+            self.assertFalse(output_carries_c2pa("a.ogg"))
 
 
 class TestMarkingAuditLog(unittest.TestCase):
