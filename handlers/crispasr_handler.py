@@ -445,20 +445,15 @@ def synthesize_with_crispasr_streaming(
     if synth_error[0]:
         logger.error("CrispASR TTS (streaming): Synthesis error: %s", synth_error[0])
 
-    # Copy to final output if requested, then inject metadata
-    # (CrispASR binary already embeds audio watermark; we add file metadata here)
+    # Copy to the final output if requested. Marking is deliberately NOT done
+    # here: run_synthesis() puts every output through mark_audio_file(), which
+    # injects the metadata, signs, and gates on verification. Injecting the
+    # LIST/INFO chunk from this handler used to make that gate short-circuit on
+    # is_marked(), delivering audio whose only mark was the strippable chunk
+    # this line wrote. A handler writes audio; marking has one owner.
     if output_file_str and os.path.isfile(tmp_wav):
         import shutil
         shutil.copy2(tmp_wav, output_file_str)
-        try:
-            from watermark import inject_wav_metadata
-            if output_file_str.lower().endswith(".wav"):
-                with open(output_file_str, "rb") as f_sw:
-                    wav_b = inject_wav_metadata(f_sw.read())
-                with open(output_file_str, "wb") as f_sw:
-                    f_sw.write(wav_b)
-        except Exception as e_meta:
-            logger.warning("Streaming metadata injection failed: %s", e_meta)
         logger.info("CrispASR TTS (streaming): Output saved to %s", output_file_str)
 
     # Cleanup temp

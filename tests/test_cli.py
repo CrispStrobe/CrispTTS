@@ -510,6 +510,69 @@ class TestPlaybackIsMarkedFirst(unittest.TestCase):
         self.assertIn("streamed", order, "the streaming path was not taken")
         self.assertIn("marked", order, "a streamed --output-file must still be marked")
 
+    def test_streamed_output_is_gated_by_the_real_marking_path(self):
+        """The sibling tests stub mark_audio_file, so they only prove it was
+        *called*. This one runs the real thing.
+
+        The streaming handler used to inject the WAV metadata chunk itself
+        before returning; mark_audio_file() saw the marker, returned
+        marked=True and skipped its verification gate, so a delivered file
+        could carry nothing but that strippable chunk. With no watermark and
+        no manifest the run must now end with no file at all.
+        """
+        import argparse
+        import os
+        from unittest.mock import patch
+
+        import numpy as np
+        import soundfile as sf
+
+        import main
+        import watermark
+        from config import GERMAN_TTS_MODELS
+
+        out = os.path.join(self.tmpdir, "gated.wav")
+
+        def streaming_stub(config, text, voice, params, out_path, play_direct):
+            # Unwatermarked audio plus the container marker — what the handler
+            # produced before, and what the crispasr binary produces whenever
+            # its own watermark is off or unreadable by our detector.
+            sf.write(out_path, np.full(24000, 0.1, dtype=np.float32), 24000)
+            with open(out_path, "rb") as f:
+                blob = watermark.inject_wav_metadata(f.read())
+            with open(out_path, "wb") as f:
+                f.write(blob)
+
+        handler_key = GERMAN_TTS_MODELS["crispasr_kokoro"]["handler_function_key"]
+        args = argparse.Namespace(
+            model_id="crispasr_kokoro", german_voice_id="af_heart", model_params=None,
+            output_file=out, play_direct=False, input_text="Hallo",
+            input_file=None, speech_speed=1.0, trim_silence=False, tts_steps=None,
+            tts_language=None, pitch_shift=0.0, instruct=None, ref_text=None,
+            no_spoken_disclaimer=False, disclosure_lang=None, lexicon=None,
+            normalize=False, output_sample_rate=None, stream=True, verify=False,
+            verify_backend="parakeet", i_have_rights=False, allow_unmarked=False,
+            c2pa_cert=None, c2pa_key=None, batch=False, translate=False,
+            accept_marking_responsibility=False, no_watermark=False,
+            override_main_model_repo=None, override_model_filename=None,
+            override_tokenizer_repo=None, override_vocoder_repo=None,
+            override_speaker_embed_repo=None, override_piper_voices_repo=None,
+            lm_studio_api_url=None, gguf_model_name_in_api=None,
+            ollama_api_url=None, ollama_model_name=None,
+        )
+        import handlers.crispasr_handler as crispasr_handler
+        with patch.object(main, "_load_handlers_if_needed",
+                          return_value={handler_key: streaming_stub}), \
+                patch.object(main, "_HANDLERS_LOADED", True), \
+                patch.object(crispasr_handler, "synthesize_with_crispasr_streaming",
+                             streaming_stub), \
+                patch.object(watermark, "c2pa_sign_file_ex", lambda *a, **k: (False, None)):
+            main.run_synthesis(args)
+
+        self.assertFalse(
+            os.path.isfile(out),
+            "unmarked streamed output was delivered; the marking gate was skipped")
+
     def test_streaming_is_the_only_path_that_plays_before_marking(self):
         """The exemption must be narrow: --stream only, and only for playback."""
         import os

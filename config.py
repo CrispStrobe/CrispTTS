@@ -188,6 +188,7 @@ GERMAN_TTS_MODELS = {
     "edge": {
         "handler_function_key": "edge",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
         "available_voices": EDGE_TTS_ALL_GERMAN_VOICES,
         "notes": "MS Edge TTS (cloud). Output: MP3. Internet required."
@@ -195,6 +196,7 @@ GERMAN_TTS_MODELS = {
     "orpheus_kartoffel_natural": {
         "handler_function_key": "orpheus_kartoffel", # Standardized key
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "model_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
         "tokenizer_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
         "snac_model_id": KARTORPHEUS_SNAC_MODEL_ID,
@@ -214,6 +216,7 @@ GERMAN_TTS_MODELS = {
     "piper_local": {
         "handler_function_key": "piper", # Standardized key
         "voice_cloning": False,
+        "speaker_identity": "real_person",
         "piper_voice_repo_id": "rhasspy/piper-voices",
         "default_model_path_in_repo": PIPER_DEFAULT_GERMAN_VOICE_PATH,
         "available_voices": PIPER_GERMAN_VOICE_PATHS,
@@ -223,6 +226,7 @@ GERMAN_TTS_MODELS = {
     "orpheus_lex_au": {
         "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "model_repo_id": "lex-au/Orpheus-3b-FT-Q4_K_M.gguf",
         "model_filename": "Orpheus-3b-FT-Q4_K_M.gguf",
         "requires_hf_token": False,
@@ -233,6 +237,7 @@ GERMAN_TTS_MODELS = {
     "orpheus_sauerkraut": {
         "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "model_repo_id": "VAGOsolutions/SauerkrautTTS-Preview-0.1-Q4_K_M-GGUF",
         "model_filename": "sauerkrauttts_preview_0_1.Q4_K_M.gguf",
         "requires_hf_token": False,
@@ -243,6 +248,7 @@ GERMAN_TTS_MODELS = {
     "orpheus_lm_studio": {
         "handler_function_key": "orpheus_lm_studio",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "api_url": LM_STUDIO_API_URL_DEFAULT,
         "gguf_model_name_in_api": "SauerkrautTTS-Preview-0.1",
         "default_voice_id": "Tom",
@@ -252,6 +258,7 @@ GERMAN_TTS_MODELS = {
     "orpheus_ollama": {
         "handler_function_key": "orpheus_ollama",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "api_url": OLLAMA_API_URL_DEFAULT,
         "ollama_model_name": "legraphista/Orpheus",
         "default_voice_id": "tara",
@@ -290,6 +297,7 @@ GERMAN_TTS_MODELS = {
     "speecht5_german_transformers": {
         "handler_function_key": "speecht5", # Standardized key
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "model_id": "sjdata/speecht5_finetuned_common_voice_11_de",
         "vocoder_id": "microsoft/speecht5_hifigan",
         "speaker_embeddings_repo": "Matthijs/cmu-arctic-xvectors",
@@ -300,6 +308,7 @@ GERMAN_TTS_MODELS = {
     "fastpitch_german_nemo": {
         "handler_function_key": "nemo_fastpitch", # Standardized key
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "spectrogram_model_repo_id": "inOXcrm/German_multispeaker_FastPitch_nemo",
         "spectrogram_model_filename": "German_multispeaker_FastPitch_nemo.nemo",
         "vocoder_model_name": "tts_de_hui_hifigan_ft_fastpitch_multispeaker_5",
@@ -312,6 +321,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "kokoro_onnx",
         "handler_function_key": "kokoro_onnx",
         "voice_cloning": False,
+        "speaker_identity": "synthetic",
         "onnx_model_path": KOKORO_ONNX_MODEL_PATH,
         "voices_bin_path": KOKORO_ONNX_VOICES_PATH,
         "default_voice_id": KOKORO_ONNX_DEFAULT_VOICE,
@@ -326,6 +336,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "tts_cpp_kokoro",
         "handler_function_key": "tts_cpp",
         "voice_cloning": False,
+        "speaker_identity": "synthetic",
         "tts_cpp_executable_path": TTS_CPP_EXECUTABLE_PATH,
         "gguf_model_path": TTS_CPP_KOKORO_GGUF_PATH,
         "default_voice_id": KOKORO_DEFAULT_VOICE,
@@ -350,6 +361,7 @@ GERMAN_TTS_MODELS = {
     "coqui_tts_thorsten_ddc": {
         "handler_function_key": "coqui_tts", # Standardized Coqui key
         "voice_cloning": False,
+        "speaker_identity": "real_person",
         "coqui_model_name": "tts_models/de/thorsten/tacotron2-DDC",
         "default_coqui_speaker": None,
         "language": "de",
@@ -360,6 +372,7 @@ GERMAN_TTS_MODELS = {
     "coqui_tts_thorsten_vits": {
         "handler_function_key": "coqui_tts",
         "voice_cloning": False,
+        "speaker_identity": "real_person",
         "coqui_model_name": "tts_models/de/thorsten/vits",
         "default_coqui_speaker": None,
         "language": "de",
@@ -370,6 +383,7 @@ GERMAN_TTS_MODELS = {
     "coqui_tts_thorsten_dca": {
         "handler_function_key": "coqui_tts",
         "voice_cloning": False,
+        "speaker_identity": "real_person",
         "coqui_model_name": COQUI_THORSTEN_TACOTRON2_DCA,
         "default_coqui_speaker": None,
         "language": "de",
@@ -391,6 +405,7 @@ GERMAN_TTS_MODELS = {
     "coqui_css10_de_vits": {
         "handler_function_key": "coqui_tts",
         "voice_cloning": False,
+        "speaker_identity": "real_person",
         "coqui_model_name": "tts_models/de/css10/vits-neon",
         "default_coqui_speaker": None,
         "language": "de",
@@ -401,6 +416,7 @@ GERMAN_TTS_MODELS = {
     "coqui_vctk_en_vits": {
         "handler_function_key": "coqui_tts",
         "voice_cloning": False,
+        "speaker_identity": "real_person",
         "coqui_model_name": "tts_models/en/vctk/vits",
         "default_coqui_speaker": "p225",
         "available_voices": ["p225", "p228", "p232", "p249"],
@@ -496,6 +512,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_kokoro_de": { # Your original ID for Kokoro
         "handler_function_key": "mlx_audio",
         "voice_cloning": False,
+        "speaker_identity": "synthetic",
         "mlx_model_path": MLX_AUDIO_KOKORO_MODEL_ID,
         "default_voice_id": MLX_AUDIO_KOKORO_DEFAULT_VOICE,
         "available_voices": MLX_AUDIO_KOKORO_VOICES,
@@ -538,6 +555,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_spark_control": {
         "handler_function_key": "mlx_audio",
         "voice_cloning": False,
+        "speaker_identity": "synthetic",
         "mlx_model_path": MLX_AUDIO_SPARK_REPO_ID,
         "default_voice_id": "female",
         "available_voices": ["female", "male"],
@@ -549,6 +567,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_bark_de": {
         "handler_function_key": "mlx_audio",
         "voice_cloning": False,
+        "speaker_identity": "synthetic",
         "mlx_model_path": "mlx-community/bark-small", # For the main MLX model
         "default_voice_id": "v2/de_speaker_3",        # This voice will be fetched from "suno/bark-small" by the patch
         "available_voices": [
@@ -667,6 +686,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_orpheus_llama": { # For the Orpheus-Llama in mlx-audio
         "handler_function_key": "mlx_audio",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "mlx_model_path": MLX_AUDIO_ORPHEUS_LLAMA_REPO_ID,
         "default_voice_id": "zac", # Orpheus-style voice name
         "available_voices": ORPHEUS_AVAILABLE_VOICES_BASE + ORPHEUS_GERMAN_VOICES,
@@ -680,6 +700,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_kokoro",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        "speaker_identity": "synthetic",
         "crispasr_backend": "kokoro",
         "crispasr_model_path": "auto",
         "default_voice_id": "af_heart",
@@ -693,6 +714,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_kokoro_de",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        "speaker_identity": "synthetic",
         "crispasr_backend": "kokoro",
         "crispasr_model_path": "auto",
         "default_voice_id": "df_victoria",
@@ -705,6 +727,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_orpheus",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "crispasr_backend": "orpheus",
         "crispasr_model_path": "auto",
         "crispasr_codec_model": "auto",
@@ -717,6 +740,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_orpheus_de",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "crispasr_backend": "orpheus",
         "crispasr_model_path": "auto:kartoffel-orpheus-de-natural",
         "crispasr_codec_model": "auto",
@@ -820,6 +844,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_melotts",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "crispasr_backend": "melotts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -831,6 +856,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_piper",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        "speaker_identity": "real_person",
         "crispasr_backend": "piper",
         "crispasr_model_path": "auto",
         "default_voice_id": None,
@@ -844,6 +870,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_bananamind_tts",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        "speaker_identity": "unknown",
         "crispasr_backend": "bananamind-tts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,

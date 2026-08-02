@@ -790,7 +790,16 @@ class TestMarkAudioFile(unittest.TestCase):
         self.assertGreater(watermark_detect(data, sample_rate=sr), 0.65)
 
     def test_marking_is_idempotent(self):
-        """Re-marking must not embed a second watermark (~6 dB SNR cost)."""
+        """Re-marking must not embed a second watermark (~6 dB SNR cost).
+
+        The reason reported depends on which robust layer the first pass left
+        behind: with C2PA available the manifest is preserved, without it the
+        measured watermark is. Either way the bytes must not change — that is
+        the property this test is for. It deliberately does not assert
+        ``reason == "already-marked"`` any more: that string used to come from
+        an early return that skipped verification entirely, which is the
+        defect ``test_metadata_marker_alone_does_not_satisfy_the_gate`` covers.
+        """
         from watermark import mark_audio_file
         path = self._path("b.wav")
         _write_tone_wav(path)
@@ -801,8 +810,58 @@ class TestMarkAudioFile(unittest.TestCase):
         with open(path, "rb") as f:
             after_second = f.read()
         self.assertTrue(second.marked)
-        self.assertEqual(after_first, after_second)
-        self.assertEqual(second.reason, "already-marked")
+        self.assertEqual(after_first, after_second, "re-marking rewrote the file")
+        self.assertNotIn("audio-watermark", second.layers,
+                         "a second watermark was embedded over the first")
+
+    def test_metadata_marker_alone_does_not_satisfy_the_gate(self):
+        """Regression: is_marked() used to short-circuit the whole function.
+
+        A file carrying only the container marker — which is what the CrispASR
+        streaming path produces, injecting the LIST/INFO chunk itself before
+        returning — was reported ``marked=True`` with no watermark embedded, no
+        manifest, and the verification gate never run. Measured confidence on
+        the delivered file was 0.625, below the 0.65 threshold.
+
+        The marker may now suppress redundant work, but it must never stand in
+        for evidence: either a robust layer is really there, or this raises.
+        """
+        import soundfile as sf
+
+        import watermark
+        from watermark import (
+            MarkingError,
+            _inject_container_metadata,
+            is_marked,
+            mark_audio_file,
+            watermark_detect,
+        )
+        # No C2PA, so the watermark is the only robust layer available and the
+        # gate has to rest on it alone.
+        original = watermark.c2pa_sign_file_ex
+        watermark.c2pa_sign_file_ex = lambda *a, **k: (False, None)
+        self.addCleanup(setattr, watermark, "c2pa_sign_file_ex", original)
+
+        path = self._path("metadata_only.wav")
+        _write_tone_wav(path)
+        _inject_container_metadata(path, ".wav")
+        self.assertTrue(is_marked(path), "precondition: the marker is present")
+
+        # CrispASR output: we do not embed for that handler, so nothing else
+        # can rescue this file and it must be refused outright.
+        with self.assertRaises(MarkingError):
+            mark_audio_file(path, handler_key="crispasr")
+
+        # Any other handler: the missing watermark is embedded rather than
+        # assumed, and the result verifies.
+        path2 = self._path("metadata_only2.wav")
+        _write_tone_wav(path2)
+        _inject_container_metadata(path2, ".wav")
+        result = mark_audio_file(path2)
+        self.assertTrue(result.marked)
+        self.assertIn("audio-watermark", result.layers)
+        data, sr = sf.read(path2, dtype="float32")
+        self.assertGreater(watermark_detect(data, sample_rate=sr), 0.65)
 
     def test_no_duplicate_metadata_chunks(self):
         from watermark import mark_audio_file
@@ -1610,6 +1669,59 @@ class TestConsentDetectionTiers(unittest.TestCase):
                    if "voice_cloning" not in cfg]
         self.assertEqual(missing, [],
                          f"models with no explicit voice_cloning key: {missing}")
+
+    def test_every_fixed_speaker_model_declares_speaker_identity(self):
+        """A model that does not clone still has to answer whose voice it is.
+
+        Art. 3(60) defines a deep fake by resemblance to an existing person,
+        not by how the resemblance was made — so ``voice_cloning: False`` is
+        not on its own an answer. A new backend must not be able to skip the
+        question by omission, which is how all 27 of these once did.
+        """
+        from config import GERMAN_TTS_MODELS
+        from watermark import SPEAKER_IDENTITY_VALUES
+        missing, bad = [], []
+        for mid, cfg in GERMAN_TTS_MODELS.items():
+            if cfg.get("voice_cloning") is not False:
+                continue
+            if "speaker_identity" not in cfg:
+                missing.append(mid)
+            elif cfg["speaker_identity"] not in SPEAKER_IDENTITY_VALUES:
+                bad.append((mid, cfg["speaker_identity"]))
+        self.assertEqual(missing, [],
+                         f"non-cloning models with no speaker_identity key: {missing}")
+        self.assertEqual(bad, [], f"invalid speaker_identity values: {bad}")
+
+    def test_real_person_preset_voice_gets_the_spoken_disclosure(self):
+        """The Art. 50(4) trigger is resemblance, not the cloning mechanism."""
+        from watermark import requires_spoken_disclosure
+        self.assertTrue(requires_spoken_disclosure(False, "real_person",
+                                                   model_id="coqui_tts_thorsten_vits"))
+        self.assertFalse(requires_spoken_disclosure(False, "synthetic",
+                                                    model_id="kokoro_onnx"))
+        # Cloning still triggers it whatever the preset voice is declared as.
+        self.assertTrue(requires_spoken_disclosure(True, "synthetic", model_id="f5_tts_german"))
+
+    def test_unknown_speaker_identity_warns_rather_than_guessing(self):
+        """Same choice as 'multilingual' disclosure languages: surface it."""
+        import watermark
+        from watermark import requires_spoken_disclosure
+        watermark._warned_speaker_identity.discard("some_model")
+        with self.assertLogs("CrispTTS.watermark", level="WARNING") as captured:
+            result = requires_spoken_disclosure(False, "unknown", model_id="some_model")
+        self.assertFalse(result, "'unknown' must not silently prepend a disclosure")
+        self.assertIn("Art. 3(60)", "\n".join(captured.output))
+        self.assertIn("--speaker-identity", "\n".join(captured.output))
+
+    def test_speaker_identity_override_beats_config(self):
+        from watermark import resolve_speaker_identity
+        cfg = {"speaker_identity": "synthetic"}
+        self.assertEqual(resolve_speaker_identity(cfg, "real_person"), "real_person")
+        self.assertEqual(resolve_speaker_identity(cfg), "synthetic")
+        # Anything unrecognised, from either source, resolves to unknown.
+        self.assertEqual(resolve_speaker_identity(cfg, "nonsense"), "unknown")
+        self.assertEqual(resolve_speaker_identity({"speaker_identity": "yes"}), "unknown")
+        self.assertEqual(resolve_speaker_identity(None), "unknown")
 
     def test_reference_recording_beats_explicit_false(self):
         """Handing the system a voice to imitate always needs consent."""

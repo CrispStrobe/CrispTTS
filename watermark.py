@@ -1076,6 +1076,96 @@ def log_consent_attestation(
 
 
 # ---------------------------------------------------------------------------
+# Whose voice is it? (EU AI Act Art. 3(60) / Art. 50(4))
+# ---------------------------------------------------------------------------
+#
+# Art. 3(60) defines a deep fake by what the output *resembles* — "an existing
+# person" — not by how the resemblance was produced. Cloning from a reference
+# recording at inference time is only the most obvious route there; a
+# single-speaker model finetuned on one identifiable person's recordings
+# produces audio of that person just as much, and the audience has no way to
+# tell the two apart.
+#
+# So the spoken Art. 50(4) disclosure is keyed on this, not on `voice_cloning`
+# alone. The voice donor's consent to their recordings being used for training
+# is a licensing question; it is not the audience knowing the audio is
+# synthetic, which is what Art. 50(4) is about.
+
+#: Permitted values for a model's ``speaker_identity`` config key.
+#:
+#: ``real_person``  the preset voice is that of an identifiable individual
+#:                  (a named donor, or a corpus speaker such as VCTK's p225).
+#: ``synthetic``    a designed or blended voice that is not any one person.
+#: ``unknown``      the training voices' provenance is not established. Treated
+#:                  as a question the deployer must answer, not as "synthetic":
+#:                  the same choice Phase 19 made for ``"multilingual"``
+#:                  disclosure languages, and for the same reason.
+SPEAKER_IDENTITY_VALUES = frozenset({"real_person", "synthetic", "unknown"})
+
+_warned_speaker_identity: set[str] = set()
+
+
+def resolve_speaker_identity(model_config: dict | None = None,
+                             override: str | None = None) -> str:
+    """Resolve whose voice a fixed-speaker model produces.
+
+    Precedence: an explicit ``--speaker-identity`` override, then the model's
+    declared ``speaker_identity``, then ``"unknown"``. An unrecognised value
+    resolves to ``"unknown"`` rather than being trusted.
+    """
+    if override:
+        value = str(override).strip().lower()
+        if value in SPEAKER_IDENTITY_VALUES:
+            return value
+        logger.warning("Unrecognised --speaker-identity %r; treating as 'unknown'. "
+                       "Expected one of: %s", override,
+                       ", ".join(sorted(SPEAKER_IDENTITY_VALUES)))
+        return "unknown"
+    if model_config:
+        declared = model_config.get("speaker_identity")
+        if declared in SPEAKER_IDENTITY_VALUES:
+            return declared
+        if declared is not None:
+            logger.warning("Model declares an unrecognised speaker_identity %r; "
+                           "treating as 'unknown'.", declared)
+    return "unknown"
+
+
+def requires_spoken_disclosure(is_voice_cloning: bool, speaker_identity: str,
+                               model_id: str | None = None) -> bool:
+    """Whether this output needs the spoken Art. 50(4) disclosure prepended.
+
+    True when the voice is cloned from a reference recording, or when the
+    model's preset voice belongs to an identifiable person. ``"unknown"``
+    warns once per model and does **not** force a disclosure: guessing wrong in
+    that direction would prepend a sentence to every stock TTS voice, and a
+    warning nobody can act on is worse than one they can.
+    """
+    if is_voice_cloning:
+        return True
+    if speaker_identity == "real_person":
+        return True
+    if speaker_identity == "unknown":
+        _warn_unknown_speaker_identity_once(model_id)
+    return False
+
+
+def _warn_unknown_speaker_identity_once(model_id: str | None) -> None:
+    """Warn once per model that the Art. 50(4) question is unanswered."""
+    key = model_id or "<unknown-model>"
+    if key in _warned_speaker_identity:
+        return
+    _warned_speaker_identity.add(key)
+    logger.warning(
+        "Model '%s' does not record whether its preset voice belongs to a real "
+        "person, so no spoken AI disclosure was added. If the voice is that of an "
+        "identifiable individual, the output is a deep fake under EU AI Act "
+        "Art. 3(60) and you carry the Art. 50(4) duty to disclose it. Pass "
+        "--speaker-identity real_person to have CrispTTS prepend the disclosure, "
+        "or --speaker-identity synthetic to silence this.", key)
+
+
+# ---------------------------------------------------------------------------
 # Spoken AI disclaimer for voice-cloned audio (EU AI Act Art. 50(4))
 # ---------------------------------------------------------------------------
 
@@ -2356,6 +2446,22 @@ def _inject_container_metadata(filepath: str, ext: str) -> bool:
     return False
 
 
+def _existing_watermark_detectable(filepath: str, ext: str) -> bool:
+    """True if `filepath` already carries a watermark this detector can read.
+
+    Used to decide whether a re-embed would be redundant. A failure to decode
+    answers "no": that sends the caller down the embedding path, which will
+    surface the real decode error rather than swallowing it here.
+    """
+    try:
+        pcm, sr = _read_pcm_any(filepath, ext)
+    except Exception as e:
+        logger.debug("Could not measure an existing watermark on %s: %s", filepath, e)
+        return False
+    conf = watermark_detect(pcm, sample_rate=sr)
+    return conf is not None and conf >= _VERIFY_THRESHOLD
+
+
 def mark_audio_file(
     filepath: str,
     *,
@@ -2374,9 +2480,11 @@ def mark_audio_file(
     metadata, optionally attaches C2PA content credentials, and verifies
     that the result is detectable.
 
-    Idempotent: a file that already carries the CrispTTS marker is left
-    untouched rather than watermarked a second time (double embedding costs
-    roughly 6 dB of SNR and adds no provenance).
+    Idempotent: a file whose watermark is already *detectable* is not
+    watermarked a second time (double embedding costs roughly 6 dB of SNR and
+    adds no provenance). That is decided by measuring the audio, not by the
+    presence of the container marker — a file carrying only the marker string
+    goes down the full path and is gated like any other output.
 
     Args:
         filepath: Audio file to mark in place.
@@ -2427,10 +2535,15 @@ def mark_audio_file(
         _warn_unmarked_once()
         return MarkResult(marked=False, backend=_backend, reason="disabled via CRISPTTS_NO_WATERMARK")
 
-    if is_marked(filepath):
-        logger.debug("Already marked, skipping re-embed: %s", filepath)
-        return MarkResult(marked=True, backend=_backend, layers=("already-marked",),
-                          reason="already-marked")
+    # Container metadata says *someone* marked this file. That is a hint about
+    # what to do next, not a result: the marker is a strippable string, and a
+    # file carrying nothing else is exactly the output this function exists to
+    # refuse. Measured on the CrispASR streaming path, which injects the WAV
+    # LIST/INFO chunk itself before returning — returning early here delivered
+    # audio at watermark confidence 0.625 (below the 0.65 threshold) with no
+    # manifest, reported as marked=True. So it now only suppresses *re-doing*
+    # work that is already done; the verification gate below still decides.
+    already_marked = is_marked(filepath)
 
     ext = os.path.splitext(filepath)[1].lower()
     if ext not in _SOUNDFILE_EXTS and ext not in _PYDUB_EXTS:
@@ -2486,6 +2599,13 @@ def mark_audio_file(
         # detector can find.
         logger.debug("Skipping the PCM embed for CrispASR output; its own watermark "
                      "is measured during verification rather than assumed.")
+    elif already_marked and _existing_watermark_detectable(filepath, ext):
+        # A file this function has already been through. Re-embedding costs
+        # ~6 dB of SNR and adds no provenance, so skip it — but only because
+        # the watermark was *measured*, not because a metadata string said so.
+        logger.debug("Watermark already present and detectable in %s; skipping re-embed.",
+                     filepath)
+        layers.append("audio-watermark:existing")
     else:
         try:
             pcm, sample_rate = _read_pcm_any(filepath, ext)
@@ -2506,15 +2626,20 @@ def mark_audio_file(
         layers.append("audio-watermark")
 
     # --- Layer 2: container metadata (best-effort; strippable by design) ---
-    try:
-        if _inject_container_metadata(filepath, ext):
-            layers.append("metadata")
-        else:
-            logger.warning("Container metadata not injected for %s "
-                           "(install mutagen for FLAC/Opus). Audio watermark is unaffected.",
-                           filepath)
-    except Exception as e:
-        logger.warning("Container metadata injection failed for %s: %s", filepath, e)
+    if already_marked:
+        # The marker is already in the container; injecting a second LIST/INFO
+        # chunk or TXXX frame would only duplicate it.
+        layers.append("metadata:existing")
+    else:
+        try:
+            if _inject_container_metadata(filepath, ext):
+                layers.append("metadata")
+            else:
+                logger.warning("Container metadata not injected for %s "
+                               "(install mutagen for FLAC/Opus). Audio watermark is unaffected.",
+                               filepath)
+        except Exception as e:
+            logger.warning("Container metadata injection failed for %s: %s", filepath, e)
 
     # --- Layer 3: C2PA content credentials (optional) ---
     c2pa_signer = None

@@ -56,8 +56,10 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - C2PA content credentials signed by default for WAV/MP3/FLAC/M4A (core dep;
     c2pa-audio / CrispASR used as fast paths when present)
   - Voice-cloning consent gate (`--i-have-rights` CLI / `"i_have_rights": true` API)
-  - Spoken AI disclaimer prepended to voice-cloned audio, in all 24 EU official
-    languages plus zh/ja/ko (`--list-disclosure-langs`), bundled for offline use
+  - Spoken AI disclaimer prepended to voice-cloned audio — and to models whose
+    preset voice is an identifiable person (`speaker_identity`,
+    `--speaker-identity`) — in all 24 EU official languages plus zh/ja/ko
+    (`--list-disclosure-langs`), bundled for offline use
   - Persistent consent audit log at `~/.cache/crisptts/consent_audit.log`,
     owner-only, auto-pruned, with `--consent-log-erase` for GDPR Art. 17
 - **CrispASR Integration**:
@@ -88,7 +90,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
-  - 433 unit and live tests
+  - 439 unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -751,9 +753,32 @@ Voice-cloning models require explicit consent attestation before synthesis is al
    dicts that predate the explicit key. This tier fails *open*, which is why
    tier 2 exists.
 
-**Spoken disclosure** — prepended to cloned output, in **all 24 EU official
-languages** plus Chinese, Japanese and Korean (27 total; `--list-disclosure-langs`
-prints them). Art. 50 governs content placed on the EU market, so a disclosure
+**Whose voice is it?** Cloning from a reference recording is not the only route
+to a deepfake. Art. 3(60) defines one by what the output *resembles* — "an
+existing person" — not by how the resemblance was produced, and a single-speaker
+model finetuned on one identifiable person's recordings produces audio of that
+person just as much. The voice donor's consent to their recordings being used
+for training is a licensing question; it is not the audience knowing the audio
+is synthetic, which is what Art. 50(4) is about.
+
+So every model declaring `voice_cloning: false` additionally declares
+`speaker_identity`, and a test enforces it:
+
+| Value | Meaning | Spoken disclosure |
+|---|---|---|
+| `real_person` | The preset voice is an identifiable individual — a named donor, or a corpus speaker such as VCTK's `p225` | **Yes**, as for cloning |
+| `synthetic` | A designed or blended voice that is not any one person | No |
+| `unknown` | Provenance not established | No, but **warns once per model** |
+
+`unknown` is a question, not a default: guessing "synthetic" would silently
+drop a disclosure that may be owed, and guessing "real_person" would prepend a
+sentence to every stock TTS voice. Override per run with
+`--speaker-identity real_person|synthetic|unknown` (API: `"speaker_identity"`)
+when you know more about a voice than the config does.
+
+**Spoken disclosure** — prepended to cloned output and to `real_person` preset
+voices, in **all 24 EU official languages** plus Chinese, Japanese and Korean
+(27 total; `--list-disclosure-langs` prints them). Art. 50 governs content placed on the EU market, so a disclosure
 an EU audience can understand means any EU official language — a German
 sentence in front of Greek audio discloses nothing to a Greek listener. The
 German and English wording is kept identical to Susurrus's `disclosure.spoken`
@@ -817,8 +842,9 @@ proposals since adoption.
   reference recording — and refuses to synthesize at all if that gate cannot
   be evaluated
 - Never plays audio to a listener before it has been marked and verified
-- Prepends a spoken AI disclosure to voice-cloned output, in any of the 24 EU
-  official languages, and refuses to deliver cloned audio without one
+- Prepends a spoken AI disclosure to voice-cloned output — and to models whose
+  preset voice is an identifiable person — in any of the 24 EU official
+  languages, and refuses to deliver such audio without one
 
 **What remains your responsibility as the deployer** (Art. 50(4)):
 
@@ -835,6 +861,15 @@ proposals since adoption.
 - Checking the voice/model licences you use (see the licensing section above)
 - GDPR: a cloned voice is personal data, and the consent audit log contains
   reference-audio paths — see *Audit log retention* below
+- **Art. 50(5) accessibility.** The spoken disclosure is audio, so it does not
+  reach a deaf or hard-of-hearing audience. Art. 50(5) requires the disclosure
+  to conform to the applicable accessibility requirements, so wherever you
+  publish with captions, subtitles or a transcript, the disclosure sentence
+  must be carried into them — it is the first thing in the audio, so a verbatim
+  transcript already contains it. Do not strip it
+- **Answering `speaker_identity` for models CrispTTS records as `unknown`.**
+  The warning names the model; if its preset voice is an identifiable person,
+  pass `--speaker-identity real_person`
 - **Art. 4 (AI literacy)**: ensuring the people operating this tool understand
   what it does and what its output is. In practice, for CrispTTS, that means
   whoever runs it should have read this section
@@ -844,7 +879,11 @@ categorisation and no emotion *recognition* (Kartoffelbox's emotion control is
 emotion *synthesis*), so Art. 5 prohibited practices do not engage; it is not
 an Annex III high-risk system; and single-purpose TTS models are not
 general-purpose AI models, so Chapter V obligations do not attach to the
-models converted by `convert_f5_to_mlx.py`.
+models converted by `convert_f5_to_mlx.py`. **Art. 50(1)** (informing a person
+that they are interacting with an AI system) does not attach either: CrispTTS
+synthesizes audio on request and holds no conversation with anyone — if you
+embed it in something that *does* talk to people, that system is the one Art.
+50(1) binds, and the duty is yours.
 
 ### Audit log retention
 

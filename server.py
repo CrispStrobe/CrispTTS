@@ -182,6 +182,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
         speed = body.get("speed", 1.0)
         i_have_rights = body.get("i_have_rights", False)
         disclosure_lang = body.get("disclosure_lang")
+        speaker_identity = body.get("speaker_identity")
 
         if not model:
             self._send_error(400, "Missing 'model' field")
@@ -228,10 +229,22 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
         # request warms the cache and every later caller receives cloned audio
         # without attesting and without an entry in the consent audit log.
         _is_voice_cloning = False
+        _needs_disclosure = False
         try:
-            from watermark import log_consent_attestation, requires_consent
+            from watermark import (
+                log_consent_attestation,
+                requires_consent,
+                requires_spoken_disclosure,
+                resolve_speaker_identity,
+            )
             _is_voice_cloning = requires_consent(model, handler_key, effective_voice,
                                                  model_config=model_config)
+            # A model whose preset voice is an identifiable person produces a
+            # deep fake too (Art. 3(60)), so it gets the disclosure as well.
+            _needs_disclosure = requires_spoken_disclosure(
+                _is_voice_cloning,
+                resolve_speaker_identity(model_config, speaker_identity),
+                model_id=model)
             if _is_voice_cloning and not i_have_rights:
                 self._send_error(403,
                     f"Model '{model}' involves voice cloning. Include "
@@ -257,8 +270,13 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
         _cache_params = {}
         if speed != 1.0:
             _cache_params["speed"] = speed
-        if _is_voice_cloning and disclosure_lang:
+        if _needs_disclosure and disclosure_lang:
             _cache_params["disclosure_lang"] = disclosure_lang
+        # Likewise: speaker_identity decides *whether* a disclosure is prepended,
+        # so a clip made without one is not a valid response to a request that
+        # asked for one.
+        if speaker_identity:
+            _cache_params["speaker_identity"] = speaker_identity
         _cache_params_json = json.dumps(_cache_params, sort_keys=True) if _cache_params else None
 
         try:
@@ -347,7 +365,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             # --- Spoken disclaimer for voice-cloned audio (Art. 50(4)) ---
             # Applies to every response format, not only WAV. Fails closed:
             # a cloned voice without its disclosure is a 500, not a response.
-            if _is_voice_cloning:
+            if _needs_disclosure:
                 try:
                     from watermark import DisclosureError, prepend_disclaimer_file
                 except ImportError:

@@ -437,13 +437,21 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
 
             # --- Voice-cloning consent gate (same rules as real synthesis) ---
             _is_voice_cloning = False
+            _needs_disclosure = False
             try:
                 from watermark import log_consent_attestation as _test_log_consent
                 from watermark import requires_consent as _test_requires_consent
+                from watermark import requires_spoken_disclosure as _test_needs_disclosure
+                from watermark import resolve_speaker_identity as _test_speaker_identity
                 _voice_str = str(voice_id_for_test) if voice_id_for_test else None
                 _is_voice_cloning = _test_requires_consent(
                     model_id, handler_key, _voice_str,
                     model_config=current_config_for_handler)
+                _needs_disclosure = _test_needs_disclosure(
+                    _is_voice_cloning,
+                    _test_speaker_identity(current_config_for_handler,
+                                           getattr(cli_args, 'speaker_identity', None)),
+                    model_id=model_id)
                 if _is_voice_cloning and not getattr(cli_args, 'i_have_rights', False):
                     current_model_status = "SKIPPED (Consent Required)"
                     logger.info(f"Skipping voice-cloning model '{model_id}': --i-have-rights not set.")
@@ -523,7 +531,7 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                     # obligations, not a relaxed subset.
                     try:
                         from watermark import DisclosureError, MarkingError, mark_audio_file
-                        if (_is_voice_cloning
+                        if (_needs_disclosure
                                 and not getattr(cli_args, 'no_spoken_disclaimer', False)):
                             from watermark import prepend_disclaimer_file
                             prepend_disclaimer_file(
@@ -908,10 +916,23 @@ def run_synthesis(args):
     if handler_func:
         # --- Voice-cloning consent gate ---
         _is_voice_cloning = False
+        _needs_disclosure = False
         try:
-            from watermark import log_consent_attestation, requires_consent
+            from watermark import (
+                log_consent_attestation,
+                requires_consent,
+                requires_spoken_disclosure,
+                resolve_speaker_identity,
+            )
             _is_voice_cloning = requires_consent(args.model_id, handler_key, effective_voice_id,
                                                  model_config=current_config_for_handler)
+            # Cloning is not the only route to a deep fake: a model whose preset
+            # voice is an identifiable person produces one too. See Art. 3(60).
+            _needs_disclosure = requires_spoken_disclosure(
+                _is_voice_cloning,
+                resolve_speaker_identity(current_config_for_handler,
+                                         getattr(args, 'speaker_identity', None)),
+                model_id=args.model_id)
             if _is_voice_cloning and not getattr(args, 'i_have_rights', False):
                 logger.error(
                     "Model '%s' involves voice cloning. You must pass --i-have-rights to attest "
@@ -1090,7 +1111,7 @@ def run_synthesis(args):
             # Skipped for an SSML segment: that temp file is a fragment of the
             # output, never the output. Its parent call disclaims and marks the
             # combined file. See _synthesize_ssml_segments().
-            if (_is_voice_cloning and args.output_file and os.path.isfile(args.output_file)
+            if (_needs_disclosure and args.output_file and os.path.isfile(args.output_file)
                     and not getattr(args, 'no_spoken_disclaimer', False)
                     and not getattr(args, '_ssml_segment', False)):
                 try:
@@ -1337,6 +1358,13 @@ def main_cli_entrypoint():
              "meaningful disclosure with multilingual models, whose output language\n"
              "depends on the input text rather than the model. --list-disclosure-langs\n"
              "shows what is available.")
+    synth_group.add_argument("--speaker-identity", type=str, default=None,
+        choices=["real_person", "synthetic", "unknown"],
+        help="Whether a fixed-speaker model's preset voice belongs to an identifiable\n"
+             "person. 'real_person' makes the output a deep fake under EU AI Act\n"
+             "Art. 3(60) and prepends the spoken disclosure, as voice cloning does.\n"
+             "Overrides the model's declared speaker_identity; use it when you know\n"
+             "more about a voice than the config does.")
     synth_group.add_argument("--lexicon", type=str, default=None, metavar="TSV_PATH",
         help="Path to a word→phoneme TSV file for custom pronunciation (CrispASR backends).")
     synth_group.add_argument("--batch", action="store_true",

@@ -1506,3 +1506,98 @@ requires the watermark to verify.
 Two pre-existing tests asserted the old behaviour (`output_carries_c2pa` false
 for FLAC; `.opus` passing preflight unconditionally) and were updated rather
 than deleted — both now state the rule the code implements and why.
+
+## Phase 22: Art. 50 audit — the marker that stood in for evidence
+
+Audited 2026-08-02. Phase 20 found two paths marking never reached. This one
+found a path marking *did* reach and declined to do anything on, plus a gap in
+what triggers the Art. 50(4) spoken disclosure at all.
+
+### 22.1 A metadata string was accepted as proof of marking (the defect)
+
+`mark_audio_file()` opened with `if is_marked(filepath): return
+MarkResult(marked=True, layers=("already-marked",))`. `is_marked()` is a scan
+for a **byte string in container metadata** — the strippable layer the same
+function's own comment says "never qualifies". That early return sat above the
+manifest check, the watermark embed, the C2PA signing and the verification
+gate, so a file carrying only the marker was reported marked and delivered
+with nothing else.
+
+Reachable through `crispasr_handler.synthesize_with_crispasr_streaming()`,
+which injected the WAV LIST/INFO chunk itself before returning. Measured,
+`--model-id crispasr_kokoro --stream --output-file out.wav`:
+
+| | delivered file |
+|---|---|
+| watermark confidence | **0.625** (threshold 0.65 — the detector's floor) |
+| C2PA manifest | none |
+| container marker | present |
+| after a plain transcode | nothing left |
+
+`mark_audio_file` returned `marked=True`. This is the same shape as 19.3 and
+20.1: the gate was invoked and did not run. It also makes Phase 19's "any
+`--output-file` is still gated" false as written.
+
+The marker now sets `already_marked`, which only suppresses *redundant work*:
+the PCM re-embed is skipped when `_existing_watermark_detectable()` measures a
+watermark that is really there, and metadata injection is skipped because it is
+already in the container. Signing and the verification gate run regardless.
+The CrispASR streaming handler no longer marks at all — a handler writes audio,
+marking has one owner — which removes the trigger as well as the fault.
+
+Moving the check also fixed an ordering bug behind it: `is_marked` preceded the
+`preserved_manifest` branch, so a file with both metadata and an AI-asserting
+manifest was reported `already-marked` with its watermark never measured,
+instead of `c2pa:preserved`.
+
+### 22.2 The deepfake disclosure keyed on the mechanism, not the resemblance
+
+The spoken Art. 50(4) disclosure fired on `voice_cloning` alone, so the 27
+models declaring `voice_cloning: false` never received one. Several are
+finetunes of named, identifiable people — `coqui_tts_thorsten_{ddc,vits,dca}`
+(Thorsten Müller's published voice), `coqui_css10_de_vits`,
+`coqui_vctk_en_vits` (109 recorded individuals), and the Piper community voice
+catalogue used by `piper_local` and `crispasr_piper`.
+
+Art. 3(60) defines a deep fake by what the output *resembles*, not by how the
+resemblance was produced. A voice donor consenting to their recordings being
+used for training is a licensing fact; it is not the audience knowing the audio
+is synthetic.
+
+Every non-cloning model now declares `speaker_identity`:
+`real_person` (7) gets the disclosure exactly as cloning does, `synthetic` (7)
+does not, `unknown` (13) warns once per model naming Art. 3(60) and
+`--speaker-identity`. `unknown` deliberately does not force a disclosure —
+the same reasoning as 19.1's `"multilingual"`: surface the question rather than
+guess, in either direction. `--speaker-identity` / `"speaker_identity"`
+overrides per run, and joins the server cache key for the same reason
+`disclosure_lang` did in 19.1 — it decides whether a disclosure is *in* the
+audio.
+
+A test asserts every `voice_cloning: false` model declares a valid value, so a
+new backend cannot skip the question the way all 27 of these did.
+
+### 22.3 Art. 50(1) and 50(5) recorded
+
+Phase 19.5 recorded Art. 5, Annex III and Chapter V as checked-and-not-
+applicable. Art. 50(1) and 50(5) were neither implemented nor recorded.
+
+- **50(1)** — not applicable, and now says so: CrispTTS holds no conversation.
+  Embed it in something that talks to people and that system carries the duty.
+- **50(5)** — the spoken disclosure is audio, so it does not reach a deaf or
+  hard-of-hearing audience. Added to the deployer list: carry the disclosure
+  sentence into captions and transcripts. It is the first thing in the audio,
+  so a verbatim transcript already has it; the duty is not to strip it.
+
+### Status: COMPLETE — 439 tests pass (6 new), ruff clean
+
+22.1 was invisible to the 433 tests that preceded it for a specific reason:
+`test_streaming_still_marks_the_output_file` patches `mark_audio_file` with a
+stub, so it proved the call happened and could not see that the real one
+returned early. The two new regression tests run the real marking path and were
+both confirmed to fail against the previous code.
+
+### Deployer-side, and not closable in code
+
+Unchanged from Phase 19, plus: answering `speaker_identity` for the models
+recorded as `unknown`, and carrying the disclosure into captions (50(5)).
