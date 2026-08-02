@@ -463,7 +463,7 @@ def _detect_audioseal_python(pcm: np.ndarray, sample_rate: int = 24000) -> float
     return float(result.mean().item())
 
 
-def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 24000,
+def watermark_embed(pcm: np.ndarray, alpha: float | None = None, sample_rate: int = 24000,
                     force: bool = False) -> np.ndarray:
     """Embed AI-generated watermark. Dispatches to the best available backend.
 
@@ -471,7 +471,14 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 240
 
     Args:
         pcm: 1-D float32 mono PCM array.
-        alpha: Strength for spread-spectrum (ignored when neural backends active).
+        alpha: Strength for spread-spectrum (ignored when neural backends
+            active). ``None`` selects the active band's default — 0.05 for the
+            speech band, 0.08 for legacy. This default used to be a hardcoded
+            0.08: the legacy band's value, left behind when the comb moved into
+            the speech band. Every embed therefore ran 1.6x hotter than the
+            band was designed for, costing 3-4 dB of SNR for a confidence gain
+            that was never needed (both alphas clear the 0.65 threshold by a
+            wide margin after resampling and 64 kbps MP3).
         sample_rate: Audio sample rate (needed for neural backend resampling).
         force: Embed even when CRISPTTS_NO_WATERMARK is set. Used by the
             watermark floor (see :func:`preflight_marking`): when the output
@@ -509,7 +516,10 @@ def watermark_embed(pcm: np.ndarray, alpha: float = 0.08, sample_rate: int = 240
     if _backend == "audioseal_crispasr" and _crispasr_wm is not None:
         try:
             wm_pcm = pcm.copy()
-            _crispasr_wm.watermark_embed(wm_pcm, alpha)
+            # The C binding takes a float, not None — resolve the band default
+            # here rather than pushing Python's sentinel across the boundary.
+            _crispasr_wm.watermark_embed(
+                wm_pcm, wm_params(_FFT_SIZE)[2] if alpha is None else alpha)
             logger.debug("AudioSeal (crispasr) watermark embedded (%d samples).", len(pcm))
             return wm_pcm
         except Exception as e:

@@ -1625,3 +1625,131 @@ voice), `crispasr_melotts` and `crispasr_bananamind_tts`.
 A mixed model like SauerkrautTTS is classified by what it *can* speak as, not
 by its safest voice: `speaker_identity` is per model, and the fail-safe
 direction is the one that discloses.
+
+## Phase 23: Art. 50 audit — the strength the band migration left behind (v0.9.3)
+
+Audited 2026-08-02, hours after Phase 22. Phases 16–22 hardened *which paths*
+get marked. This one asked what the mark actually is, and measured it instead
+of reading the table. Two of the three findings are in documentation, and the
+documentation was describing a watermark the tool does not embed.
+
+### 23.1 The legacy alpha survived the move into the speech band (the defect)
+
+`wm_params()` returns a per-band default strength: 0.05 for the speech band,
+0.08 for the legacy wideband comb. `spread_spectrum_embed()` honours it — pass
+`alpha=None` and you get the band's own value. But `watermark_embed()`, the
+only function `mark_audio_file()` ever calls, declared:
+
+```python
+def watermark_embed(pcm, alpha: float = 0.08, ...)
+```
+
+and `mark_audio_file()` calls it without an alpha (`watermark.py:2622`). 0.08 is
+the *legacy* band's strength. When #260 moved the comb into the speech band it
+retuned the band and left the caller's default behind, so every file CrispTTS
+has marked since ran 1.6x hotter than the band was designed for.
+
+Measured over five 20 s segments of real speech, three sample rates:
+
+| | alpha 0.05 (designed) | alpha 0.08 (in use) |
+|---|---|---|
+| SNR, mean | 19.6–25.1 dB | 15.5–22.1 dB |
+| SNR, worst segment | 14.2 dB | 9.6 dB |
+| Detection after 64 kbps MP3, worst | 0.750 | 0.844 |
+
+Both clear the 0.65 threshold by a wide margin under every attack tested, so
+the 3–4 dB was bought with nothing. Default is now `None`; the
+`audioseal_crispasr` branch resolves the band default before crossing into the
+C binding, which takes a float.
+
+Two regression tests: one asserts `watermark_embed()` output is identical to
+`spread_spectrum_embed(alpha=wm_params(...)[2])`, which keeps the two in step if
+the band is retuned again; one asserts the default is quieter than 0.08. Both
+confirmed to fail against the previous code.
+
+Files marked by earlier versions stay valid — louder than intended, not weaker.
+
+### 23.2 The SNR figure came from one lucky segment
+
+`readme.md` claimed "~39.5 dB on speech" (and "~38 dB" in the feature list).
+Measured across five segments the embed is **20–25 dB mean, 14–17 dB worst
+case** at the designed alpha, and 9.6 dB worst case at the alpha actually in
+use. 39.5 dB is reproducible only on segment 0 of `german.wav`.
+
+The gap matters beyond accuracy: "imperceptible" was doing real work in the
+Art. 50(2) argument, since inaudibility is what makes an always-on watermark
+acceptable. At 10–17 dB on sparse passages that claim does not hold. The README
+now says low-level rather than imperceptible and points at WavMark for anyone
+who needs true inaudibility.
+
+### 23.3 The comb's band is bin-indexed, so it moves with the sample rate
+
+`wm_params()` computes `lo_bin = n_fft // 16`, `hi_bin = n_fft // 5` — pure bin
+indices, with the comments ("~1.5 kHz @ 24 kHz") anchored to CrispASR's rate.
+The occupied frequency range therefore scales with the file:
+
+| Sample rate | Comb occupies |
+|---|---|
+| 16 kHz | ~1.0–3.2 kHz |
+| 24 kHz | ~1.5–4.8 kHz (the design target) |
+| 44.1 kHz | ~2.8–8.8 kHz |
+| 48 kHz | ~3.0–9.6 kHz |
+
+Measured on 44.1 kHz speech, only 31% of the watermark's residual energy lands
+in the 1.5–4.8 kHz band the README named; 37% sits in 4.8–8 kHz and 25% above
+8 kHz. Several shipped backends output 44.1 or 48 kHz (MeloTTS, VoxCPM2, MOSS,
+Dots.TTS), so this is the common case, not an edge one.
+
+**Not changed.** CrispASR addresses the comb by bin index too, so interop is
+intact, and detection is unaffected at every rate tested. Pinning the band to
+hertz would break bit-compatibility with existing marked files for a
+perceptual gain that has not been shown to matter. Recorded and documented
+rather than fixed; the README now gives the per-rate mapping instead of a
+single wrong number.
+
+### 23.4 Two compliance analyses that were assumed, never written down
+
+Neither is a code change; both were missing from an audit trail that otherwise
+records its reasoning.
+
+- **Code of Practice on Transparency of AI-generated Content** (Art. 50(7)).
+  Zero mentions across PLAN.md and readme.md before this phase. It is voluntary
+  and CrispTTS is not a signatory, but it is the Commission's designated route
+  to demonstrate Art. 50(2) compliance predictably. The Code asks for *layered*
+  marking on the express ground that no single technique meets all four
+  Art. 50(2) criteria — which is the architecture already built. README now
+  carries the clause-by-clause mapping and names the two residual gaps, both of
+  which are about third parties reading the mark: the untrusted certificate and
+  a spread-spectrum watermark nobody else implements.
+
+- **Whether Art. 50 binds this project at all.** Every prior phase assumed
+  provider status. Art. 3(10) qualifies "making available" with *in the course
+  of a commercial activity*, which a non-commercial FOSS release has a real
+  argument for never crossing. The stricter reading stays — it is the safe one
+  — but it is now recorded as an assumption with its counter-argument, not as
+  settled fact. Also recorded: the Art. 50(2) grace period to 2 Dec 2026 for
+  systems on the market before 2 Aug 2026, which covers CrispTTS.
+
+### 23.5 The certificate limit, stated where it is relied on
+
+`c2pa-python` is a core dependency because the watermark is Crisp-readable only
+and Art. 50(2) asks for interoperability. The default signer is the bundled dev
+certificate, so verifiers parse the manifest and report the signer untrusted:
+interoperable in format, not in trust. The code already warned once per run and
+distinguished `self-signed` from `ca-issued` in `MarkResult`, but the README
+listed C2PA under "what CrispTTS does for you" with no caveat at the point of
+reliance. Now cross-referenced, with the `--c2pa-cert` / `--c2pa-key` route
+spelled out.
+
+Not closable in code. It needs a certificate issued to a real identity.
+
+### Deliberately not changed
+
+The fail-open residuals from Phases 19–22 are design decisions, re-confirmed
+rather than revisited: `speaker_identity: unknown` warns without forcing a
+disclosure; `--stream --play-direct` plays audio that never passes the marking
+gate, under a warning; and the `--allow-unmarked` / `--no-watermark` /
+`--accept-marking-responsibility` / `--no-spoken-disclaimer` hatches each hand
+the duty back to an operator who has said so explicitly.
+
+### Status: COMPLETE — 441 tests pass (2 new), ruff clean

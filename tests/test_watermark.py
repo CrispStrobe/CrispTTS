@@ -541,6 +541,37 @@ class TestWatermarkEmbedDispatcher(unittest.TestCase):
         _ = watermark_embed(pcm)
         np.testing.assert_array_equal(pcm, original)
 
+    def test_default_alpha_is_the_band_default_not_legacy(self):
+        """An unspecified alpha must follow the active band, not a hardcoded value.
+
+        The comb moved into the speech band (alpha 0.05) but watermark_embed
+        kept the legacy band's 0.08 as its signature default, so every real
+        embed ran 1.6x hotter than designed and lost 3-4 dB of SNR. Asserting
+        equivalence to the resolved band default keeps the two in step if the
+        band is ever retuned again.
+        """
+        from watermark import _FFT_SIZE, spread_spectrum_embed, watermark_embed, wm_params
+        band_alpha = wm_params(_FFT_SIZE)[2]
+        pcm = self._make_sine(sr=24000, duration=2.0)
+        np.testing.assert_allclose(
+            watermark_embed(pcm, sample_rate=24000),
+            spread_spectrum_embed(pcm, alpha=band_alpha),
+            rtol=1e-6, atol=1e-6,
+            err_msg="watermark_embed() is not using the active band's default alpha")
+
+    def test_default_alpha_is_quieter_than_legacy(self):
+        """The band default must be measurably gentler than the legacy 0.08."""
+        from watermark import spread_spectrum_embed, watermark_embed
+
+        def snr(clean, marked):
+            return 10 * np.log10(np.sum(clean ** 2) / np.sum((marked - clean) ** 2))
+
+        pcm = self._make_sine(sr=24000, duration=2.0)
+        self.assertGreater(
+            snr(pcm, watermark_embed(pcm, sample_rate=24000)),
+            snr(pcm, spread_spectrum_embed(pcm, alpha=0.08)),
+            "default embed should be quieter than the legacy alpha")
+
 
 class TestC2paSigning(unittest.TestCase):
     """C2PA signing works out of the box, with no user-supplied credential."""

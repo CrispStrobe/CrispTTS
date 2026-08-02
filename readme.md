@@ -50,7 +50,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - Chatterbox Python (Kartoffelbox)
 - **AI Audio Watermarking & Provenance**:
   - WavMark neural watermark (MIT license — code + model weights; `pip install wavmark`)
-  - Spread-spectrum watermark (always on, imperceptible, ~38 dB SNR)
+  - Spread-spectrum watermark (always on, low-level — 20–25 dB SNR on speech)
   - AudioSeal neural watermark (optional upgrade via `pip install audioseal` or CrispASR GGUF)
   - WAV LIST/INFO, MP3 ID3v2, FLAC Vorbis comment, and Opus/OGG metadata marking audio as AI-generated
   - C2PA content credentials signed by default for WAV/MP3/FLAC/M4A (core dep;
@@ -600,26 +600,57 @@ which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 
 ### Robustness of the built-in fallback
 
-The built-in spread-spectrum watermark places a 32-bin comb inside the speech
-band (~1.5–4.8 kHz), matching CrispASR's `wm_params`. Measured on 20 s of real
-speech (`german.wav`, 44.1 kHz), detection threshold 0.65:
+The built-in spread-spectrum watermark places a 32-bin comb in FFT bins 64–204
+of a 1024-point transform, matching CrispASR's `wm_params`. The band is defined
+in **bin indices, not hertz**, so the frequency range it occupies scales with
+the file's sample rate:
 
-| Condition | Detection confidence |
-|-----------|---------------------|
-| Immediately after embedding | 0.84 |
-| After a 44.1k → 16k → 44.1k resample | 0.78 |
-| After an MP3 round-trip (128 kbps / 64 kbps) | 0.81 / 0.81 |
-| After additive noise at 30 dB SNR | 0.81 |
-| Unwatermarked human recording (false-positive check) | 0.44 |
+| Output sample rate | Comb occupies | Note |
+|---|---|---|
+| 16 kHz | ~1.0–3.2 kHz | inside the speech band |
+| 24 kHz | ~1.5–4.8 kHz | the design target, and CrispASR's rate |
+| 44.1 kHz | ~2.8–8.8 kHz | extends well above the speech band |
+| 48 kHz | ~3.0–9.6 kHz | as above — MeloTTS, VoxCPM2, MOSS, Dots.TTS |
 
-Measured SNR of the embed is ~39.5 dB on speech.
+Interoperability with CrispASR is unaffected, because both sides address the
+comb by bin index. Perceptually the placement is not equivalent at every rate,
+and the "~1.5–4.8 kHz" figure quoted here previously was only ever true at
+24 kHz.
+
+Measured over five 20 s segments of real speech (`german.wav`), detection
+threshold 0.65, reported as **mean / worst-case across segments**:
+
+| Condition | 16 kHz | 24 kHz | 44.1 kHz |
+|-----------|--------|--------|----------|
+| Immediately after embedding | 0.86 / 0.84 | 0.88 / 0.84 | 0.83 / 0.81 |
+| After a → 16k → back resample | 0.86 / 0.84 | 0.88 / 0.84 | 0.81 / 0.78 |
+| After an MP3 round-trip (128 kbps) | 0.86 / 0.84 | 0.88 / 0.84 | 0.82 / 0.78 |
+| After an MP3 round-trip (64 kbps) | 0.86 / 0.84 | 0.88 / 0.84 | 0.79 / 0.75 |
+| Unwatermarked human recording (false positive) | — | — | 0.44 |
+
+Every attack stays above threshold at every rate, with the narrowest margin
+(0.75 vs 0.65) at 44.1 kHz through 64 kbps MP3.
+
+**Signal-to-noise ratio: 20–25 dB mean, 14–17 dB worst case** — not the
+"~38 dB" / "~39.5 dB" quoted in earlier revisions of this file. Those figures
+came from a single favourable segment. The watermark is *low-level* and sits
+under speech, but on quiet or sparse passages it is not categorically
+inaudible, and this README no longer claims that it is. If imperceptibility
+matters more to you than the built-in layer's robustness, install a neural
+backend (below): WavMark embeds at >38 dB for real.
 
 These numbers supersede an earlier table measured on the pre-#260 wideband comb
 (0.94 after embed but **0.63** after a resample — below threshold, i.e. the mark
 was lost). Moving the comb into the speech band lowered the immediate reading
-while making it survive resampling and transcoding, and made it ~6 dB quieter.
+while making it survive resampling and transcoding.
 `CRISPASR_WATERMARK_LEGACY=1` restores the old band for A/B against older files;
 detection always sweeps both, so previously-marked audio still verifies.
+
+Until v0.9.3 the embed also ran at the *legacy* band's strength (alpha 0.08)
+rather than the speech band's designed 0.05, because `watermark_embed()` kept
+0.08 as a hardcoded signature default when the comb moved. That cost 3–4 dB of
+SNR for a confidence gain the threshold never required. Files marked by earlier
+versions remain valid and detectable — they are simply louder than intended.
 
 This is why **C2PA signing is on by default** rather than opt-in: for WAV,
 MP3, FLAC and M4A output the signed manifest, not the spread-spectrum
@@ -853,8 +884,11 @@ proposals since adoption.
 **What CrispTTS does for you** (provider-side, Art. 50(2)):
 
 - Marks every synthetic audio output in a machine-readable format
-- Signs WAV/MP3 output with an interoperable C2PA manifest by default, so the
-  provenance claim is readable by any C2PA verifier and not only by Crisp tools
+- Signs WAV/MP3/FLAC/M4A output with a C2PA manifest by default, so the
+  provenance claim is readable by any C2PA verifier and not only by Crisp
+  tools. Read *Certificate trust* below before relying on this for compliance:
+  out of the box the manifest is **self-signed**, which is interoperable in
+  format but not in trust
 - Fails closed rather than emitting unmarked audio
 - Reports honestly what was applied (`MarkResult`, server `X-CrispTTS-*`
   headers), and never presents a bundled-certificate signature as trusted
@@ -904,6 +938,79 @@ that they are interacting with an AI system) does not attach either: CrispTTS
 synthesizes audio on request and holds no conversation with anyone — if you
 embed it in something that *does* talk to people, that system is the one Art.
 50(1) binds, and the duty is yours.
+
+#### Certificate trust: the known limit of the C2PA layer
+
+C2PA signing is a core dependency precisely because the audio watermark is
+readable only by Crisp tooling, and Art. 50(2) asks for marking that is
+*interoperable*. But the default signer is the **bundled development
+certificate** in `c2pa_dev_cert.py`. Any C2PA verifier will parse the manifest
+and read the `trainedAlgorithmicMedia` assertion; it will also report the
+signer as untrusted, because that certificate chains to nothing on the C2PA
+known-certificate trust list.
+
+So the layer is interoperable in *format* and not in *trust*. CrispTTS does not
+paper over this — it warns once per run and `MarkResult.c2pa_signer`
+distinguishes `self-signed` from `ca-issued` — but no amount of code closes it.
+Closing it requires a certificate issued to a real identity:
+
+```bash
+crisptts --c2pa-cert /path/to/chain.pem --c2pa-key /path/to/key.pem ...
+# or: C2PA_CERT_PATH=... C2PA_KEY_PATH=... crisptts ...
+```
+
+If you are placing synthetic audio on the EU market and relying on the manifest
+rather than the watermark as your Art. 50(2) marking, get a real certificate.
+
+#### Code of Practice on Transparency of AI-generated Content
+
+The Commission facilitates a voluntary Code of Practice under Art. 50(7); its
+Section 1 covers provider-side marking and detection. Adherence is not
+mandatory, and CrispTTS **is not a signatory**, but signing is the route the
+Commission designates for demonstrating Art. 50(2) compliance "in a legally
+certain and predictable manner", so a deployer who needs that certainty should
+know where this tool stands against it.
+
+The Code declines to mandate a single technique, on the express ground that no
+one technique satisfies all four of Art. 50(2)'s criteria — effective,
+interoperable, robust, reliable — and instead asks for *layered* solutions
+combining watermarking, metadata and content provenance. CrispTTS's three
+layers map onto that structure directly:
+
+| Code expectation | CrispTTS | Gap |
+|---|---|---|
+| Layered rather than single-technique marking | Watermark + container metadata + C2PA manifest | none |
+| Marking applied to all generated output | One `mark_audio_file()` path; fails closed | none |
+| Provenance metadata standard, not proprietary | C2PA `trainedAlgorithmicMedia` | signer untrusted by default (above) |
+| Robust to common transformations | Survives resample and 64 kbps MP3 (table above) | built-in layer is Crisp-readable only; neural backend is an extra |
+| Detection tooling available to third parties | `--detect-watermark FILE`, and the C2PA manifest reads in any C2PA tool | watermark detection needs Crisp tooling |
+
+The honest summary: the *architecture* is what the Code asks for, and the two
+residual gaps are both about third parties being able to read the mark — the
+untrusted certificate, and a spread-spectrum watermark no one else implements.
+
+#### Whether these obligations bind this project at all
+
+Recorded because it has been assumed rather than analysed in every prior audit.
+Art. 50(2) binds *providers*. Under Art. 3(9)–(10) an obligation arises on
+placing a system on the Union market, and "making available" is defined as
+supply for distribution or use **in the course of a commercial activity**.
+A non-commercial FOSS project published on a code-hosting site has a real
+argument that it never crosses that line, and that the obligations attach
+instead to whoever deploys it commercially.
+
+CrispTTS deliberately assumes the stricter reading — that it is a provider and
+Art. 50(2) applies — and implements accordingly. That is a defensive posture,
+not a legal conclusion, and it is the maintainer's own view rather than advice.
+If you are redistributing CrispTTS commercially, or running it as part of a
+service, the analysis is yours to make and you are much more clearly a provider
+than the upstream project is.
+
+**Timing.** Art. 50 has applied since 2 August 2026. Systems already on the
+market before that date have until **2 December 2026** to meet the
+Art. 50(2) machine-readable marking requirement; CrispTTS predates the cutoff,
+so that grace period covers it. This is not a reason to defer — the marking is
+implemented — but it is the operative deadline.
 
 ### Audit log retention
 
