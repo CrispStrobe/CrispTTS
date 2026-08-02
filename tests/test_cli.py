@@ -193,7 +193,7 @@ class TestRunSynthesisMarking(unittest.TestCase):
             output_file=output_file, play_direct=False, input_text="Hallo Welt",
             input_file=None, speech_speed=1.0, trim_silence=False, tts_steps=None,
             tts_language=None, pitch_shift=0.0, instruct=None, ref_text=None,
-            no_spoken_disclaimer=False, lexicon=None, normalize=False,
+            no_spoken_disclaimer=False, disclosure_lang=None, lexicon=None, normalize=False,
             output_sample_rate=None, stream=False, verify=False,
             verify_backend="parakeet", i_have_rights=False, allow_unmarked=False,
             c2pa_cert=None, c2pa_key=None, batch=False, translate=False,
@@ -379,6 +379,178 @@ class TestRunSynthesisMarking(unittest.TestCase):
             self._cloning_stub())
         self.assertFalse(os.path.exists(out),
                          "opting out of the disclosure must require an attestation")
+
+    def test_disclosure_lang_flag_overrides_the_model_language(self):
+        """--disclosure-lang is what makes a multilingual model disclosable."""
+        import os
+
+        import numpy as np
+
+        import watermark
+
+        out = os.path.join(self.tmpdir, "cloned_el.wav")
+        seen = {}
+
+        def fake_gen(sample_rate=24000, language=None):
+            seen["lang"] = language
+            return (np.full(int(sample_rate * 1.5), 0.05, dtype=np.float32), "spoken")
+
+        original = watermark.generate_spoken_disclaimer
+        watermark.generate_spoken_disclaimer = fake_gen
+        watermark._disclaimer_cache.clear()
+        try:
+            self._run_with_stub(
+                self._args(out, model_id="f5_tts_german", i_have_rights=True,
+                           disclosure_lang="el"),
+                self._cloning_stub())
+        finally:
+            watermark.generate_spoken_disclaimer = original
+            watermark._disclaimer_cache.clear()
+        self.assertEqual(seen.get("lang"), "el",
+                         "the model declares 'de'; --disclosure-lang must win")
+
+
+class TestPlaybackIsMarkedFirst(unittest.TestCase):
+    """Audio must never reach a listener before it has been through marking.
+
+    CrispASR playback used to be exempt, on the assumption its binary marks
+    internally — the same assumption mark_audio_file() refuses to make.
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+
+    def _run(self, model_id, stream=False, output_file=None):
+        from unittest.mock import patch
+
+        import numpy as np
+        import soundfile as sf
+
+        import main
+        import utils
+        import watermark
+        from config import GERMAN_TTS_MODELS
+
+        order = []
+
+        def stub(config, text, voice, params, out_path, play_direct):
+            if play_direct:
+                order.append("handler-played")
+            if out_path:
+                sf.write(out_path, np.full(24000, 0.1, dtype=np.float32), 24000)
+
+        def fake_mark(filepath, **kwargs):
+            order.append("marked")
+            return watermark.MarkResult(marked=True, backend="test",
+                                        layers=("audio-watermark",))
+
+        def fake_play(*a, **k):
+            order.append("played")
+
+        handler_key = GERMAN_TTS_MODELS.get(model_id, {}).get(
+            "handler_function_key", model_id)
+        args = argparse.Namespace(
+            model_id=model_id, german_voice_id="af_heart", model_params=None,
+            output_file=output_file, play_direct=True, input_text="Hallo",
+            input_file=None, speech_speed=1.0, trim_silence=False, tts_steps=None,
+            tts_language=None, pitch_shift=0.0, instruct=None, ref_text=None,
+            no_spoken_disclaimer=False, disclosure_lang=None, lexicon=None,
+            normalize=False, output_sample_rate=None, stream=stream, verify=False,
+            verify_backend="parakeet", i_have_rights=False, allow_unmarked=False,
+            c2pa_cert=None, c2pa_key=None, batch=False, translate=False,
+            accept_marking_responsibility=False, no_watermark=False,
+            override_main_model_repo=None, override_model_filename=None,
+            override_tokenizer_repo=None, override_vocoder_repo=None,
+            override_speaker_embed_repo=None, override_piper_voices_repo=None,
+            lm_studio_api_url=None, gguf_model_name_in_api=None,
+            ollama_api_url=None, ollama_model_name=None,
+        )
+        with patch.object(main, "_load_handlers_if_needed",
+                          return_value={handler_key: stub}), \
+                patch.object(main, "_HANDLERS_LOADED", True), \
+                patch.object(watermark, "mark_audio_file", fake_mark), \
+                patch.object(utils, "play_audio", fake_play):
+            main.run_synthesis(args)
+        return order
+
+    def test_crispasr_playback_is_marked_before_it_is_heard(self):
+        order = self._run("crispasr_kokoro")
+        self.assertIn("marked", order, "CrispASR playback bypassed marking entirely")
+        self.assertIn("played", order)
+        self.assertLess(order.index("marked"), order.index("played"),
+                        f"played before marking: {order}")
+        self.assertNotIn("handler-played", order,
+                         "the handler must not play; run_synthesis plays after marking")
+
+    def test_non_crispasr_playback_is_marked_before_it_is_heard(self):
+        order = self._run("edge")
+        self.assertLess(order.index("marked"), order.index("played"),
+                        f"played before marking: {order}")
+
+    def test_streaming_still_marks_the_output_file(self):
+        """--stream cannot mark before playback, but the file is still gated."""
+        import os
+        out = os.path.join(self.tmpdir, "streamed.wav")
+        order = self._run("crispasr_kokoro", stream=True, output_file=out)
+        self.assertIn("marked", order)
+
+
+class TestConsentGateFailsClosed(unittest.TestCase):
+    """An unevaluable consent gate must block, not wave synthesis through."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+
+    def test_missing_watermark_module_blocks_synthesis(self):
+        import os
+        import sys
+        from unittest.mock import patch
+
+        import numpy as np
+        import soundfile as sf
+
+        import main
+
+        out = os.path.join(self.tmpdir, "out.wav")
+        called = []
+
+        def stub(config, text, voice, params, out_path, play_direct):
+            called.append(True)
+            sf.write(out_path, np.full(24000, 0.1, dtype=np.float32), 24000)
+
+        args = argparse.Namespace(
+            model_id="edge", german_voice_id=None, model_params=None,
+            output_file=out, play_direct=False, input_text="Hallo",
+            input_file=None, speech_speed=1.0, trim_silence=False, tts_steps=None,
+            tts_language=None, pitch_shift=0.0, instruct=None, ref_text=None,
+            no_spoken_disclaimer=False, disclosure_lang=None, lexicon=None,
+            normalize=False, output_sample_rate=None, stream=False, verify=False,
+            verify_backend="parakeet", i_have_rights=False, allow_unmarked=False,
+            c2pa_cert=None, c2pa_key=None, batch=False, translate=False,
+            accept_marking_responsibility=False, no_watermark=False,
+            override_main_model_repo=None, override_model_filename=None,
+            override_tokenizer_repo=None, override_vocoder_repo=None,
+            override_speaker_embed_repo=None, override_piper_voices_repo=None,
+            lm_studio_api_url=None, gguf_model_name_in_api=None,
+            ollama_api_url=None, ollama_model_name=None,
+        )
+        # Setting the entry to None makes `import watermark` raise ImportError.
+        env = {k: v for k, v in os.environ.items() if k != "CRISPTTS_ALLOW_UNMARKED"}
+        with patch.dict(sys.modules, {"watermark": None}), \
+                patch.dict(os.environ, env, clear=True), \
+                patch.object(main, "_load_handlers_if_needed",
+                             return_value={"edge": stub}), \
+                patch.object(main, "_HANDLERS_LOADED", True):
+            main.run_synthesis(args)
+        self.assertEqual(called, [],
+                         "synthesis ran despite the consent gate being unevaluable")
+        self.assertFalse(os.path.exists(out))
 
 
 if __name__ == "__main__":

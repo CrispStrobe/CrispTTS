@@ -261,6 +261,7 @@ GERMAN_TTS_MODELS = {
     "oute_llamacpp": {
         "handler_function_key": "outetts", # Standardized key for OuteTTS
         "voice_cloning": True,
+        "language": "multilingual",  # OuteTTS v1.0 covers many languages
         "outetts_model_enum": OuteTTSModels_Enum.VERSION_1_0_SIZE_1B if OUTETTS_AVAILABLE_FOR_CONFIG else "VERSION_1_0_SIZE_1B_STR_FALLBACK",  # noqa: E501
         "backend_to_use": OuteTTSBackend_Enum.LLAMACPP if OUTETTS_AVAILABLE_FOR_CONFIG else "LLAMACPP_STR_FALLBACK",
         "quantization_to_use": OuteTTSLlamaCppQuantization_Enum.FP16 if OUTETTS_AVAILABLE_FOR_CONFIG else "FP16_STR_FALLBACK",  # noqa: E501
@@ -337,6 +338,7 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "tts_cpp_dia",
         "handler_function_key": "tts_cpp",
         "voice_cloning": True,
+        "language": "en",
         "tts_cpp_executable_path": TTS_CPP_EXECUTABLE_PATH,
         "gguf_model_path": TTS_CPP_DIA_GGUF_PATH,
         "default_voice_id": None, # Dia does not use named voices
@@ -468,7 +470,7 @@ GERMAN_TTS_MODELS = {
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
-        "language": None,
+        "language": "multilingual",
         "default_voice_id": "./german.wav",  # Changed from "./my_bark_output.wav"
         "available_voices": ["./german.wav"],
         "sample_rate": 16000,
@@ -482,7 +484,7 @@ GERMAN_TTS_MODELS = {
         "llm_model_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "tokenizer_id": LLASA_MULTILINGUAL_HF_MODEL_ID,
         "codec_model_id": LLASA_XCODEC2_VOCODER_MODEL_ID,
-        "language": None,
+        "language": "multilingual",
         "default_voice_id": None,
         "available_voices": [],
         "sample_rate": 16000,
@@ -504,6 +506,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_csm_clone": { # Your existing ID for CSM/Sesame
         "handler_function_key": "mlx_audio",
         "voice_cloning": True,
+        "language": "en",  # Sesame CSM-1B is English-only
         "mlx_model_path": MLX_AUDIO_CSM_MODEL_ID,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
@@ -514,6 +517,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_outetts_clone": { # Your existing ID for OuteTTS via mlx-audio
         "handler_function_key": "mlx_audio",
         "voice_cloning": True,
+        "language": "multilingual",
         "mlx_model_path": MLX_AUDIO_OUTETTS_MAIN_REPO_ID,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
@@ -524,6 +528,7 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_spark_clone": {
         "handler_function_key": "mlx_audio",
         "voice_cloning": True,
+        "language": "multilingual",  # Spark-TTS is zh/en
         "mlx_model_path": MLX_AUDIO_SPARK_REPO_ID,
         "default_voice_id": DEFAULT_GERMAN_REF_WAV,
         "available_voices": [DEFAULT_GERMAN_REF_WAV],
@@ -725,6 +730,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_qwen3_tts": {
         "crisptts_model_id": "crispasr_qwen3_tts",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "qwen3-tts",
@@ -737,6 +743,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_qwen3_tts_voicedesign": {
         "crisptts_model_id": "crispasr_qwen3_tts_voicedesign",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "qwen3-tts",
@@ -750,6 +757,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_chatterbox": {
         "crisptts_model_id": "crispasr_chatterbox",
+        "language": "en",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "chatterbox",
@@ -761,6 +769,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_vibevoice_tts": {
         "crisptts_model_id": "crispasr_vibevoice_tts",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "vibevoice-tts",
@@ -772,6 +781,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_indextts": {
         "crisptts_model_id": "crispasr_indextts",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "indextts",
@@ -783,6 +793,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_voxcpm2": {
         "crisptts_model_id": "crispasr_voxcpm2",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "voxcpm2-tts",
@@ -795,6 +806,7 @@ GERMAN_TTS_MODELS = {
     # --- Additional CrispASR native C++ TTS engines ---
     "crispasr_f5_tts": {
         "crisptts_model_id": "crispasr_f5_tts",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "f5-tts",
@@ -842,6 +854,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_dots_tts": {
         "crisptts_model_id": "crispasr_dots_tts",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "dots-tts",
@@ -854,6 +867,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_cosyvoice3_tts": {
         "crisptts_model_id": "crispasr_cosyvoice3_tts",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "cosyvoice3-tts",
@@ -866,6 +880,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_csm_tts": {
         "crisptts_model_id": "crispasr_csm_tts",
+        "language": "en",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "csm-tts",
@@ -878,6 +893,7 @@ GERMAN_TTS_MODELS = {
     # --- CrispASR v0.8.12 backends ---
     "crispasr_omnivoice_tts": {
         "crisptts_model_id": "crispasr_omnivoice_tts",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "omnivoice",
@@ -889,6 +905,7 @@ GERMAN_TTS_MODELS = {
     },
     "crispasr_moss_tts_local": {
         "crisptts_model_id": "crispasr_moss_tts_local",
+        "language": "multilingual",
         "handler_function_key": "crispasr",
         "voice_cloning": True,
         "crispasr_backend": "moss-tts-local",
@@ -902,6 +919,7 @@ GERMAN_TTS_MODELS = {
     # --- experimental (not yet working) models ---
     "mlx_audio_dia_clone": {
         "crisptts_model_id": "mlx_audio_dia_clone", # Add this for better logging
+        "language": "en",  # Dia is English-only
         "handler_function_key": "mlx_audio",
         "voice_cloning": True,
         "mlx_model_path": MLX_AUDIO_DIA_REPO_ID,

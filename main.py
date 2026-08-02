@@ -453,7 +453,15 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                     _test_log_consent(model_id, _voice_str,
                                       source="CLI --i-have-rights flag (--test-all)")
             except ImportError:
-                pass
+                # Fails closed, as in run_synthesis: an unknown cloning status
+                # is treated as cloning, not as permission.
+                logger.error("watermark module unavailable — cannot check the consent "
+                             "gate; skipping '%s'.", model_id)
+                if not os.environ.get("CRISPTTS_ALLOW_UNMARKED"):
+                    benchmark_results.append({"model_id": model_id, "voice_id": current_voice_id_tested,
+                        "status": "SKIPPED (Consent Gate Unavailable)", "gen_time_sec": "N/A",
+                        "file_size_bytes": "N/A", "audio_duration_sec": "N/A", "output_file": "N/A"})
+                    continue
 
             # --- Marking preflight, before any model is loaded ---
             _test_marking_policy = None
@@ -507,7 +515,8 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                             from watermark import prepend_disclaimer_file
                             prepend_disclaimer_file(
                                 str(output_filename),
-                                language=current_config_for_handler.get("language"))
+                                language=current_config_for_handler.get("language"),
+                                disclosure_lang=getattr(cli_args, 'disclosure_lang', None))
                         mark_audio_file(
                             str(output_filename),
                             handler_key=handler_key,
@@ -811,7 +820,17 @@ def run_synthesis(args):
             if _is_voice_cloning:
                 log_consent_attestation(args.model_id, effective_voice_id)
         except ImportError:
-            pass  # watermark module missing — skip consent check
+            # Fails closed, like the marking gate below. The consent check is
+            # the control standing between this tool and cloning someone's
+            # voice without their agreement; silently skipping it because a
+            # module is missing is the one outcome it must never have.
+            logger.error(
+                "watermark module unavailable — cannot determine whether '%s' clones a "
+                "voice, so synthesis is refused. Reinstall CrispTTS, or set "
+                "CRISPTTS_ALLOW_UNMARKED=1 to bypass every provenance control.",
+                args.model_id)
+            if not os.environ.get("CRISPTTS_ALLOW_UNMARKED"):
+                return
 
         # --- Marking preflight: refuse BEFORE generating anything ---
         # Gating here rather than after synthesis means unmarkable audio is
@@ -842,11 +861,20 @@ def run_synthesis(args):
         # Playback must happen AFTER marking, never during synthesis — otherwise
         # the user hears audio that was never marked. So we always let the
         # handler write a file and play it ourselves once marking is done.
-        # (CrispASR is exempt: its binary marks and streams internally.)
+        #
+        # This includes CrispASR. It used to be exempt, on the grounds that its
+        # binary marks internally — but that is a claim about another program's
+        # behaviour, and mark_audio_file() deliberately refuses to take it on
+        # trust (measured: CrispTTS's detector reads 0.44, its noise floor, on
+        # crispasr kokoro output). Exempting the playback path meant the one
+        # place audio reached a listener was also the one place nothing was
+        # verified. Real --stream is the sole exception below, because
+        # incremental playback cannot wait for a completed file.
+        _streaming = bool(getattr(args, 'stream', False)) and handler_key == "crispasr"
         _temp_play_file = None
         _play_after_marking = False
         _effective_output = args.output_file
-        if args.play_direct and handler_key != "crispasr":
+        if args.play_direct and not _streaming:
             _play_after_marking = True
             if not args.output_file:
                 import tempfile
@@ -854,6 +882,16 @@ def run_synthesis(args):
                 os.close(fd)
                 _effective_output = _temp_play_file
                 args.output_file = _temp_play_file
+        elif args.play_direct and _streaming:
+            # Streaming plays audio as it is produced, so there is no completed
+            # file to verify first. Nothing unverified is *written* — any
+            # --output-file is still marked and gated below — but what the
+            # listener hears is whatever the CrispASR binary emitted.
+            logger.warning(
+                "--stream --play-direct plays audio as it is synthesized, so what you "
+                "hear is not verified against the marking gate; it carries only the "
+                "CrispASR binary's own watermark. Any --output-file is still verified. "
+                "Drop --stream for playback that is marked and verified first.")
 
         try:
             # Use streaming handler if --stream and crispasr backend
@@ -922,7 +960,8 @@ def run_synthesis(args):
                 try:
                     prepend_disclaimer_file(
                         args.output_file,
-                        language=current_config_for_handler.get("language"))
+                        language=current_config_for_handler.get("language"),
+                        disclosure_lang=getattr(args, 'disclosure_lang', None))
                 except DisclosureError as e_disc:
                     logger.error("%s", e_disc)
                     _discard_output(args, _temp_play_file)
@@ -1077,6 +1116,15 @@ def main_cli_entrypoint():
         help="List of model IDs (space-separated) to skip during --test-all or --test-all-speakers.")
     action_group.add_argument("--detect-watermark", type=str, metavar="AUDIO_FILE",
         help="Detect AI-generated watermark in a WAV file and report confidence.")
+    action_group.add_argument("--list-disclosure-langs", action="store_true",
+        help="List the languages the spoken AI disclosure is available in.")
+    action_group.add_argument("--consent-log-erase", type=str, nargs="?", const="",
+        metavar="SUBJECT",
+        help="Erase consent audit entries (GDPR Art. 17). With a SUBJECT (a\n"
+             "reference-audio path or ref_sha256 digest) only matching lines are\n"
+             "removed; with no argument the whole log is erased.")
+    action_group.add_argument("--consent-log-prune", action="store_true",
+        help="Drop consent audit entries past the retention window and exit.")
     action_group.add_argument("--cache-stats", action="store_true",
         help="Show synthesis cache statistics (size, entries).")
     action_group.add_argument("--cache-clear", action="store_true",
@@ -1132,6 +1180,12 @@ def main_cli_entrypoint():
         help="Transcript of the reference voice audio for inline voice cloning (TADA, dots-tts).")
     synth_group.add_argument("--no-spoken-disclaimer", action="store_true",
         help="Skip the AI-disclosure spoken prefix on voice-cloned audio.")
+    synth_group.add_argument("--disclosure-lang", type=str, default=None, metavar="LANG",
+        help="Language for the spoken AI disclosure on voice-cloned audio (e.g. 'de',\n"
+             "'en', 'zh'). Defaults to the model's declared language. Required for a\n"
+             "meaningful disclosure with multilingual models, whose output language\n"
+             "depends on the input text rather than the model. --list-disclosure-langs\n"
+             "shows what is available.")
     synth_group.add_argument("--lexicon", type=str, default=None, metavar="TSV_PATH",
         help="Path to a word→phoneme TSV file for custom pronunciation (CrispASR backends).")
     synth_group.add_argument("--batch", action="store_true",
@@ -1363,6 +1417,47 @@ def main_cli_entrypoint():
                     print("Result: UNCERTAIN (possible watermark)")
                 else:
                     print("Result: No watermark detected")
+        except ImportError:
+            logger.error("watermark module not available.")
+        return
+
+    if getattr(args, 'list_disclosure_langs', False):
+        try:
+            from watermark import (
+                DEFAULT_DISCLAIMER_LANG,
+                DISCLAIMER_TEXTS,
+                bundled_disclosure_path,
+            )
+            print("Spoken AI-disclosure languages (--disclosure-lang):\n")
+            for code in sorted(DISCLAIMER_TEXTS):
+                offline = "bundled" if bundled_disclosure_path(code) else "needs a TTS backend"
+                default = "  (default)" if code == DEFAULT_DISCLAIMER_LANG else ""
+                print(f"  {code}  [{offline}]{default}")
+                print(f"        {DISCLAIMER_TEXTS[code]}")
+            print(f"\n{len(DISCLAIMER_TEXTS)} languages. 'bundled' ones work offline with "
+                  "no TTS backend installed.")
+        except ImportError:
+            logger.error("watermark module not available.")
+        return
+
+    if getattr(args, 'consent_log_prune', False):
+        try:
+            from watermark import consent_log_path, prune_audit_log
+            removed = prune_audit_log()
+            print(f"Pruned {removed} expired entr{'y' if removed == 1 else 'ies'} "
+                  f"from {consent_log_path()}")
+        except ImportError:
+            logger.error("watermark module not available.")
+        return
+
+    if getattr(args, 'consent_log_erase', None) is not None:
+        try:
+            from watermark import consent_log_path, erase_audit_log
+            subject = args.consent_log_erase or None
+            removed = erase_audit_log(subject)
+            scope = f"matching {subject!r}" if subject else "(entire log)"
+            print(f"Erased {removed} entr{'y' if removed == 1 else 'ies'} {scope} "
+                  f"from {consent_log_path()}")
         except ImportError:
             logger.error("watermark module not available.")
         return

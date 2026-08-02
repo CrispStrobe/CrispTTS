@@ -183,6 +183,56 @@ class TestConsentBeforeCache(unittest.TestCase):
             src.index("requires_consent"), src.index("_cache.lookup"),
             "cache lookup must not short-circuit the voice-cloning consent gate")
 
+    def test_gate_fails_closed_when_watermark_is_unavailable(self):
+        """An unevaluable gate must 500, not fall through to synthesis."""
+        import inspect
+
+        import server
+        src = inspect.getsource(server.TTSRequestHandler.do_POST)
+        gate = src.index("requires_consent")
+        after = src[gate:src.index("_cache.lookup")]
+        handler = after.index("except ImportError")
+        tail = after[handler:]
+        self.assertIn("_send_error", tail,
+                      "a missing watermark module must refuse, not pass silently")
+        self.assertNotIn("\n            pass", tail)
+
+
+class TestDisclosureLanguageIsPartOfTheCacheKey(unittest.TestCase):
+    """Cloned audio carries its disclosure inside it.
+
+    A clip disclosed in German is not a valid response to a request that asked
+    for Greek, so the language has to participate in the cache key.
+    """
+
+    def test_disclosure_lang_reaches_the_cache_params(self):
+        import inspect
+
+        import server
+        src = inspect.getsource(server.TTSRequestHandler.do_POST)
+        self.assertIn("disclosure_lang", src)
+        params = src.index("_cache_params")
+        lookup = src.index("_cache.lookup")
+        self.assertLess(params, lookup)
+        self.assertIn('_cache_params["disclosure_lang"]', src)
+
+    def test_lookup_and_store_use_the_same_params(self):
+        import inspect
+
+        import server
+        src = inspect.getsource(server.TTSRequestHandler.do_POST)
+        self.assertEqual(src.count("_cache_params_json"), 3,
+                         "build once, then use for both lookup and store")
+
+    def test_differing_disclosure_langs_produce_different_keys(self):
+        import json
+
+        import cache
+        base = ("m", "v", "text")
+        de = cache._cache_key(*base, json.dumps({"disclosure_lang": "de"}))
+        el = cache._cache_key(*base, json.dumps({"disclosure_lang": "el"}))
+        self.assertNotEqual(de, el)
+
 
 if __name__ == "__main__":
     unittest.main()

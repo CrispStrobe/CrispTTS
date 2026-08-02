@@ -882,6 +882,149 @@ def requires_consent(model_id: str, handler_key: str, voice_id: str | None = Non
 
 _CONSENT_LOG_PATH = os.path.join(os.path.expanduser("~"), ".cache", "crisptts", "consent_audit.log")
 
+#: Days an audit line is kept before :func:`prune_audit_log` drops it.
+#: The log records reference-audio *paths*, which routinely contain personal
+#: names, so it is personal data under GDPR and Art. 5(1)(e) requires a
+#: retention limit rather than an append-forever file. Two years is a
+#: defensible default for an evidential record of a consent attestation;
+#: override with ``CRISPTTS_CONSENT_LOG_RETENTION_DAYS`` (0 disables pruning).
+_CONSENT_LOG_RETENTION_DAYS = 730
+
+#: The audit log is personal data; keep it owner-only rather than umask-default.
+_CONSENT_LOG_MODE = 0o600
+
+
+def consent_log_path() -> str:
+    """Filesystem path of the persistent consent audit log."""
+    return _CONSENT_LOG_PATH
+
+
+def _consent_log_retention_days() -> int:
+    raw = os.environ.get("CRISPTTS_CONSENT_LOG_RETENTION_DAYS")
+    if raw is None:
+        return _CONSENT_LOG_RETENTION_DAYS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning("Ignoring invalid CRISPTTS_CONSENT_LOG_RETENTION_DAYS=%r.", raw)
+        return _CONSENT_LOG_RETENTION_DAYS
+
+
+def _parse_audit_timestamp(line: str):
+    """Extract the ``ts=`` field from an audit line, or None."""
+    from datetime import datetime
+    marker = " ts="
+    start = line.find(marker)
+    if start < 0:
+        return None
+    start += len(marker)
+    end = line.find(" ", start)
+    stamp = line[start:] if end < 0 else line[start:end]
+    try:
+        return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return None
+
+
+def prune_audit_log(retention_days: int | None = None) -> int:
+    """Drop audit lines older than the retention window (GDPR Art. 5(1)(e)).
+
+    Runs on every append, so the log bounds itself without the operator having
+    to remember. Lines with no parseable timestamp are kept — an unreadable
+    record is not evidence that it has expired.
+
+    Args:
+        retention_days: Override the configured window. 0 disables pruning.
+
+    Returns:
+        Number of lines removed.
+    """
+    days = _consent_log_retention_days() if retention_days is None else max(0, retention_days)
+    if not days or not os.path.isfile(_CONSENT_LOG_PATH):
+        return 0
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    try:
+        with open(_CONSENT_LOG_PATH) as f_audit:
+            lines = f_audit.readlines()
+    except OSError as e:
+        logger.debug("Could not read the consent audit log for pruning: %s", e)
+        return 0
+
+    kept = [ln for ln in lines
+            if (ts := _parse_audit_timestamp(ln)) is None or ts >= cutoff]
+    removed = len(lines) - len(kept)
+    if not removed:
+        return 0
+    try:
+        tmp = f"{_CONSENT_LOG_PATH}.tmp"
+        with open(tmp, "w") as f_new:
+            f_new.writelines(kept)
+        os.chmod(tmp, _CONSENT_LOG_MODE)
+        os.replace(tmp, _CONSENT_LOG_PATH)
+        logger.info("Pruned %d consent audit line(s) older than %d days.", removed, days)
+    except OSError as e:
+        logger.debug("Could not prune the consent audit log: %s", e)
+        return 0
+    return removed
+
+
+def erase_audit_log(subject: str | None = None) -> int:
+    """Erase audit lines, for a GDPR Art. 17 erasure request.
+
+    Args:
+        subject: Only erase lines containing this substring — a reference-audio
+            path or its ``ref_sha256`` digest, which is how a specific
+            speaker's attestations are identified. When None, the whole log is
+            removed.
+
+    Returns:
+        Number of lines removed.
+    """
+    if not os.path.isfile(_CONSENT_LOG_PATH):
+        return 0
+    if subject is None:
+        try:
+            with open(_CONSENT_LOG_PATH) as f_audit:
+                count = sum(1 for _ in f_audit)
+            os.unlink(_CONSENT_LOG_PATH)
+            logger.info("Erased the consent audit log (%d line(s)).", count)
+            return count
+        except OSError as e:
+            logger.warning("Could not erase the consent audit log: %s", e)
+            return 0
+    try:
+        with open(_CONSENT_LOG_PATH) as f_audit:
+            lines = f_audit.readlines()
+        kept = [ln for ln in lines if subject not in ln]
+        removed = len(lines) - len(kept)
+        if removed:
+            tmp = f"{_CONSENT_LOG_PATH}.tmp"
+            with open(tmp, "w") as f_new:
+                f_new.writelines(kept)
+            os.chmod(tmp, _CONSENT_LOG_MODE)
+            os.replace(tmp, _CONSENT_LOG_PATH)
+        logger.info("Erased %d consent audit line(s) matching %r.", removed, subject)
+        return removed
+    except OSError as e:
+        logger.warning("Could not erase from the consent audit log: %s", e)
+        return 0
+
+
+def _append_audit_line(msg: str) -> None:
+    """Append a line to the audit log, owner-only, pruning expired entries."""
+    try:
+        os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
+        existed = os.path.exists(_CONSENT_LOG_PATH)
+        with open(_CONSENT_LOG_PATH, "a") as f_audit:
+            f_audit.write(msg)
+        if not existed:
+            os.chmod(_CONSENT_LOG_PATH, _CONSENT_LOG_MODE)
+    except OSError as e:
+        logger.debug("Could not write consent audit log: %s", e)
+        return
+    prune_audit_log()
+
 
 def _reference_audio_digest(voice_id: str | None) -> str | None:
     """SHA-256 of a reference voice sample, for the consent audit trail.
@@ -928,15 +1071,7 @@ def log_consent_attestation(
            f'attestation="{source}"\n')
     sys.stderr.write(msg)
     sys.stderr.flush()
-
-    # Persistent audit log
-    try:
-        os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
-        with open(_CONSENT_LOG_PATH, "a") as f_audit:
-            f_audit.write(msg)
-    except OSError as e:
-        logger.debug("Could not write consent audit log: %s", e)
-
+    _append_audit_line(msg)
     logger.info("Consent attestation logged for model=%s voice=%s", model_id, voice_str)
 
 
@@ -953,31 +1088,87 @@ def log_consent_attestation(
 #: ``disclosure.spoken`` (``utils/translations/{de,en}.py``) so the two projects
 #: disclose in the same words. "The following audio" rather than "this audio":
 #: the disclosure is prepended, so it describes what comes after it.
+#:
+#: All 24 EU official languages are covered. The Regulation governs content
+#: placed on the EU market, so "a disclosure the audience can understand" means
+#: any of them — a German sentence in front of Greek audio discloses nothing to
+#: a Greek listener. ``zh``/``ja``/``ko`` are here because shipped models
+#: (CosyVoice3, IndexTTS, VibeVoice, MOSS, OuteTTS) target them directly.
 DISCLAIMER_TEXTS = {
+    # EU official languages
+    "bg": "Следващият аудиозапис е генериран от изкуствен интелект.",
+    "cs": "Následující zvuková nahrávka byla vytvořena umělou inteligencí.",
+    "da": "Følgende lydoptagelse er genereret af kunstig intelligens.",
     "de": "Die folgende Aufnahme wurde von künstlicher Intelligenz erzeugt.",
+    "el": "Το ακόλουθο ηχητικό απόσπασμα δημιουργήθηκε από τεχνητή νοημοσύνη.",
     "en": "The following audio was generated by artificial intelligence.",
-    "fr": "L'enregistrement suivant a été généré par une intelligence artificielle.",
     "es": "El siguiente audio fue generado por inteligencia artificial.",
+    "et": "Järgnev helisalvestis on loodud tehisintellekti abil.",
+    "fi": "Seuraava äänite on tekoälyn tuottama.",
+    "fr": "L'enregistrement suivant a été généré par une intelligence artificielle.",
+    "ga": "Gineadh an taifead fuaime seo a leanas le hintleacht shaorga.",
+    "hr": "Sljedeći zvučni zapis generirala je umjetna inteligencija.",
+    "hu": "A következő hangfelvételt mesterséges intelligencia készítette.",
     "it": "Il seguente audio è stato generato dall'intelligenza artificiale.",
+    "lt": "Šis garso įrašas sugeneruotas dirbtinio intelekto.",
+    "lv": "Šo audioierakstu ir ģenerējis mākslīgais intelekts.",
+    "mt": "Ir-reġistrazzjoni awdjo li ġejja ġiet iġġenerata minn intelliġenza artifiċjali.",
     "nl": "De volgende audio is gegenereerd door kunstmatige intelligentie.",
     "pl": "Poniższe nagranie zostało wygenerowane przez sztuczną inteligencję.",
     "pt": "O seguinte áudio foi gerado por inteligência artificial.",
+    "ro": "Următoarea înregistrare audio a fost generată de inteligență artificială.",
+    "sk": "Nasledujúca zvuková nahrávka bola vytvorená umelou inteligenciou.",
+    "sl": "Naslednji zvočni posnetek je ustvarila umetna inteligenca.",
+    "sv": "Följande ljudinspelning har genererats av artificiell intelligens.",
+    # Non-EU languages targeted by shipped models
+    "ja": "以下の音声は人工知能によって生成されました。",
+    "ko": "다음 오디오는 인공지능으로 생성되었습니다.",
+    "zh": "以下音频由人工智能生成。",
 }
 
 #: CrispTTS is a German TTS toolkit, so German is the default disclosure
 #: language — not English.
 DEFAULT_DISCLAIMER_LANG = "de"
 
+#: Config ``language`` values that name no single spoken language. For a
+#: multilingual model the output language is a property of the *input text*,
+#: not of the model, so it cannot be derived from the config at all — it has to
+#: be supplied with ``--disclosure-lang`` / ``"disclosure_lang"``. Treating
+#: these as "unknown" rather than silently substituting German is the whole
+#: point: a wrong-language disclosure is not a disclosure.
+MULTILINGUAL_LANG_MARKERS = frozenset({
+    "multilingual", "multi", "mul", "any", "auto", "none", "unknown",
+})
+
 #: Edge TTS voice used per language when CrispASR is unavailable.
 _DISCLAIMER_EDGE_VOICES = {
+    "bg": "bg-BG-KalinaNeural",
+    "cs": "cs-CZ-VlastaNeural",
+    "da": "da-DK-ChristelNeural",
     "de": "de-DE-KatjaNeural",
+    "el": "el-GR-AthinaNeural",
     "en": "en-US-AriaNeural",
-    "fr": "fr-FR-DeniseNeural",
     "es": "es-ES-ElviraNeural",
+    "et": "et-EE-AnuNeural",
+    "fi": "fi-FI-NooraNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "ga": "ga-IE-OrlaNeural",
+    "hr": "hr-HR-GabrijelaNeural",
+    "hu": "hu-HU-NoemiNeural",
     "it": "it-IT-ElsaNeural",
+    "lt": "lt-LT-OnaNeural",
+    "lv": "lv-LV-EveritaNeural",
+    "mt": "mt-MT-GraceNeural",
     "nl": "nl-NL-ColetteNeural",
     "pl": "pl-PL-ZofiaNeural",
     "pt": "pt-PT-RaquelNeural",
+    "ro": "ro-RO-AlinaNeural",
+    "sk": "sk-SK-ViktoriaNeural",
+    "sl": "sl-SI-PetraNeural",
+    "sv": "sv-SE-SofieNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "ko": "ko-KR-SunHiNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
 }
 
 _DISCLAIMER_SILENCE_SEC = 0.3  # 300ms gap between disclaimer and content
@@ -993,22 +1184,87 @@ class DisclosureError(RuntimeError):
     """
 
 
+#: Long-form language names sometimes used in model configs.
+_DISCLAIMER_LANG_ALIASES = {
+    "german": "de", "english": "en", "french": "fr", "spanish": "es",
+    "italian": "it", "dutch": "nl", "polish": "pl", "portuguese": "pt",
+    "bulgarian": "bg", "czech": "cs", "danish": "da", "greek": "el",
+    "estonian": "et", "finnish": "fi", "irish": "ga", "croatian": "hr",
+    "hungarian": "hu", "lithuanian": "lt", "latvian": "lv", "maltese": "mt",
+    "romanian": "ro", "slovak": "sk", "slovene": "sl", "slovenian": "sl",
+    "swedish": "sv", "japanese": "ja", "korean": "ko",
+    "chinese": "zh", "mandarin": "zh",
+}
+
+
+def resolve_disclaimer_lang(language: str | None,
+                            override: str | None = None) -> tuple[str, bool]:
+    """Resolve which language the spoken disclosure should be in.
+
+    Precedence: an explicit ``override`` (``--disclosure-lang`` /
+    ``"disclosure_lang"``) beats the model's declared language, which beats
+    :data:`DEFAULT_DISCLAIMER_LANG`.
+
+    Args:
+        language: The model config's ``language`` value, if any.
+        override: An explicit caller-supplied language code.
+
+    Returns:
+        ``(lang, known)``. ``known`` is False when neither the override nor the
+        config identified a language we have a disclosure for, and the default
+        was substituted. Callers must surface that: substituting German for a
+        multilingual model's Mandarin output produces audio whose "disclosure"
+        the audience cannot read, which is the failure Art. 50(4) is about.
+    """
+    for candidate in (override, language):
+        if not candidate or not isinstance(candidate, str):
+            continue
+        lang = candidate.strip().lower().replace("_", "-")
+        if not lang or lang in MULTILINGUAL_LANG_MARKERS:
+            continue
+        if lang in _DISCLAIMER_LANG_ALIASES:
+            return _DISCLAIMER_LANG_ALIASES[lang], True
+        base = lang.split("-")[0]
+        if base in DISCLAIMER_TEXTS:
+            return base, True
+        logger.warning(
+            "No spoken AI disclosure is available in language '%s'. Supported: %s.",
+            candidate, ", ".join(sorted(DISCLAIMER_TEXTS)))
+    return DEFAULT_DISCLAIMER_LANG, False
+
+
 def normalize_disclaimer_lang(language: str | None) -> str:
-    """Map a config language code (``de``, ``de-DE``, ``german``) to a key."""
-    if not language or not isinstance(language, str):
-        return DEFAULT_DISCLAIMER_LANG
-    lang = language.strip().lower().replace("_", "-")
-    aliases = {"german": "de", "english": "en", "french": "fr", "spanish": "es",
-               "italian": "it", "dutch": "nl", "polish": "pl", "portuguese": "pt"}
-    if lang in aliases:
-        return aliases[lang]
-    base = lang.split("-")[0]
-    return base if base in DISCLAIMER_TEXTS else DEFAULT_DISCLAIMER_LANG
+    """Map a config language code (``de``, ``de-DE``, ``german``) to a key.
+
+    Kept for callers that only need the code. Prefer
+    :func:`resolve_disclaimer_lang`, which also reports whether the language
+    was actually known or merely defaulted to.
+    """
+    return resolve_disclaimer_lang(language)[0]
 
 
 def disclaimer_text(language: str | None = None) -> str:
     """The spoken disclosure sentence for a language."""
     return DISCLAIMER_TEXTS[normalize_disclaimer_lang(language)]
+
+
+#: Languages already warned about, so ``--test-all`` does not emit the same
+#: caution once per model.
+_warned_default_disclosure_langs: set[str | None] = set()
+
+
+def _warn_defaulted_disclosure_lang(language: str | None) -> None:
+    """Warn that the disclosure language had to be guessed."""
+    if language in _warned_default_disclosure_langs:
+        return
+    _warned_default_disclosure_langs.add(language)
+    logger.warning(
+        "This model does not declare a single output language (language=%r), so the "
+        "spoken AI disclosure defaults to '%s'. If you are synthesizing in another "
+        "language, pass --disclosure-lang (CLI) or \"disclosure_lang\" (API) — a "
+        "disclosure the audience cannot understand does not satisfy the Art. 50(4) "
+        "duty to disclose. Available: %s.",
+        language, DEFAULT_DISCLAIMER_LANG, ", ".join(sorted(DISCLAIMER_TEXTS)))
 
 
 #: Backwards-compatible alias. Prefer :func:`disclaimer_text`.
@@ -1180,17 +1436,26 @@ _disclaimer_cache: dict[tuple[int, str], tuple[np.ndarray, str]] = {}
 
 
 def prepend_disclaimer(pcm: np.ndarray, sample_rate: int = 24000,
-                       language: str | None = None) -> tuple[np.ndarray, str]:
+                       language: str | None = None,
+                       disclosure_lang: str | None = None) -> tuple[np.ndarray, str]:
     """Prepend the spoken AI disclosure to voice-cloned audio.
 
     Layout: disclosure + 300 ms silence + original audio. The generated
     disclosure is cached per (sample rate, language).
 
+    Args:
+        pcm: The synthesized audio.
+        sample_rate: Sample rate of ``pcm``.
+        language: The model's declared language, used when no override is given.
+        disclosure_lang: Explicit disclosure language, overriding ``language``.
+
     Returns:
         ``(pcm, kind)`` — see :func:`generate_spoken_disclaimer` for ``kind``.
         On failure the original PCM is returned unchanged with ``"none"``.
     """
-    lang = normalize_disclaimer_lang(language)
+    lang, known = resolve_disclaimer_lang(language, disclosure_lang)
+    if not known:
+        _warn_defaulted_disclosure_lang(language)
     key = (sample_rate, lang)
     if key not in _disclaimer_cache:
         disclaimer, kind = generate_spoken_disclaimer(sample_rate, lang)
@@ -1204,7 +1469,8 @@ def prepend_disclaimer(pcm: np.ndarray, sample_rate: int = 24000,
 
 
 def prepend_disclaimer_file(filepath: str, language: str | None = None,
-                            require_spoken: bool = True) -> str:
+                            require_spoken: bool = True,
+                            disclosure_lang: str | None = None) -> str:
     """Prepend the spoken AI disclosure to an audio file, in place.
 
     Format-agnostic: works for every container the marking pipeline supports.
@@ -1216,9 +1482,13 @@ def prepend_disclaimer_file(filepath: str, language: str | None = None,
 
     Args:
         filepath: Audio file to modify in place.
-        language: Language of the synthesized speech; the disclosure follows it.
+        language: The model's declared language; used only when
+            ``disclosure_lang`` is not supplied.
         require_spoken: When True, a tone-marker fallback is not accepted as a
             disclosure and raises instead.
+        disclosure_lang: Explicit language for the disclosure, overriding
+            ``language``. Needed for multilingual models, whose output language
+            is determined by the input text rather than by the config.
 
     Returns:
         The disclosure kind that was applied: ``"spoken"`` or ``"tone-marker"``.
@@ -1234,7 +1504,8 @@ def prepend_disclaimer_file(filepath: str, language: str | None = None,
             f"Use one of: {', '.join(sorted(_SOUNDFILE_EXTS | _PYDUB_EXTS))}.")
     try:
         pcm, sr = _read_pcm_any(filepath, ext)
-        combined, kind = prepend_disclaimer(pcm, sample_rate=sr, language=language)
+        combined, kind = prepend_disclaimer(pcm, sample_rate=sr, language=language,
+                                            disclosure_lang=disclosure_lang)
     except DisclosureError:
         raise
     except Exception as e:
@@ -1260,7 +1531,7 @@ def prepend_disclaimer_file(filepath: str, language: str | None = None,
         raise DisclosureError(
             f"Could not write the disclosed audio for {filepath}: {e}") from e
     logger.info("AI disclosure (%s, %s) prepended to voice-cloned output: %s",
-                kind, normalize_disclaimer_lang(language), filepath)
+                kind, resolve_disclaimer_lang(language, disclosure_lang)[0], filepath)
     return kind
 
 
@@ -1742,12 +2013,7 @@ def log_marking_attestation(
            f'attestation="{source}"\n')
     sys.stderr.write(msg)
     sys.stderr.flush()
-    try:
-        os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
-        with open(_CONSENT_LOG_PATH, "a") as f_audit:
-            f_audit.write(msg)
-    except OSError as e:
-        logger.debug("Could not write marking audit log: %s", e)
+    _append_audit_line(msg)
 
 
 def preflight_marking(

@@ -1481,9 +1481,38 @@ class TestDisclosureWordingMatchesSusurrus(unittest.TestCase):
     def test_all_disclosures_describe_what_follows(self):
         """The disclosure is prepended, so it must not say "this audio"."""
         from watermark import DISCLAIMER_TEXTS
+        # "。" is the sentence terminator in Japanese and Chinese; "." there
+        # would be the wrong character, not a stricter one.
+        terminators = (".", "。")
         for lang, text in DISCLAIMER_TEXTS.items():
-            self.assertTrue(text.strip().endswith("."), lang)
-            self.assertGreater(len(text), 20, lang)
+            self.assertTrue(text.strip().endswith(terminators), lang)
+            # CJK says the same thing in far fewer characters, so the
+            # length floor has to be script-aware to mean anything.
+            floor = 10 if lang in {"ja", "ko", "zh"} else 20
+            self.assertGreater(len(text), floor, lang)
+
+    def test_every_eu_official_language_is_covered(self):
+        """Art. 50 governs the EU market, so EU audiences must be disclosable to."""
+        from watermark import DISCLAIMER_TEXTS
+        eu_official = {
+            "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "ga",
+            "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "sk",
+            "sl", "sv",
+        }
+        missing = sorted(eu_official - set(DISCLAIMER_TEXTS))
+        self.assertEqual(missing, [], f"no disclosure text for: {missing}")
+
+    def test_every_language_has_an_edge_voice(self):
+        from watermark import _DISCLAIMER_EDGE_VOICES, DISCLAIMER_TEXTS
+        missing = sorted(set(DISCLAIMER_TEXTS) - set(_DISCLAIMER_EDGE_VOICES))
+        self.assertEqual(missing, [], f"no Edge TTS voice for: {missing}")
+
+    def test_every_language_ships_an_offline_clip(self):
+        """Tier 3 is what makes disclosure work offline; a gap silently loses it."""
+        from watermark import DISCLAIMER_TEXTS, bundled_disclosure_path
+        missing = sorted(lang for lang in DISCLAIMER_TEXTS
+                         if not bundled_disclosure_path(lang))
+        self.assertEqual(missing, [], f"no bundled disclosure clip for: {missing}")
 
 
 class TestConsentDetectionTiers(unittest.TestCase):
@@ -1645,6 +1674,191 @@ class TestSpokenDisclosureFailsClosed(unittest.TestCase):
         self.assertEqual(kind, "spoken")
         after, _ = sf.read(path, dtype="float32")
         self.assertGreater(len(after), len(original_pcm))
+
+
+class TestDisclosureLanguageResolution(unittest.TestCase):
+    """The disclosure must not silently claim a language it did not use.
+
+    Before this, every shipped cloning model resolved to German — including
+    the multilingual ones and the Mandarin-centric CrispASR backends — because
+    an unknown language fell through to the default with no signal. A German
+    sentence in front of Mandarin audio is not an Art. 50(4) disclosure.
+    """
+
+    def test_explicit_override_wins_over_config(self):
+        from watermark import resolve_disclaimer_lang
+        self.assertEqual(resolve_disclaimer_lang("de", "zh"), ("zh", True))
+
+    def test_config_language_used_when_no_override(self):
+        from watermark import resolve_disclaimer_lang
+        self.assertEqual(resolve_disclaimer_lang("fr"), ("fr", True))
+
+    def test_regional_and_long_form_codes(self):
+        from watermark import resolve_disclaimer_lang
+        self.assertEqual(resolve_disclaimer_lang("pt-BR"), ("pt", True))
+        self.assertEqual(resolve_disclaimer_lang("Swedish"), ("sv", True))
+
+    def test_multilingual_marker_is_not_a_language(self):
+        from watermark import resolve_disclaimer_lang
+        lang, known = resolve_disclaimer_lang("multilingual")
+        self.assertFalse(known, "'multilingual' must not pass as a known language")
+
+    def test_missing_language_is_reported_as_defaulted(self):
+        from watermark import DEFAULT_DISCLAIMER_LANG, resolve_disclaimer_lang
+        self.assertEqual(resolve_disclaimer_lang(None), (DEFAULT_DISCLAIMER_LANG, False))
+
+    def test_override_rescues_a_multilingual_model(self):
+        from watermark import resolve_disclaimer_lang
+        self.assertEqual(resolve_disclaimer_lang("multilingual", "ja"), ("ja", True))
+
+    def test_unsupported_language_defaults_rather_than_crashing(self):
+        from watermark import DEFAULT_DISCLAIMER_LANG, resolve_disclaimer_lang
+        lang, known = resolve_disclaimer_lang("xx")
+        self.assertEqual(lang, DEFAULT_DISCLAIMER_LANG)
+        self.assertFalse(known)
+
+    def test_every_cloning_model_declares_a_language(self):
+        """A missing key is indistinguishable from 'German', so require one."""
+        from config import GERMAN_TTS_MODELS
+        missing = sorted(mid for mid, cfg in GERMAN_TTS_MODELS.items()
+                         if cfg.get("voice_cloning") and "language" not in cfg)
+        self.assertEqual(missing, [], f"cloning models with no language: {missing}")
+
+    def test_declared_languages_are_resolvable_or_explicitly_multilingual(self):
+        from config import GERMAN_TTS_MODELS
+        from watermark import MULTILINGUAL_LANG_MARKERS, resolve_disclaimer_lang
+        for mid, cfg in GERMAN_TTS_MODELS.items():
+            if not cfg.get("voice_cloning"):
+                continue
+            declared = cfg.get("language")
+            _, known = resolve_disclaimer_lang(declared)
+            if not known:
+                self.assertIn(str(declared).lower(), MULTILINGUAL_LANG_MARKERS,
+                              f"{mid}: language {declared!r} is neither resolvable "
+                              "nor an explicit multilingual marker")
+
+    def test_prepend_uses_the_override_language(self):
+        import tempfile
+
+        import soundfile as sf
+
+        import watermark
+        from watermark import prepend_disclaimer_file
+        seen = {}
+
+        def fake_gen(sample_rate=24000, language=None):
+            seen["lang"] = language
+            return np.full(int(sample_rate * 1.0), 0.05, dtype=np.float32), "spoken"
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "clip.wav")
+            sf.write(path, np.full(24000, 0.1, dtype=np.float32), 24000)
+            real = watermark.generate_spoken_disclaimer
+            watermark._disclaimer_cache.clear()
+            watermark.generate_spoken_disclaimer = fake_gen
+            try:
+                prepend_disclaimer_file(path, language="de", disclosure_lang="el")
+            finally:
+                watermark.generate_spoken_disclaimer = real
+                watermark._disclaimer_cache.clear()
+        self.assertEqual(seen["lang"], "el")
+
+
+class TestConsentAuditLogRetention(unittest.TestCase):
+    """The audit log records reference-audio paths, so it is personal data.
+
+    GDPR Art. 5(1)(e) wants a retention limit and Art. 17 an erasure path;
+    an append-forever file offers neither.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        import watermark
+        self._dir = tempfile.mkdtemp()
+        self._saved = watermark._CONSENT_LOG_PATH
+        watermark._CONSENT_LOG_PATH = os.path.join(self._dir, "consent_audit.log")
+
+    def tearDown(self):
+        import shutil
+
+        import watermark
+        watermark._CONSENT_LOG_PATH = self._saved
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+    def _write(self, lines):
+        import watermark
+        with open(watermark._CONSENT_LOG_PATH, "w") as f:
+            f.writelines(lines)
+
+    @staticmethod
+    def _line(days_ago, subject="ref.wav"):
+        from datetime import datetime, timedelta, timezone
+        ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime(
+            "%Y-%m-%dT%H:%M:%S%z")
+        return f'[CONSENT] ts={ts} model=m voice={subject} attestation="t"\n'
+
+    def test_expired_entries_are_pruned(self):
+        import watermark
+        from watermark import prune_audit_log
+        self._write([self._line(1000), self._line(1)])
+        self.assertEqual(prune_audit_log(), 1)
+        with open(watermark._CONSENT_LOG_PATH) as f:
+            self.assertEqual(len(f.readlines()), 1)
+
+    def test_fresh_entries_survive(self):
+        from watermark import prune_audit_log
+        self._write([self._line(1), self._line(2)])
+        self.assertEqual(prune_audit_log(), 0)
+
+    def test_retention_zero_disables_pruning(self):
+        from watermark import prune_audit_log
+        self._write([self._line(100000)])
+        self.assertEqual(prune_audit_log(retention_days=0), 0)
+
+    def test_unparseable_lines_are_kept(self):
+        """An unreadable record is not evidence that it has expired."""
+        from watermark import prune_audit_log
+        self._write(["garbage with no timestamp\n"])
+        self.assertEqual(prune_audit_log(retention_days=1), 0)
+
+    def test_erase_by_subject_leaves_others(self):
+        import watermark
+        from watermark import erase_audit_log
+        self._write([self._line(1, "alice.wav"), self._line(1, "bob.wav")])
+        self.assertEqual(erase_audit_log("alice.wav"), 1)
+        with open(watermark._CONSENT_LOG_PATH) as f:
+            rest = f.read()
+        self.assertIn("bob.wav", rest)
+        self.assertNotIn("alice.wav", rest)
+
+    def test_erase_everything(self):
+        import watermark
+        from watermark import erase_audit_log
+        self._write([self._line(1), self._line(2)])
+        self.assertEqual(erase_audit_log(), 2)
+        self.assertFalse(os.path.exists(watermark._CONSENT_LOG_PATH))
+
+    def test_erase_on_missing_log_is_harmless(self):
+        from watermark import erase_audit_log
+        self.assertEqual(erase_audit_log(), 0)
+
+    def test_appending_creates_an_owner_only_file(self):
+        import stat
+
+        import watermark
+        watermark.log_consent_attestation("some_model", None)
+        mode = stat.S_IMODE(os.stat(watermark._CONSENT_LOG_PATH).st_mode)
+        self.assertEqual(mode, 0o600, f"audit log is {oct(mode)}, expected 0o600")
+
+    def test_append_prunes_expired_entries(self):
+        import watermark
+        self._write([self._line(1000)])
+        watermark.log_consent_attestation("some_model", None)
+        with open(watermark._CONSENT_LOG_PATH) as f:
+            lines = f.readlines()
+        self.assertEqual(len(lines), 1, "the expired line should have been pruned")
+        self.assertIn("some_model", lines[0])
 
 
 if __name__ == "__main__":

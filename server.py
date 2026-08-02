@@ -180,6 +180,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
         response_format = body.get("response_format", "wav")
         speed = body.get("speed", 1.0)
         i_have_rights = body.get("i_have_rights", False)
+        disclosure_lang = body.get("disclosure_lang")
 
         if not model:
             self._send_error(400, "Missing 'model' field")
@@ -240,13 +241,29 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             if _is_voice_cloning:
                 log_consent_attestation(model, effective_voice, source="API i_have_rights field")
         except ImportError:
-            pass
+            # Fails closed, like the marking gate below: an unknown cloning
+            # status is treated as cloning, not as permission.
+            logger.error("watermark module not available in server — refusing synthesis "
+                         "because the voice-cloning consent gate cannot be evaluated.")
+            self._send_error(500, "Voice-cloning consent gate unavailable; refusing to "
+                                  "synthesize.")
+            return
 
         # --- Synthesis cache check ---
+        # The disclosure language is part of the key: cloned audio carries the
+        # spoken disclosure *inside* it, so a clip disclosed in German is not a
+        # valid response to a request that asked for English.
+        _cache_params = {}
+        if speed != 1.0:
+            _cache_params["speed"] = speed
+        if _is_voice_cloning and disclosure_lang:
+            _cache_params["disclosure_lang"] = disclosure_lang
+        _cache_params_json = json.dumps(_cache_params, sort_keys=True) if _cache_params else None
+
         try:
             import cache as _cache
             cached = _cache.lookup(model, effective_voice, text,
-                                   json.dumps({"speed": speed}) if speed != 1.0 else None,
+                                   _cache_params_json,
                                    f".{response_format}")
             if cached:
                 with open(cached, "rb") as f_cached:
@@ -319,7 +336,8 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                     return
                 try:
                     prepend_disclaimer_file(tmp_path,
-                                            language=model_config.get("language"))
+                                            language=model_config.get("language"),
+                                            disclosure_lang=disclosure_lang)
                 except DisclosureError as e_disc:
                     logger.error("Server disclosure failed: %s", e_disc)
                     self._send_error(500, f"Cannot add the AI disclosure to voice-cloned "
@@ -364,7 +382,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
             try:
                 import cache as _cache
                 _cache.store(model, effective_voice, text,
-                             json.dumps({"speed": speed}) if speed != 1.0 else None,
+                             _cache_params_json,
                              tmp_path, f".{response_format}")
             except ImportError:
                 pass

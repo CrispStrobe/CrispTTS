@@ -55,8 +55,10 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - WAV LIST/INFO, MP3 ID3v2, FLAC Vorbis comment, and Opus/OGG metadata marking audio as AI-generated
   - C2PA content credentials signed by default (core dep; c2pa-audio / CrispASR used as fast paths when present)
   - Voice-cloning consent gate (`--i-have-rights` CLI / `"i_have_rights": true` API)
-  - Spoken AI disclaimer prepended to voice-cloned audio, in 8 languages
-  - Persistent consent audit log at `~/.cache/crisptts/consent_audit.log`
+  - Spoken AI disclaimer prepended to voice-cloned audio, in all 24 EU official
+    languages plus zh/ja/ko (`--list-disclosure-langs`), bundled for offline use
+  - Persistent consent audit log at `~/.cache/crisptts/consent_audit.log`,
+    owner-only, auto-pruned, with `--consent-log-erase` for GDPR Art. 17
 - **CrispASR Integration**:
   - `--verify`: ASR roundtrip verification of TTS output quality
   - `--translate`: Pre-synthesis translation (EN→DE via m2m100/MadLad)
@@ -83,7 +85,7 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
 - **Comprehensive Testing**:
   - `--test-all`: Test all models with default voices
   - `--test-all-speakers`: Test all models with all configured voices
-  - 285+ unit and live tests
+  - 409+ unit and live tests
 - **Modular Design**: `config.py` + `utils.py` + `handlers/` + `main.py`
 - **Logging**: Configurable logging levels
 - **Automatic Patching**: Runtime monkeypatches for library compatibility
@@ -296,6 +298,10 @@ python main.py --backend kokoro --input-text "Hello" --output-file out.wav
 | `--accept-marking-responsibility` | off | Required for any provenance opt-out; logged as `[MARKING]` |
 | `--watermark-model PATH` | — | Path to AudioSeal GGUF model for neural watermarking |
 | `--i-have-rights` | off | Consent attestation for voice-cloning models (required) |
+| `--disclosure-lang LANG` | model's language | Language of the spoken AI disclosure on cloned audio |
+| `--list-disclosure-langs` | — | List the languages the spoken disclosure is available in |
+| `--consent-log-prune` | — | Drop consent audit entries past the retention window |
+| `--consent-log-erase [SUBJECT]` | — | Erase consent audit entries (GDPR Art. 17) |
 | `--c2pa-cert PEM` | — | X.509 PEM certificate for C2PA content credentials |
 | `--c2pa-key PEM` | — | PEM private key for C2PA content credentials |
 
@@ -698,7 +704,10 @@ Voice-cloning models require explicit consent attestation before synthesis is al
 - **API**: `"i_have_rights": true` in request body (returns 403 without it)
 - **Audit log**: written to stderr AND `~/.cache/crisptts/consent_audit.log`,
   including a SHA-256 digest of the reference recording. `--test-all` logs the
-  attestation too, not just the gate check.
+  attestation too, not just the gate check. See *Audit log retention* below.
+- **Fails closed**: if the gate cannot be evaluated at all (the `watermark`
+  module is missing), synthesis is refused rather than allowed through. An
+  unknown cloning status is treated as cloning, not as permission.
 
 **Detection**, strongest signal first:
 
@@ -713,10 +722,31 @@ Voice-cloning models require explicit consent attestation before synthesis is al
    dicts that predate the explicit key. This tier fails *open*, which is why
    tier 2 exists.
 
-**Spoken disclosure** — prepended to cloned output, in the language of the
-model being used (German by default, not English). The German and English
-wording is kept identical to Susurrus's `disclosure.spoken` string, so the Crisp
-projects disclose in the same words. Sources, in order:
+**Spoken disclosure** — prepended to cloned output, in **all 24 EU official
+languages** plus Chinese, Japanese and Korean (27 total; `--list-disclosure-langs`
+prints them). Art. 50 governs content placed on the EU market, so a disclosure
+an EU audience can understand means any EU official language — a German
+sentence in front of Greek audio discloses nothing to a Greek listener. The
+German and English wording is kept identical to Susurrus's `disclosure.spoken`
+string, so the Crisp projects disclose in the same words.
+
+**Which language is used**, in order of precedence:
+
+1. `--disclosure-lang` (CLI) or `"disclosure_lang"` (API) — an explicit choice
+2. The model's declared `language` in `config.py`
+3. German, the default — **with a warning**
+
+Step 3 is a fallback, not a decision. Around half the shipped cloning
+backends are multilingual (CosyVoice3, OmniVoice, IndexTTS, Qwen3-TTS,
+LLaSA-Multilingual, OuteTTS, Spark, VoxCPM2, MOSS, VibeVoice, F5), and for
+those the output language is a property of the *input text*, not of the model
+— so it cannot be derived from the config at all. They declare
+`"language": "multilingual"`, which CrispTTS treats as *unknown* rather than
+silently substituting German, and warns that you should pass
+`--disclosure-lang`. A test asserts every cloning model declares a `language`
+key, so a new backend cannot skip the question.
+
+Sources, in order:
 
 1. CrispASR kokoro, if the binary is available — local, no network
 2. Edge TTS, if installed — needs network
@@ -724,9 +754,11 @@ projects disclose in the same words. Sources, in order:
    download, no network, no configuration
 
 Tier 3 is why disclosure does not fail on an offline machine. It is a real
-spoken sentence in the right language, so it counts as a disclosure. Regenerate
-the clips with `python scripts/make_disclosure_assets.py` after editing
-`DISCLAIMER_TEXTS`.
+spoken sentence in the right language, so it counts as a disclosure. All 27
+languages ship a clip (~2 MB total in the wheel), so offline disclosure works
+in every one of them, not just German. Regenerate with
+`python scripts/make_disclosure_assets.py` after editing `DISCLAIMER_TEXTS`;
+a test fails if any language lacks a bundled clip.
 
 Only if all three fail does CrispTTS fall back to a tone marker, which is
 **refused**: three beeps are an audible signal, not a disclosure a listener can
@@ -736,9 +768,13 @@ Art. 50(4) duty on explicitly.
 
 ### EU AI Act: what this tool does, and what you must still do
 
-Article 50 of Regulation (EU) 2024/1689 sits in Chapter IV and applies from
-**2 August 2026** under Art. 113. Releasing under an open-source licence does
-**not** exempt Article 50 — Art. 2(12) expressly carves it back in.
+Article 50 of Regulation (EU) 2024/1689 sits in Chapter IV and **has applied
+since 2 August 2026** under Art. 113 — it is in force now, not upcoming.
+Article 4 (AI literacy, Chapter I) has applied since **2 February 2025**.
+Releasing under an open-source licence does **not** exempt Article 50 —
+Art. 2(12) expressly carves it back in. Check the current consolidated text
+before relying on these dates; the Regulation has been subject to amendment
+proposals since adoption.
 
 **What CrispTTS does for you** (provider-side, Art. 50(2)):
 
@@ -749,20 +785,55 @@ Article 50 of Regulation (EU) 2024/1689 sits in Chapter IV and applies from
 - Reports honestly what was applied (`MarkResult`, server `X-CrispTTS-*`
   headers), and never presents a bundled-certificate signature as trusted
 - Gates voice cloning behind an attestation and logs it with a digest of the
-  reference recording
-- Prepends a spoken AI disclosure, in the right language, to voice-cloned
-  output — and refuses to deliver cloned audio without one
+  reference recording — and refuses to synthesize at all if that gate cannot
+  be evaluated
+- Never plays audio to a listener before it has been marked and verified
+- Prepends a spoken AI disclosure to voice-cloned output, in any of the 24 EU
+  official languages, and refuses to deliver cloned audio without one
 
 **What remains your responsibility as the deployer** (Art. 50(4)):
 
 - Disclosing that content is artificially generated where you publish it —
   a watermark is machine-readable, not a disclosure to the audience
+- **Choosing the disclosure language.** CrispTTS defaults to the model's
+  declared language and warns when it cannot determine one, but only you know
+  what language your audience speaks. Pass `--disclosure-lang` when using a
+  multilingual model — a disclosure the audience cannot understand does not
+  discharge the Art. 50(4) duty
 - Obtaining genuine consent from anyone whose voice you clone. The
   `--i-have-rights` flag is an unverified self-attestation; it records your
   claim, it does not establish a legal basis
 - Checking the voice/model licences you use (see the licensing section above)
-- GDPR: a cloned voice is personal data, and the consent audit log at
-  `~/.cache/crisptts/consent_audit.log` contains reference-audio paths
+- GDPR: a cloned voice is personal data, and the consent audit log contains
+  reference-audio paths — see *Audit log retention* below
+- **Art. 4 (AI literacy)**: ensuring the people operating this tool understand
+  what it does and what its output is. In practice, for CrispTTS, that means
+  whoever runs it should have read this section
+
+**Not applicable, having been checked:** CrispTTS performs no biometric
+categorisation and no emotion *recognition* (Kartoffelbox's emotion control is
+emotion *synthesis*), so Art. 5 prohibited practices do not engage; it is not
+an Annex III high-risk system; and single-purpose TTS models are not
+general-purpose AI models, so Chapter V obligations do not attach to the
+models converted by `convert_f5_to_mlx.py`.
+
+### Audit log retention
+
+`[CONSENT]` and `[MARKING]` lines are written to
+`~/.cache/crisptts/consent_audit.log`. That file records reference-audio
+*paths*, which routinely contain personal names, so it is personal data:
+
+- Created `0600`, owner-only, rather than at the umask default
+- Entries older than **730 days** are pruned automatically on every append
+  (GDPR Art. 5(1)(e) storage limitation). Set
+  `CRISPTTS_CONSENT_LOG_RETENTION_DAYS` to change the window, `0` to disable
+- `--consent-log-prune` prunes on demand
+- `--consent-log-erase [SUBJECT]` handles an Art. 17 erasure request: with a
+  reference-audio path or `ref_sha256` digest it removes only that speaker's
+  lines; with no argument it erases the whole log
+
+Lines with no parseable timestamp are kept — an unreadable record is not
+evidence that it has expired.
 
 C2PA manifests signed with the bundled development certificate prove the file
 is unaltered since signing, but will **not** validate against C2PA trust lists.
@@ -782,7 +853,7 @@ regulation, not legal advice.
 | MP3 ID3v2 tags | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) | TXXX (AI_GENERATED) |
 | FLAC/Opus metadata | Vorbis comments (mutagen) | — | — |
 | C2PA content credentials | c2pa-python by default; c2pa-audio / CrispASR as fast paths, each verified | c2pa-c (compile-time) | — |
-| Spoken AI disclaimer | CrispASR kokoro / Edge TTS, 8 languages; refuses if unavailable | Native TTS (cached) | Beep marker |
+| Spoken AI disclaimer | CrispASR kokoro / Edge TTS / bundled clips, 27 languages (all 24 EU official); refuses if unavailable | Native TTS (cached) | Beep marker |
 | Voice-cloning consent gate | CLI + API (403) | CLI + server JSON | GDPR Art. 9(2)(a) consent files |
 | Consent audit logging | stderr + `consent_audit.log` | `[CONSENT]` stderr | `[CONSENT]` log + `.consent.json` |
 | Post-embed verification | detect after save | detect after save | detect after embed |
@@ -804,6 +875,10 @@ doesn't work* — which is where the projects genuinely differ:
 | `[MARKING]` audit line | Yes | Yes | — | — |
 | Non-WAV outputs marked | Yes | Yes | **No** (WAV only) | — |
 | Silent no-op on short audio | Refused | — | — | Yes (<4608 samples) |
+| Playback marked+verified before it is heard | Yes | — | — | — |
+| Consent gate fails closed if unevaluable | Yes | — | — | — |
+| Disclosure in all 24 EU official languages | Yes | — | — | — |
+| Audit-log retention limit + erasure command | Yes | — | — | — |
 
 CrispASR contributed the watermark floor and the attestation gate, which
 CrispTTS adopts here. CrispTTS adds preflight refusal and verification-as-gate,
@@ -827,8 +902,21 @@ python main.py --c2pa-cert cert.pem --c2pa-key key.pem --model-id edge --input-t
 # Voice-cloning models require consent attestation (spoken disclaimer auto-prepended)
 python main.py --model-id coqui_xtts_v2_de_clone --i-have-rights --input-text "Hallo" --output-file out.wav
 
+# Multilingual cloning model: say which language the disclosure should be in,
+# because the model config cannot know what language your text is
+python main.py --model-id crispasr_cosyvoice3_tts --i-have-rights \
+  --disclosure-lang zh --input-text "你好" --output-file out.wav
+
+# What languages can the spoken disclosure be in?
+python main.py --list-disclosure-langs
+
 # Detect watermark in existing audio
 python main.py --detect-watermark out.wav
+
+# GDPR housekeeping on the consent audit log
+python main.py --consent-log-prune                 # drop entries past retention
+python main.py --consent-log-erase /refs/alice.wav # Art. 17, one speaker
+python main.py --consent-log-erase                 # Art. 17, everything
 
 # Disable ALL marking layers (debug only — you take on the Art. 50 responsibility)
 python main.py --no-watermark --model-id edge --input-text "Hallo" --output-file out.mp3

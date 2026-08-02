@@ -57,20 +57,43 @@ async def _render(text: str, voice: str) -> np.ndarray:
 def main() -> int:
     os.makedirs(ASSET_DIR, exist_ok=True)
     loop = asyncio.new_event_loop()
+    failed: list[tuple[str, str]] = []
+    total = 0
     try:
         for lang, text in sorted(DISCLAIMER_TEXTS.items()):
-            voice = _DISCLAIMER_EDGE_VOICES[lang]
-            pcm = loop.run_until_complete(_render(text, voice))
+            voice = _DISCLAIMER_EDGE_VOICES.get(lang)
+            if not voice:
+                failed.append((lang, "no Edge TTS voice configured"))
+                print(f"{lang}: SKIPPED — no voice in _DISCLAIMER_EDGE_VOICES")
+                continue
+            # One bad voice name must not leave the asset set half-written:
+            # a missing clip is a language that silently loses its offline
+            # disclosure, so failures are collected and reported at the end.
+            try:
+                pcm = loop.run_until_complete(_render(text, voice))
+            except Exception as e:
+                failed.append((lang, f"{voice}: {e}"))
+                print(f"{lang}: FAILED — {voice}: {e}")
+                continue
             # Trim near-silence at both ends so the clip starts promptly.
             loud = np.nonzero(np.abs(pcm) > 0.01)[0]
             if len(loud):
                 pcm = pcm[max(0, loud[0] - 800):loud[-1] + 800]
             path = os.path.join(ASSET_DIR, f"disclosure_{lang}.flac")
             sf.write(path, pcm, TARGET_RATE)
-            print(f"{lang}: {len(pcm) / TARGET_RATE:5.2f}s  "
-                  f"{os.path.getsize(path) / 1024:6.1f} KiB  {voice}")
+            size = os.path.getsize(path)
+            total += size
+            print(f"{lang}: {len(pcm) / TARGET_RATE:5.2f}s  {size / 1024:6.1f} KiB  {voice}")
     finally:
         loop.close()
+
+    print(f"\n{len(DISCLAIMER_TEXTS) - len(failed)}/{len(DISCLAIMER_TEXTS)} clips, "
+          f"{total / 1024:.0f} KiB total.")
+    if failed:
+        print("\nFAILED — these languages have no offline disclosure clip:")
+        for lang, why in failed:
+            print(f"  {lang}: {why}")
+        return 1
     return 0
 
 
