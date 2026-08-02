@@ -442,6 +442,14 @@ class TestPlaybackIsMarkedFirst(unittest.TestCase):
             if out_path:
                 sf.write(out_path, np.full(24000, 0.1, dtype=np.float32), 24000)
 
+        # run_synthesis imports the streaming entry point directly from the
+        # handler module, so the dispatch stub above never sees it. Without
+        # patching this too the test would silently depend on a real crispasr
+        # binary being installed — green on a dev box, red in CI.
+        def streaming_stub(config, text, voice, params, out_path, play_direct):
+            order.append("streamed")
+            stub(config, text, voice, params, out_path, play_direct)
+
         def fake_mark(filepath, **kwargs):
             order.append("marked")
             return watermark.MarkResult(marked=True, backend="test",
@@ -468,9 +476,12 @@ class TestPlaybackIsMarkedFirst(unittest.TestCase):
             lm_studio_api_url=None, gguf_model_name_in_api=None,
             ollama_api_url=None, ollama_model_name=None,
         )
+        import handlers.crispasr_handler as crispasr_handler
         with patch.object(main, "_load_handlers_if_needed",
                           return_value={handler_key: stub}), \
                 patch.object(main, "_HANDLERS_LOADED", True), \
+                patch.object(crispasr_handler, "synthesize_with_crispasr_streaming",
+                             streaming_stub), \
                 patch.object(watermark, "mark_audio_file", fake_mark), \
                 patch.object(utils, "play_audio", fake_play):
             main.run_synthesis(args)
@@ -495,7 +506,17 @@ class TestPlaybackIsMarkedFirst(unittest.TestCase):
         import os
         out = os.path.join(self.tmpdir, "streamed.wav")
         order = self._run("crispasr_kokoro", stream=True, output_file=out)
-        self.assertIn("marked", order)
+        self.assertIn("streamed", order, "the streaming path was not taken")
+        self.assertIn("marked", order, "a streamed --output-file must still be marked")
+
+    def test_streaming_is_the_only_path_that_plays_before_marking(self):
+        """The exemption must be narrow: --stream only, and only for playback."""
+        import os
+        out = os.path.join(self.tmpdir, "streamed2.wav")
+        order = self._run("crispasr_kokoro", stream=True, output_file=out)
+        self.assertLess(order.index("streamed"), order.index("marked"))
+        # run_synthesis must not additionally play a second time after marking.
+        self.assertNotIn("played", order)
 
 
 class TestConsentGateFailsClosed(unittest.TestCase):
