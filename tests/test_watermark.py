@@ -527,6 +527,78 @@ class TestWavMarkBackend(unittest.TestCase):
         for bit in _WAVMARK_PAYLOAD:
             self.assertIn(int(bit), (0, 1))
 
+    def test_loader_prefers_accelerator_over_cpu(self):
+        """MPS must be chosen when CUDA is absent — not skipped for CPU.
+
+        The loader used to read `cuda:0 if cuda.is_available() else cpu`, so
+        every Apple Silicon machine took the slowest device it had. Measured on
+        one 1 s chunk: 16-30 s on CPU at torch's default thread count, 0.54 s
+        on MPS.
+        """
+        import importlib.util
+        if importlib.util.find_spec("wavmark") is None:
+            self.skipTest("wavmark not installed")
+        import torch
+
+        import watermark as wmod
+
+        if not (getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()):
+            self.skipTest("no MPS on this machine")
+        if torch.cuda.is_available():
+            self.skipTest("CUDA present; it legitimately outranks MPS")
+
+        saved = (wmod._wavmark_model, wmod._wavmark_device, wmod._backend)
+        try:
+            self.assertTrue(wmod.load_wavmark())
+            self.assertEqual(wmod._wavmark_device.type, "mps")
+        finally:
+            wmod._wavmark_model, wmod._wavmark_device, wmod._backend = saved
+
+    def test_fast_scan_agrees_with_upstream_decode(self):
+        """The early-exit scan must reach the same verdict as wavmark's own.
+
+        It stops at the first exact start-bit match instead of scanning every
+        window and averaging, so this asserts the shortcut does not change the
+        answer — on marked audio *and* on unmarked audio, where there is no hit
+        to stop at and the full scan runs either way.
+        """
+        import importlib.util
+        if importlib.util.find_spec("wavmark") is None:
+            self.skipTest("wavmark not installed")
+
+        import wavmark
+
+        import watermark as wmod
+
+        saved = (wmod._wavmark_model, wmod._wavmark_device, wmod._backend)
+        try:
+            self.assertTrue(wmod.load_wavmark())
+            rng = np.random.default_rng(7)
+            # 3 s of noise-like signal: long enough for several scan windows
+            clean = (0.1 * rng.standard_normal(16000 * 3)).astype(np.float32)
+            marked = wmod._embed_wavmark(clean, 16000)
+
+            fast_marked = wmod._detect_wavmark(marked, 16000)
+            fast_clean = wmod._detect_wavmark(clean, 16000)
+
+            up_payload, _ = wavmark.decode_watermark(
+                wmod._wavmark_model, marked.astype(np.float64), show_progress=False)
+            self.assertIsNotNone(up_payload, "upstream did not find its own watermark")
+            up_marked = float(np.mean(up_payload[:16] == wmod._WAVMARK_PAYLOAD))
+
+            # Not asserted equal: upstream averages every exact match in the
+            # file, the fast scan averages those in the first batch containing
+            # one, so they can differ by a bit or two on noisy input. What must
+            # agree is the verdict, and the shortcut must not be the *worse*
+            # reading of the two by any meaningful margin.
+            self.assertGreater(fast_marked, 0.65,
+                               f"fast scan missed a real mark ({fast_marked:.3f})")
+            self.assertGreater(up_marked, 0.65)
+            self.assertGreaterEqual(fast_marked, up_marked - 0.07)
+            self.assertLess(fast_clean, 0.4, "unmarked audio must not read as marked")
+        finally:
+            wmod._wavmark_model, wmod._wavmark_device, wmod._backend = saved
+
     def test_wavmark_payload_encodes_ct(self):
         """Payload should encode 'CT' = 0x43 0x54."""
         from watermark import _WAVMARK_PAYLOAD

@@ -608,24 +608,42 @@ of speech at 16 kHz:
 
 | | AudioSeal | WavMark |
 |---|---|---|
-| Model load | 1.9 s | 21 s |
-| Embed | **2.0 s** | ~180 s (extrapolated from 54 s / 3 s) |
-| Detect | **0.45 s** | **did not return in 10 minutes** |
-| SNR | 28.9 dB | **36.3 dB** |
-| 64 kbps MP3 | 1.000 | — |
+| Model load | 1.9 s | 6.9 s |
+| Embed + detect, 10 s audio | **2.5 s** | 12.4 s |
+| Embed + detect, 20 s audio | ~3 s | 14.3 s |
+| SNR | 28.9 dB | **35.8 dB** |
+| 64 kbps MP3 | 1.000 | 1.000 |
 | **Opus round-trip** | **1.000** | — |
-| Unwatermarked speech | **0.000** | — |
 
-AudioSeal is the default because detection cost is not optional:
-`mark_audio_file()` verifies after every embed, so a slow detector is paid on
-every marked file, not only when you ask to verify one.
+AudioSeal remains the default: it is still several times faster, and it is the
+one measured to survive an Opus round-trip, which is the container C2PA cannot
+sign. WavMark's ~7 dB quieter embed is its real advantage — take it when
+imperceptibility outranks throughput.
 
-WavMark's ~7 dB quieter embed is its one real advantage; take it only if
-imperceptibility outranks throughput and you have measured the cost on your own
-hardware. Two caveats if you do: `load_wavmark()` selects CUDA or CPU and never
-MPS, so Apple Silicon always takes the CPU path; and upstream's
-`encode_watermark` declares `min_snr=20, max_snr=38`, so 38 dB is the ceiling
-of its iterative per-chunk search, not a floor it clears.
+WavMark used to be unusable here (embed ~180 s for 10 s of audio, and a detect
+that did not return within 10 minutes). Nothing about the model changed; three
+things about how CrispTTS drives it did:
+
+- **Device.** `load_wavmark()` selected CUDA-or-CPU and never MPS, so every
+  Apple Silicon machine took the slowest device it owned. One forward pass on a
+  1 s chunk: 16–30 s on CPU at torch's default 4 threads, 5.4 s at 8 threads,
+  **0.54 s on MPS**. The loader now prefers CUDA → MPS → CPU, and raises the
+  thread count on the CPU path.
+- **Detection scan.** `wavmark.decode_watermark` scans every window position
+  and averages all hits, because it is recovering a payload. CrispTTS only asks
+  "is this marked, with our payload", so it stops at the first batch containing
+  an exact start-bit match: 34.7 s → 9.3 s at 10 s, and 79.3 s → 6.8 s at 20 s.
+  Upstream's cost scales with duration; this does not.
+- Marks are device-independent: MPS and CPU embeds differ by 2.4e-07, and a
+  file marked on either verifies on the other.
+
+None of this required forking or patching wavmark — only `model.encode` and
+`model.decode`, its public model API. Note that upstream's `encode_watermark`
+declares `min_snr=20, max_snr=38`, so 38 dB is the ceiling of its iterative
+per-chunk search, not a floor it clears.
+
+Unmarked audio is the worst case for both backends and stays slow (~35 s for
+10 s of audio with WavMark): there is no hit to stop on, so the full scan runs.
 
 > **Confidence values are not comparable across backends.** AudioSeal's
 > detector saturates (measured 1.000 watermarked / 0.000 clean); the
@@ -1130,7 +1148,7 @@ skipped mark currently produces a warning and the audio still ships.
 # Default: spread-spectrum watermark + metadata (no extra deps)
 python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 
-# With WavMark neural watermark (MIT, preferred — survives transcoding)
+# With the AudioSeal neural watermark (MIT, preferred — survives Opus and MP3)
 pip install 'crisptts[robust]'
 python main.py --model-id edge --input-text "Hallo" --output-file out.mp3
 

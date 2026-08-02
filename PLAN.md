@@ -1967,3 +1967,113 @@ path cannot re-load a backend from the cleared globals. Verified in both
 configurations: 445 pass with AudioSeal installed, 444 with neither.
 
 ### Status: COMPLETE — 445 pass with AudioSeal, 444 without, ruff clean
+
+## Phase 26: WavMark was never slow — we were driving it wrong (v0.9.6)
+
+Phase 24 measured WavMark as unusable and Phase 25 routed around it. The open
+question was whether it could be made viable, and whether that needed a fork of
+the upstream package. Cloned `wavmark/wavmark` and profiled it.
+
+It needed no fork. Every cost was on our side of the boundary.
+
+### 26.1 The device, which was the whole story
+
+One forward pass, 1 s chunk, same model, same machine:
+
+| Device | Per forward pass |
+|---|---|
+| CPU, 4 threads (torch's default here) | 16–30 s |
+| CPU, 8 threads | 5.4 s |
+| **MPS** | **0.54 s** |
+
+`load_wavmark()` read `cuda:0 if torch.cuda.is_available() else cpu`. On Apple
+Silicon that is always the slowest device present. Phase 24 recorded this as a
+"contributing factor" and declined to fix it because it could not be verified
+at ten minutes per detect — which was circular, since the reason detect took
+ten minutes was the device.
+
+Now prefers CUDA → MPS → CPU, and raises `torch.set_num_threads()` on the CPU
+path (capped at `os.cpu_count()` so a small container cannot oversubscribe).
+
+Marks are device-independent, which had to be checked before shipping: MPS and
+CPU embeds differ by 2.4e-07, and all four mark/verify device combinations
+succeed. A file marked on a Mac verifies on a CPU-only CI box.
+
+### 26.2 Detection asks a narrower question than upstream answers
+
+`wavmark.decode_watermark` scans every window at an 800-sample stride and
+averages all exact start-bit matches, because it is recovering a 16-bit
+*payload*. CrispTTS never needs the payload — it asks whether the file carries
+*our* marker. One confident window answers that.
+
+`_detect_wavmark` now batches the same window positions and stops at the first
+batch containing an exact match, averaging the matches within that batch (a
+single window carries the odd bit error; the batch is already decoded, so
+averaging it back is free):
+
+| | upstream | early exit |
+|---|---|---|
+| 10 s marked | 34.7 s | 9.3 s |
+| 20 s marked | 79.3 s | 6.8 s |
+
+Upstream scales with duration; this does not, because the mark is found in the
+first batch either way. Unmarked audio is the worst case for both and is
+unchanged — there is no hit to stop on. Falls back to `decode_watermark` if
+anything in the fast path raises.
+
+Uses only `model.encode` / `model.decode`, so no fork, no monkeypatch, no
+vendored copy to keep in sync.
+
+### 26.3 The encode-side iteration, measured and left alone
+
+`encode_trunck_with_snr_check` re-encodes an already-encoded chunk until its
+SNR falls below `max_snr`, up to 11 times. That sounded like the main cost and
+is not: measured per-chunk `encode_times` on real speech was `[1,1,1,1,1,2,2,2,2]`.
+Lifting the ceiling (`max_snr=1e9`, one pass per chunk) cuts embed 10.7 s → 5.6 s
+and raises SNR 35.8 → 37.5 dB.
+
+Left at upstream's default. It is a real 1.9x, but it trades away watermark
+strength on a compliance-critical mark for a gain that is now small next to
+26.1 and 26.2. Recorded as an available lever, not taken.
+
+### 26.4 Result
+
+Through CrispTTS's own API, on MPS:
+
+| | before | after |
+|---|---|---|
+| 10 s: embed + detect | ~180 s + never returned | **12.4 s** |
+| 20 s: embed + detect | — | **14.3 s** |
+| confidence | — | 1.000 |
+| SNR | 36.3 dB | 35.8 dB |
+
+AudioSeal stays the default — still several times faster, and still the only
+backend measured to survive an Opus round-trip. WavMark is now a real choice
+rather than a documented trap.
+
+### 26.5 Found in passing: the spread-spectrum detector false-positives
+
+Not a WavMark issue, and not fixed here. Sweeping the built-in detector over
+**unwatermarked** human speech, five 20 s segments per rate:
+
+| Sample rate | mean | max |
+|---|---|---|
+| 16 kHz | 0.512 | 0.594 |
+| **22.05 kHz** | 0.569 | **0.656** |
+| 24 kHz | 0.512 | 0.562 |
+| 44.1 kHz | 0.481 | 0.594 |
+
+0.656 is *above* the 0.65 threshold: a genuine human recording read as
+carrying the AI watermark. Margin is -0.006.
+
+Two consequences. `--detect-watermark` on a real recording can report a mark
+that is not there. And the marking verification gate uses the same detector, so
+a file could pass on a false reading.
+
+The band is narrow — worst true positive measured 0.75 (44.1 kHz through
+64 kbps MP3), worst false positive 0.656 — so raising the threshold to ~0.70
+would separate them today on this evidence, at the cost of discarding valid
+output nearer the floor. That is a compliance trade in both directions and a
+decision for the maintainer, not a change to slip into a performance phase.
+
+### Status: COMPLETE — 447 pass with both backends, ruff clean

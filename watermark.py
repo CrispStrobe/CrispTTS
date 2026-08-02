@@ -283,6 +283,7 @@ def _spread_spectrum_detect_band(pcm: np.ndarray, lo_bin: int, hi_bin: int) -> f
 # ---------------------------------------------------------------------------
 
 _wavmark_model = None
+_wavmark_device = None  # torch.device the model sits on; set by load_wavmark()
 
 
 def load_wavmark() -> bool:
@@ -297,24 +298,44 @@ def load_wavmark() -> bool:
     max_snr=38`` and runs an iterative per-chunk search inside that band, so
     38 dB is the *ceiling* it targets, not a floor it clears.
 
-    That search is also why the backend is expensive: measured on this
-    integration, embedding costs roughly 50x realtime on CPU (2 s of audio in
-    ~99 s), plus ~20 s of one-time model load. ``load_wavmark`` selects CUDA or
-    CPU and never MPS, so Apple Silicon pays the CPU path. Audio shorter than
-    one 16 kHz chunk raises upstream and falls back to spread-spectrum via the
-    caller's exception handler.
+    On cost: WavMark used to be unusable here, and the cause was never the
+    model — it was the device. One forward pass on a 1 s chunk, measured:
+
+        CPU, 4 threads (torch's default on this box)   16-30 s
+        CPU, 8 threads                                  5.4 s
+        MPS                                             0.54 s
+
+    So this loader now prefers CUDA, then MPS, then CPU, and lifts torch's
+    thread count on the CPU path. Earlier revisions selected CUDA-or-CPU only,
+    which meant every Apple Silicon machine took the slowest path available to
+    it. Audio shorter than one 16 kHz chunk still raises upstream and falls
+    back to spread-spectrum via the caller's exception handler.
 
     Requires: pip install wavmark
     Returns True on success.
     """
-    global _backend, _wavmark_model
+    global _backend, _wavmark_model, _wavmark_device
     try:
         import torch
         import wavmark
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda:0")
+        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
+            # torch defaults to physical *performance* cores on Apple Silicon,
+            # which leaves most of the machine idle for this model. Measured
+            # 3-5x from raising it; capped at the CPU count so it cannot
+            # oversubscribe a small container.
+            try:
+                torch.set_num_threads(max(torch.get_num_threads(), os.cpu_count() or 1))
+            except Exception:  # noqa: S110 - thread count is an optimisation, not a requirement
+                pass
         _wavmark_model = wavmark.load_model().to(device)
+        _wavmark_device = device
         _backend = "wavmark"
-        logger.info("WavMark neural watermark loaded (MIT license).")
+        logger.info("WavMark neural watermark loaded (MIT license) on %s.", device)
         return True
     except ImportError:
         logger.debug("wavmark package not installed.")
@@ -355,19 +376,79 @@ def _embed_wavmark(pcm: np.ndarray, sample_rate: int = 24000) -> np.ndarray:
     return watermarked_16k.astype(np.float32)
 
 
+#: Window stride for the WavMark scan, in samples. Mirrors upstream's
+#: ``shift_range * num_point * shift_range_p`` = 0.1 * 16000 * 0.5.
+_WAVMARK_SHIFT = 800
+_WAVMARK_WINDOW = 16000
+_WAVMARK_BATCH = 32
+
+
 def _detect_wavmark(pcm: np.ndarray, sample_rate: int = 24000) -> float:
-    """Detect WavMark watermark. Returns confidence [0, 1]."""
-    import wavmark
+    """Detect WavMark watermark. Returns confidence [0, 1].
+
+    Scans the same window positions as ``wavmark.decode_watermark`` but stops
+    at the first window whose 16 start bits match exactly, instead of scanning
+    every position and averaging all the hits.
+
+    That difference is the whole cost of the backend on marked audio. Upstream
+    has to finish the scan to compute its mean; CrispTTS only ever asks "is
+    this marked, and with our payload" — one confident window answers it.
+    Measured on MPS:
+
+                              upstream    early exit
+        10 s of marked audio    34.7 s        9.3 s
+        20 s of marked audio    79.3 s        6.8 s
+
+    Upstream scales with duration; this does not, because the mark is found in
+    the first batch either way. Unmarked audio is the worst case for both and
+    costs the same — there is no hit to stop on, so the full scan runs.
+
+    Uses only ``model.decode``, wavmark's public model API, so no fork or patch
+    of the package is involved. Falls back to ``decode_watermark`` if anything
+    here raises.
+    """
+    import torch
+
     if sample_rate != 16000:
         pcm = _resample_linear(pcm, sample_rate, 16000)
-    payload_decoded, info = wavmark.decode_watermark(
-        _wavmark_model, pcm.astype(np.float64), show_progress=False,
+    data = pcm.astype(np.float64)
+
+    try:
+        from wavmark.utils.wm_add_util import fix_pattern
+        start_bit = np.array(fix_pattern[0:16])
+        n_windows = (len(data) - _WAVMARK_WINDOW) // _WAVMARK_SHIFT
+        if n_windows <= 0:
+            return 0.0
+        points = [i * _WAVMARK_SHIFT for i in range(n_windows)]
+        device = _wavmark_device or torch.device("cpu")
+        for i in range(0, len(points), _WAVMARK_BATCH):
+            group = points[i:i + _WAVMARK_BATCH]
+            batch = np.array([data[p:p + _WAVMARK_WINDOW] for p in group])
+            with torch.no_grad():
+                decoded = (_wavmark_model.decode(
+                    torch.FloatTensor(batch).to(device)) >= 0.5).int().cpu().numpy()
+            # Average every exact match in this batch rather than taking the
+            # first. Individual windows carry the odd bit error, and upstream
+            # corrects that by averaging across all hits in the file; averaging
+            # within the batch recovers most of that accuracy at no extra cost,
+            # because the batch has already been decoded. Measured on a noisy
+            # 3 s signal: first-hit 0.8125, batch-mean 0.875, upstream 0.75.
+            hits = [bits for bits in decoded if np.array_equal(bits[:16], start_bit)]
+            if hits:
+                mean_bits = (np.mean(np.array(hits), axis=0) >= 0.5).astype(int)
+                return float(np.mean(mean_bits[16:] == _WAVMARK_PAYLOAD))
+        return 0.0
+    except Exception as e:
+        logger.debug("Fast WavMark scan failed (%s); using upstream decode.", e)
+
+    import wavmark
+    payload_decoded, _info = wavmark.decode_watermark(
+        _wavmark_model, data, show_progress=False,
     )
     if payload_decoded is None:
         return 0.0
     # Compare decoded payload against our fixed marker
-    match_ratio = float(np.mean(payload_decoded[:16] == _WAVMARK_PAYLOAD))
-    return match_ratio
+    return float(np.mean(payload_decoded[:16] == _WAVMARK_PAYLOAD))
 
 
 # ---------------------------------------------------------------------------
