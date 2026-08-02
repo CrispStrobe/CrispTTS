@@ -3,8 +3,11 @@
 import os
 import struct
 import unittest
+from pathlib import Path
 
 import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # soundfile and c2pa are declared core dependencies, but a checkout can be run
 # without them. These tests must then SKIP, not error: they cover the marking
@@ -440,6 +443,43 @@ class TestWavMarkBackend(unittest.TestCase):
         expected = [0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0]
         for i, (got, exp) in enumerate(zip(_WAVMARK_PAYLOAD, expected, strict=True)):
             self.assertEqual(int(got), exp, f"Bit {i}: expected {exp}, got {int(got)}")
+
+    def test_declared_wavmark_floor_is_installable(self):
+        """The `robust` extra must name a wavmark version that exists.
+
+        The floor read ">=0.3.0" until v0.9.4 — a transposition of 0.0.3, the
+        highest version ever published — so `pip install crisptts[robust]`
+        failed to resolve. That is the command the README gives for Opus/OGG
+        output, where a neural watermark is required rather than optional, so
+        the documented route to a legal Opus file did not work.
+
+        Checked against the installed distribution rather than the network:
+        skipped where wavmark is absent, which is the default install.
+        """
+        import re
+        from importlib.metadata import PackageNotFoundError, version
+
+        import tomllib
+
+        try:
+            installed = version("wavmark")
+        except PackageNotFoundError:
+            self.skipTest("wavmark not installed")
+
+        with open(PROJECT_ROOT / "pyproject.toml", "rb") as fh:
+            extras = tomllib.load(fh)["project"]["optional-dependencies"]
+
+        def parts(v):
+            return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
+
+        for extra in ("robust", "watermark-mit"):
+            spec = next(s for s in extras[extra] if s.startswith("wavmark"))
+            floor = re.search(r">=\s*([\d.]+)", spec)
+            self.assertIsNotNone(floor, f"{extra}: no floor in {spec!r}")
+            self.assertLessEqual(
+                parts(floor.group(1)), parts(installed),
+                f"{extra} pins {spec!r} but the installed wavmark is "
+                f"{installed}; no release satisfies that floor")
 
 
 class TestVoiceCloningKeywords(unittest.TestCase):

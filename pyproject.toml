@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crisptts"
-version = "0.9.3"
+version = "0.9.4"
 description = "Modular German Text-to-Speech synthesizer with 28+ TTS engines"
 readme = "readme.md"
 license = "EUPL-1.2"
@@ -49,20 +49,28 @@ ml = [
 watermark = [
     "audioseal>=0.2.0",
 ]
+# 0.0.3 is the highest version ever published; the floor here read ">=0.3.0"
+# until v0.9.4, which no release satisfies, so both this extra and `robust`
+# below failed to resolve at all. Verified against PyPI: 0.0.1, 0.0.2, 0.0.3.
 watermark-mit = [
-    "wavmark>=0.3.0",
+    "wavmark>=0.0.3",
 ]
 # Recommended for production. The built-in spread-spectrum watermark does now
 # survive resampling and transcoding — measured worst case 0.75 against a 0.65
 # threshold, at 44.1 kHz through 64 kbps MP3 (the 0.63 figure quoted here
 # previously described the pre-#260 wideband comb and is obsolete). What it is
-# not is quiet: 20-25 dB SNR on speech, against >38 dB for WavMark. Install
-# this extra when imperceptibility matters, when Opus/OGG output is needed
-# (C2PA cannot sign those containers, so a neural mark is required there), or
-# when audio may be both transcoded and stripped of its manifest. MIT-licensed,
+# not is quiet: 20-25 dB SNR on speech, against a measured 36.3 dB for WavMark
+# (upstream's ">38 dB" is its encode_watermark max_snr ceiling, not a floor).
+# Install this extra when imperceptibility matters, when Opus/OGG output is
+# needed (C2PA cannot sign those containers, so a neural mark is required
+# there), or when audio may be both transcoded and stripped of its manifest.
+#
+# Measure first: WavMark's iterative per-chunk SNR search cost ~54 s to embed
+# 3 s of audio on CPU, and detection did not return within 10 minutes on the
+# same clip — and mark_audio_file() detects after every embed. MIT-licensed,
 # but pulls in torch — hence an extra rather than a core dependency.
 robust = [
-    "wavmark>=0.3.0",
+    "wavmark>=0.0.3",
 ]
 metadata = [
     "mutagen>=1.47.0",

@@ -1753,3 +1753,108 @@ gate, under a warning; and the `--allow-unmarked` / `--no-watermark` /
 the duty back to an operator who has said so explicitly.
 
 ### Status: COMPLETE — 441 tests pass (2 new), ruff clean
+
+## Phase 24: the recommended extra could not be installed (v0.9.4)
+
+Audited 2026-08-02, immediately after Phase 23. Phase 23 verified every number
+in the spread-spectrum table by re-measuring it. The one figure left unverified
+was WavMark's ">38 dB SNR", quoted from upstream. Verifying it required
+installing the extra, which is how the first finding surfaced.
+
+### 24.1 `wavmark>=0.3.0` matches no release that has ever existed (the defect)
+
+Both the `robust` and `watermark-mit` extras pinned `wavmark>=0.3.0`. PyPI has
+published exactly three versions: 0.0.1, 0.0.2, 0.0.3. The floor is a
+transposition of 0.0.3, and nothing satisfies it:
+
+```
+$ pip install 'crisptts[robust]'
+ERROR: Could not find a version that satisfies the requirement wavmark>=0.3.0
+       (from versions: 0.0.1, 0.0.2, 0.0.3)
+```
+
+That command appears in **seven** places in the README, including the two that
+matter most: the Opus/OGG remediation instructions. Opus and OGG carry no C2PA
+manifest, so Phase 21 made a neural watermark *required* rather than optional
+for those containers — and the documented way to obtain one did not resolve.
+The failure was loud and at install time, and the marking gate still fails
+closed, so no unmarked audio was produced. The effect was narrower and more
+annoying: legal Opus output was unreachable by the documented route.
+
+Fixed to `>=0.0.3` in both extras. A regression test parses `pyproject.toml`
+and asserts the declared floor is satisfied by the installed distribution,
+skipping where wavmark is absent (the default install). Verified against the
+old pin: `(0,3,0) <= (0,0,3)` is false, so it fails.
+
+wavmark 0.0.3 works correctly with the integration — `load_wavmark()` returns
+True and the backend activates.
+
+### 24.2 ">38 dB" reads upstream's number backwards
+
+`wavmark.encode_watermark` is declared:
+
+```python
+def encode_watermark(model, signal, payload, pattern_bit_length=16,
+                     min_snr=20, max_snr=38, show_progress=False)
+```
+
+38 dB is the **ceiling** of an iterative per-chunk SNR search, not a floor it
+clears. Measured on 3 s of speech at 16 kHz, WavMark's native rate:
+
+| | |
+|---|---|
+| SNR reported by upstream's own `info["snr"]` | 36.31 dB |
+| SNR computed independently from the delta | 36.3 dB |
+
+Both agree, and 36.3 dB is a real ~15 dB improvement on the built-in layer's
+20–25 dB — the recommendation to install it for imperceptibility stands, with
+the correct number. `_embed_wavmark()` discards the `info` dict that carries
+the achieved SNR; logging it would make this measurable at runtime for free.
+
+### 24.3 The cost that made the measurement hard to take
+
+The reason 24.2 took three attempts to measure is a finding in itself. On CPU:
+
+| Operation | Cost |
+|---|---|
+| One-time model load | ~21 s |
+| Embed, 3 s of audio | 54 s (~18x realtime) |
+| Embed, 2 s of audio | 99 s (under CPU contention) |
+| **Detect, 3 s of audio** | **did not return within 10 minutes** |
+
+Detection is the one that matters: `mark_audio_file()` runs it after every
+embed as the verification gate, so every marked file pays it. With wavmark
+installed the test suite went from 2.5 minutes to not completing 2% in 20
+minutes.
+
+Contributing factors, all recorded rather than fixed:
+
+- `load_wavmark()` selects `cuda:0` or `cpu` and never checks
+  `torch.backends.mps.is_available()`, so Apple Silicon always takes the CPU
+  path.
+- `wavmark.decode_watermark` sliding-window searches for the start-bit pattern,
+  which is why detect is far worse than embed.
+- Audio shorter than one 16 kHz chunk raises `AssertionError` upstream;
+  `watermark_embed()` catches it and falls back to spread-spectrum, which is
+  the correct behaviour and needs no change.
+
+Not fixed because none of it can be fixed here without an upstream change or a
+device-selection change that cannot be verified at a 10-minute-per-detect
+iteration cost. The README now carries a measured cost warning telling readers
+to benchmark on their own hardware, which is the honest form of a
+recommendation this expensive.
+
+### 24.4 What this says about the audit method
+
+Phase 23's finding and this one have the same shape: a number in the docs that
+nobody had reproduced. Phase 23 caught it by re-measuring the built-in layer;
+this phase caught it by trying to install the thing being recommended. Neither
+was visible to 441 passing tests, because tests assert behaviour and these were
+claims *about* behaviour, made in prose.
+
+### Status: COMPLETE — 441 pass, 8 skipped, ruff clean
+
+The new pin guard is one of the 8 skips in a default install: it compares the
+declared floor against the *installed* wavmark and has nothing to compare
+against when the extra is absent. It runs, and fails against the old pin, on
+any machine that has the extra — which is exactly where a broken floor matters.

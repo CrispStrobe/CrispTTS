@@ -588,8 +588,8 @@ which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 
 | Layer | What | Status | Install |
 |-------|------|--------|---------|
-| **WavMark** | Neural watermark (MIT license, 16-bit payload, >38 dB SNR) | Auto-detected (preferred) | `pip install 'crisptts[robust]'` |
-| **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha=0.08) | Always active | Built-in (numpy) |
+| **WavMark** | Neural watermark (MIT license, 16-bit payload, measured **36.3 dB** SNR) — read the cost warning below before enabling | Auto-detected (preferred) | `pip install 'crisptts[robust]'` |
+| **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha 0.05 — the active band's default) | Always active | Built-in (numpy) |
 | **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
 | **WAV/MP3/FLAC/Opus metadata** | LIST/INFO, ID3v2, Vorbis comments — `AI_GENERATED=true` | Always active | Built-in (mutagen, core dep) |
 | **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) — self-signed unless you supply a certificate | **Always active** (WAV/MP3/FLAC/M4A) | Built-in (c2pa-python, core dep) |
@@ -597,6 +597,27 @@ which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 | **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
 
 **Watermark backend priority**: WavMark (MIT) > AudioSeal (Python) > CrispASR GGUF > spread-spectrum (always-on fallback). Neural backends are lazy-loaded on first synthesis — `--list-models` and `--help` remain instant.
+
+> **WavMark is quieter but very slow — measure before adopting it.** Upstream's
+> `encode_watermark` takes `min_snr=20, max_snr=38` and runs an iterative
+> per-chunk search inside that band, so 38 dB is the ceiling it aims at, not a
+> floor it clears. Measured here on 3 s of speech: **36.3 dB** (upstream's own
+> reported figure and an independent computation agree), which is a genuine
+> ~15 dB improvement on the built-in layer.
+>
+> The search is not free. On CPU, embedding cost about **54 s for 3 s of
+> audio** (~18x realtime) plus ~20 s of one-time model load, and *detection* —
+> which `mark_audio_file()` runs after every embed as its verification gate —
+> did not return within **10 minutes** on the same 3 s clip. `load_wavmark()`
+> selects CUDA or CPU and never MPS, so Apple Silicon always takes the CPU
+> path. Audio shorter than one 16 kHz chunk raises upstream and falls back to
+> spread-spectrum.
+>
+> In practice that makes WavMark impractical for interactive or batch use on
+> CPU-only machines, and it is why the Opus/OGG requirement below is expensive
+> to satisfy. Benchmark it on your own hardware before relying on it; the
+> built-in layer clears the detection threshold under every attack tested and
+> costs nothing.
 
 ### Robustness of the built-in fallback
 
@@ -637,7 +658,9 @@ came from a single favourable segment. The watermark is *low-level* and sits
 under speech, but on quiet or sparse passages it is not categorically
 inaudible, and this README no longer claims that it is. If imperceptibility
 matters more to you than the built-in layer's robustness, install a neural
-backend (below): WavMark embeds at >38 dB for real.
+backend — WavMark measures 36.3 dB here, roughly 15 dB quieter. Read the cost
+warning under *Layers* first: it is slow enough on CPU to be impractical for
+most workloads.
 
 These numbers supersede an earlier table measured on the pre-#260 wideband comb
 (0.94 after embed but **0.63** after a resample — below threshold, i.e. the mark

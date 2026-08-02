@@ -288,9 +288,21 @@ _wavmark_model = None
 def load_wavmark() -> bool:
     """Load the WavMark neural watermark model (MIT license).
 
-    WavMark embeds a 16-bit payload into 16 kHz mono audio with >38 dB SNR.
-    Robust against Gaussian noise, MP3 compression, low-pass filter, and
-    speed variation. Fully MIT licensed (code + model weights).
+    WavMark embeds a 16-bit payload into 16 kHz mono audio, robust against
+    Gaussian noise, MP3 compression, low-pass filtering and speed variation.
+    Fully MIT licensed (code + model weights).
+
+    On SNR: this docstring used to claim ">38 dB". That reads upstream's
+    number backwards — ``wavmark.encode_watermark`` takes ``min_snr=20,
+    max_snr=38`` and runs an iterative per-chunk search inside that band, so
+    38 dB is the *ceiling* it targets, not a floor it clears.
+
+    That search is also why the backend is expensive: measured on this
+    integration, embedding costs roughly 50x realtime on CPU (2 s of audio in
+    ~99 s), plus ~20 s of one-time model load. ``load_wavmark`` selects CUDA or
+    CPU and never MPS, so Apple Silicon pays the CPU path. Audio shorter than
+    one 16 kHz chunk raises upstream and falls back to spread-spectrum via the
+    caller's exception handler.
 
     Requires: pip install wavmark
     Returns True on success.
