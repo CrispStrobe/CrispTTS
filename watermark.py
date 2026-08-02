@@ -374,7 +374,26 @@ def _detect_wavmark(pcm: np.ndarray, sample_rate: int = 24000) -> float:
 # AudioSeal dispatcher (multiple backends)
 # ---------------------------------------------------------------------------
 
-# Backend priority: wavmark (MIT) > audioseal (Python) > crispasr (C) > spread-spectrum
+# Backend priority: audioseal (Python) > wavmark (MIT) > crispasr (C) > spread-spectrum.
+#
+# AudioSeal leads on measurement, not on principle. Both are MIT for code *and*
+# weights (AudioSeal's went MIT in April 2024, replacing CC-BY-NC), so the
+# choice comes down to what they cost and what they survive. Measured on this
+# integration, 10 s of speech at 16 kHz:
+#
+#                     AudioSeal    WavMark
+#   model load          1.9 s       21 s
+#   embed               2.0 s      ~180 s (extrapolated)
+#   detect              0.45 s     did not return in 10 minutes
+#   SNR                28.9 dB     36.3 dB
+#   MP3 64k conf        1.000      -
+#   Opus round-trip     1.000      -
+#   false positive      0.000      -
+#
+# WavMark is ~7 dB quieter and that is its one real advantage. It is not worth
+# a detect step that never finishes, because mark_audio_file() detects after
+# every embed as its verification gate — so WavMark's cost is paid on every
+# marked file, not only when someone asks to verify one.
 _backend = "spread_spectrum"  # active backend name
 _audioseal_generator = None   # audioseal Python generator model
 _audioseal_detector = None    # audioseal Python detector model
@@ -386,14 +405,32 @@ def load_audioseal_python() -> bool:
 
     Requires: pip install audioseal
     Returns True on success.
+
+    TorchDynamo is disabled for the load and for every call that follows.
+    AudioSeal's SEANet layers go through ``torch.compile``, and CrispTTS feeds
+    it a different tensor shape on nearly every run — TTS outputs vary in
+    length — so Dynamo recompiles instead of reusing a graph and then trips its
+    own ``recompile_limit``. Measured on a single cold 10 s embed: 56.5 s
+    compiled versus **2.0 s** with Dynamo off, identical detection confidence
+    (1.000). The compile only ever pays off for repeated identical shapes,
+    which is not this workload.
     """
     global _backend, _audioseal_generator, _audioseal_detector
+    # Set before the import: audioseal applies the decorators at import time,
+    # so flipping this afterwards would come too late for an already-imported
+    # module in a long-lived process (the API server).
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
     try:
         from audioseal import AudioSeal
+        try:
+            import torch._dynamo
+            torch._dynamo.config.disable = True
+        except Exception:  # noqa: S110 - older torch, or no dynamo; env var already set
+            pass
         _audioseal_generator = AudioSeal.load_generator("audioseal_wm_16bits")
         _audioseal_detector = AudioSeal.load_detector("audioseal_detector_16bits")
         _backend = "audioseal_python"
-        logger.info("AudioSeal loaded via Python audioseal package.")
+        logger.info("AudioSeal loaded via Python audioseal package (TorchDynamo disabled).")
         return True
     except ImportError:
         logger.debug("audioseal package not installed.")
@@ -479,7 +516,9 @@ def watermark_embed(pcm: np.ndarray, alpha: float | None = None, sample_rate: in
                     force: bool = False) -> np.ndarray:
     """Embed AI-generated watermark. Dispatches to the best available backend.
 
-    Priority: wavmark (MIT) > audioseal (Python) > crispasr (C/GGUF) > spread-spectrum.
+    Priority: audioseal (Python) > wavmark (MIT) > crispasr (C/GGUF) >
+    spread-spectrum. See the module-level table next to ``_backend`` for the
+    measurements behind that order.
 
     Args:
         pcm: 1-D float32 mono PCM array.
@@ -506,16 +545,8 @@ def watermark_embed(pcm: np.ndarray, alpha: float | None = None, sample_rate: in
     # Lazy-load: if no neural backend was loaded yet, try loading on first use.
     # This avoids loading 200MB+ models at CLI startup for --list-models etc.
     if _backend == "spread_spectrum" and _wavmark_model is None and _audioseal_generator is None:
-        if not load_wavmark():
-            load_audioseal_python()
-
-    if _backend == "wavmark" and _wavmark_model is not None:
-        try:
-            result = _embed_wavmark(pcm, sample_rate)
-            logger.debug("WavMark (MIT) watermark embedded (%d samples).", len(pcm))
-            return result
-        except Exception as e:
-            logger.warning("WavMark embed failed, trying next backend: %s", e)
+        if not load_audioseal_python():
+            load_wavmark()
 
     if _backend == "audioseal_python" and _audioseal_generator is not None:
         try:
@@ -524,6 +555,14 @@ def watermark_embed(pcm: np.ndarray, alpha: float | None = None, sample_rate: in
             return result
         except Exception as e:
             logger.warning("AudioSeal Python embed failed, trying next backend: %s", e)
+
+    if _backend == "wavmark" and _wavmark_model is not None:
+        try:
+            result = _embed_wavmark(pcm, sample_rate)
+            logger.debug("WavMark (MIT) watermark embedded (%d samples).", len(pcm))
+            return result
+        except Exception as e:
+            logger.warning("WavMark embed failed, trying next backend: %s", e)
 
     if _backend == "audioseal_crispasr" and _crispasr_wm is not None:
         try:
@@ -545,8 +584,26 @@ def watermark_embed(pcm: np.ndarray, alpha: float | None = None, sample_rate: in
 def watermark_detect(pcm: np.ndarray, sample_rate: int = 24000) -> float:
     """Detect AI-generated watermark. Returns confidence [0, 1].
 
-    Tries all available backends in priority order: wavmark > audioseal > spread-spectrum.
+    Tries available backends in priority order: audioseal > wavmark >
+    spread-spectrum.
+
+    Note that the backends do not share a scale. AudioSeal's detector saturates
+    — measured 1.000 on watermarked speech and 0.000 on clean speech — while
+    the spread-spectrum detector spans roughly 0.44 (its noise floor) to 0.91.
+    Both are compared against the same 0.65 gate, which each clears
+    unambiguously, but a confidence value is only comparable to another from
+    the same backend.
     """
+    if _backend == "audioseal_python" and _audioseal_detector is not None:
+        try:
+            score = _detect_audioseal_python(pcm, sample_rate)
+            if score > 0.4:
+                return score
+            # Fall through: the file may carry a spread-spectrum mark instead,
+            # e.g. written by the CrispASR binary or an earlier CrispTTS.
+        except Exception as e:
+            logger.warning("AudioSeal Python detect failed, trying next backend: %s", e)
+
     if _backend == "wavmark" and _wavmark_model is not None:
         try:
             score = _detect_wavmark(pcm, sample_rate)
@@ -555,12 +612,6 @@ def watermark_detect(pcm: np.ndarray, sample_rate: int = 24000) -> float:
             # Fall through to spread-spectrum (may have been watermarked by CrispASR binary)
         except Exception as e:
             logger.warning("WavMark detect failed, trying next backend: %s", e)
-
-    if _backend == "audioseal_python" and _audioseal_detector is not None:
-        try:
-            return _detect_audioseal_python(pcm, sample_rate)
-        except Exception as e:
-            logger.warning("AudioSeal Python detect failed, trying next backend: %s", e)
 
     if _backend == "audioseal_crispasr" and _crispasr_wm is not None:
         try:

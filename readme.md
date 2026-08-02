@@ -49,9 +49,11 @@ NOTE: This is in experimental / work in progress state. Some Python-only models 
   - Zonos (acoustic conditioning)
   - Chatterbox Python (Kartoffelbox)
 - **AI Audio Watermarking & Provenance**:
-  - WavMark neural watermark (MIT license — code + model weights; `pip install wavmark`)
+  - AudioSeal neural watermark (MIT — code + weights; preferred; survives Opus
+    and 64 kbps MP3 at full confidence; `pip install 'crisptts[robust]'`)
   - Spread-spectrum watermark (always on, low-level — 20–25 dB SNR on speech)
-  - AudioSeal neural watermark (optional upgrade via `pip install audioseal` or CrispASR GGUF)
+  - WavMark neural watermark (MIT — code + weights; quietest at 36.3 dB, but
+    far slower; `pip install 'crisptts[watermark-mit]'`)
   - WAV LIST/INFO, MP3 ID3v2, FLAC Vorbis comment, and Opus/OGG metadata marking audio as AI-generated
   - C2PA content credentials signed by default for WAV/MP3/FLAC/M4A (core dep;
     c2pa-audio / CrispASR used as fast paths when present)
@@ -161,8 +163,8 @@ crisptts_project/
 
    Optional feature groups:
    ```bash
-   pip install crisptts[robust]          # RECOMMENDED: robust neural watermark (MIT)
-   pip install crisptts[watermark-mit]   # WavMark neural watermark (MIT license)
+   pip install crisptts[robust]          # RECOMMENDED: AudioSeal neural watermark (MIT)
+   pip install crisptts[watermark-mit]   # WavMark instead — quieter, much slower
    pip install crisptts[dev]             # ruff, bandit, pytest
    ```
 
@@ -588,36 +590,48 @@ which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 
 | Layer | What | Status | Install |
 |-------|------|--------|---------|
-| **WavMark** | Neural watermark (MIT license, 16-bit payload, measured **36.3 dB** SNR) — read the cost warning below before enabling | Auto-detected (preferred) | `pip install 'crisptts[robust]'` |
+| **AudioSeal** | Neural watermark (Meta, 16-bit message, MIT code *and* weights). Measured 28.9 dB SNR; survives 64 kbps MP3 **and Opus** at confidence 1.000 | Auto-detected (**preferred**) | `pip install 'crisptts[robust]'` |
 | **Spread-spectrum** | Frequency-domain watermark (32 bins, alpha 0.05 — the active band's default) | Always active | Built-in (numpy) |
-| **AudioSeal** | Neural watermark (Meta, 16-bit message, sample-rate aware) | Auto-detected | `pip install audioseal` |
+| **WavMark** | Neural watermark (MIT, 16-bit payload, measured **36.3 dB** SNR — the quietest option). Slow: read the cost warning below | Auto-detected (fallback) | `pip install 'crisptts[watermark-mit]'` |
 | **WAV/MP3/FLAC/Opus metadata** | LIST/INFO, ID3v2, Vorbis comments — `AI_GENERATED=true` | Always active | Built-in (mutagen, core dep) |
 | **C2PA credentials** | Signed provenance manifests (`trainedAlgorithmicMedia`) — self-signed unless you supply a certificate | **Always active** (WAV/MP3/FLAC/M4A) | Built-in (c2pa-python, core dep) |
 | **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio, in the model's language | Auto for cloning | Built-in |
 | **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
 
-**Watermark backend priority**: WavMark (MIT) > AudioSeal (Python) > CrispASR GGUF > spread-spectrum (always-on fallback). Neural backends are lazy-loaded on first synthesis — `--list-models` and `--help` remain instant.
+**Watermark backend priority**: AudioSeal (Python) > WavMark (MIT) > CrispASR GGUF > spread-spectrum (always-on fallback). Neural backends are lazy-loaded on first synthesis — `--list-models` and `--help` remain instant.
 
-> **WavMark is quieter but very slow — measure before adopting it.** Upstream's
-> `encode_watermark` takes `min_snr=20, max_snr=38` and runs an iterative
-> per-chunk search inside that band, so 38 dB is the ceiling it aims at, not a
-> floor it clears. Measured here on 3 s of speech: **36.3 dB** (upstream's own
-> reported figure and an independent computation agree), which is a genuine
-> ~15 dB improvement on the built-in layer.
->
-> The search is not free. On CPU, embedding cost about **54 s for 3 s of
-> audio** (~18x realtime) plus ~20 s of one-time model load, and *detection* —
-> which `mark_audio_file()` runs after every embed as its verification gate —
-> did not return within **10 minutes** on the same 3 s clip. `load_wavmark()`
-> selects CUDA or CPU and never MPS, so Apple Silicon always takes the CPU
-> path. Audio shorter than one 16 kHz chunk raises upstream and falls back to
-> spread-spectrum.
->
-> In practice that makes WavMark impractical for interactive or batch use on
-> CPU-only machines, and it is why the Opus/OGG requirement below is expensive
-> to satisfy. Benchmark it on your own hardware before relying on it; the
-> built-in layer clears the detection threshold under every attack tested and
-> costs nothing.
+### Choosing a neural backend
+
+Both are MIT for code *and* weights (AudioSeal's weights moved from CC-BY-NC to
+MIT in April 2024), so the choice is purely operational. Measured here on 10 s
+of speech at 16 kHz:
+
+| | AudioSeal | WavMark |
+|---|---|---|
+| Model load | 1.9 s | 21 s |
+| Embed | **2.0 s** | ~180 s (extrapolated from 54 s / 3 s) |
+| Detect | **0.45 s** | **did not return in 10 minutes** |
+| SNR | 28.9 dB | **36.3 dB** |
+| 64 kbps MP3 | 1.000 | — |
+| **Opus round-trip** | **1.000** | — |
+| Unwatermarked speech | **0.000** | — |
+
+AudioSeal is the default because detection cost is not optional:
+`mark_audio_file()` verifies after every embed, so a slow detector is paid on
+every marked file, not only when you ask to verify one.
+
+WavMark's ~7 dB quieter embed is its one real advantage; take it only if
+imperceptibility outranks throughput and you have measured the cost on your own
+hardware. Two caveats if you do: `load_wavmark()` selects CUDA or CPU and never
+MPS, so Apple Silicon always takes the CPU path; and upstream's
+`encode_watermark` declares `min_snr=20, max_snr=38`, so 38 dB is the ceiling
+of its iterative per-chunk search, not a floor it clears.
+
+> **Confidence values are not comparable across backends.** AudioSeal's
+> detector saturates (measured 1.000 watermarked / 0.000 clean); the
+> spread-spectrum detector spans roughly 0.44–0.91. Both are gated at 0.65 and
+> each clears it unambiguously, but do not compare a number from one against a
+> number from the other.
 
 ### Robustness of the built-in fallback
 
@@ -658,9 +672,9 @@ came from a single favourable segment. The watermark is *low-level* and sits
 under speech, but on quiet or sparse passages it is not categorically
 inaudible, and this README no longer claims that it is. If imperceptibility
 matters more to you than the built-in layer's robustness, install a neural
-backend — WavMark measures 36.3 dB here, roughly 15 dB quieter. Read the cost
-warning under *Layers* first: it is slow enough on CPU to be impractical for
-most workloads.
+backend: `pip install 'crisptts[robust]'` brings in AudioSeal at 28.9 dB, and
+WavMark reaches 36.3 dB if you can afford it. See *Choosing a neural backend*
+below.
 
 These numbers supersede an earlier table measured on the pre-#260 wideband comb
 (0.94 after embed but **0.63** after a resample — below threshold, i.e. the mark
@@ -726,17 +740,24 @@ real, so the set cannot drift back into overclaiming.
 
 **Opus/OGG cannot.** c2pa-rs does not list it among its supported types at
 all, and every format string tried (`opus`, `audio/opus`, `ogg`, `audio/ogg`,
-`application/ogg`) returns `NotSupported`. A detached `.c2pa` sidecar can be
-produced for it, but a manifest that travels as a separate file is a
-provenance record you hold, not a mark on the content — CrispTTS does not
-count it. So the audio watermark is Opus/OGG's only robust layer, which is why
+`application/ogg`) returns `NotSupported` for embedded signing.
+
+The detached-sidecar route does not rescue it either, and fails in a way worth
+recording: `Builder.set_no_embed()` followed by `sign()` **reports success on
+Opus while writing a byte-identical copy of the input** — the output begins
+`OggS` and hashes the same as the source. There is no manifest in it. An
+earlier revision of this file said a `.c2pa` sidecar "can be produced"; that
+was never verified, and it is false.
+
+So the audio watermark is Opus/OGG's only robust layer, which is why
 `--no-watermark` is overridden for it, and why:
 
 > **Opus and OGG output requires a neural watermark backend.** With only the
 > built-in spread-spectrum comb installed, synthesis to those containers is
 > refused up front — a fixed-key comb as the *sole* robust layer is not
 > marking that is "robust as far as technically feasible". Install one with
-> `pip install 'crisptts[robust]'`, choose a manifest-carrying container, or
+> `pip install 'crisptts[robust]'` — AudioSeal survives an Opus round-trip at
+> confidence 1.000, measured — or choose a manifest-carrying container, or
 > take the duty on yourself with
 > `--allow-unmarked --accept-marking-responsibility`.
 

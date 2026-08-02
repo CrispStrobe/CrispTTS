@@ -1858,3 +1858,112 @@ The new pin guard is one of the 8 skips in a default install: it compares the
 declared floor against the *installed* wavmark and has nothing to compare
 against when the extra is absent. It runs, and fails against the old pin, on
 any machine that has the extra — which is exactly where a broken floor matters.
+
+## Phase 25: AudioSeal becomes the preferred backend (v0.9.5)
+
+Phase 24 established that WavMark is impractical and left the question open:
+if the recommended neural backend cannot be used, what closes the Opus/OGG
+gap? This phase answers it by measuring the alternative already wired up.
+
+### 25.0 The gap being closed
+
+For WAV/MP3/FLAC/M4A the C2PA manifest is the interoperable layer and the
+watermark is redundancy. For Opus and OGG, which c2pa-rs cannot sign, the
+watermark is the *only* durable mark — and the built-in comb is readable by
+Crisp tooling alone. That is the one place the marking story genuinely thins
+out, and it is why Phase 21 made a neural backend mandatory for those
+containers.
+
+### 25.1 The sidecar route does not exist (checked, and it reports success)
+
+Before switching backends, the cheaper fix was tested: a detached `.c2pa`
+sidecar for Opus. `readme.md` asserted one "can be produced".
+
+It cannot. `Builder.set_no_embed()` followed by `sign()` on an Opus file
+returns success and writes a **byte-identical copy of the input** — output
+begins `OggS`, same SHA-256 as the source, no manifest anywhere in it. Tried
+with `audio/opus`, `audio/ogg`, `application/ogg` and `audio/x-opus+ogg`; all
+four behave identically. The README claim was never verified and is now
+recorded as false.
+
+Same failure shape as 22.1 and the sufficiency gaps before it: an operation
+that is invoked, reports success, and does nothing.
+
+### 25.2 AudioSeal, measured
+
+Both candidates are MIT for code *and* weights — AudioSeal's moved from
+CC-BY-NC to MIT in April 2024, which is what makes it eligible at all. So the
+choice is purely operational. Measured on 10 s of speech at 16 kHz:
+
+| | AudioSeal | WavMark |
+|---|---|---|
+| Model load | 1.9 s | 21 s |
+| Embed | **2.0 s** | ~180 s (extrapolated from 54 s / 3 s) |
+| Detect | **0.45 s** | **did not return in 10 min** |
+| SNR | 28.9 dB | **36.3 dB** |
+| MP3 64 kbps | 1.000 | — |
+| **Opus round-trip** | **1.000** | — |
+| Unwatermarked speech | **0.000** | — |
+
+Detect is the decisive column. `mark_audio_file()` verifies after every embed,
+so a slow detector is paid on every marked file, not only on request.
+
+WavMark keeps its one advantage — ~7 dB quieter — and stays available as
+`watermark-mit`. `robust` now installs AudioSeal, and a test asserts `robust`
+names whatever the dispatcher prefers, since the two are declared in different
+files and would otherwise drift.
+
+End-to-end confirmation on a real `.opus` file: `mark_audio_file()` returns
+`marked=True`, `layers=('audio-watermark', 'metadata')`, confidence 1.000, and
+the mark still reads 1.000 after transcoding the Opus back to WAV.
+
+### 25.3 TorchDynamo was the whole cost
+
+The first AudioSeal embed measured 92 s, which nearly disqualified it. The
+cause is `torch.compile`: AudioSeal's SEANet layers are compiled, CrispTTS
+hands it a different tensor shape on almost every run because TTS outputs vary
+in length, and Dynamo recompiles rather than reusing a graph — eventually
+tripping its own `recompile_limit` and emitting warnings.
+
+One cold 10 s embed in a fresh process:
+
+| | compiled (default) | `TORCHDYNAMO_DISABLE=1` |
+|---|---|---|
+| embed | 56.5 s | **2.0 s** |
+| whole process | 59.3 s | **4.8 s** |
+| confidence | 1.000 | 1.000 |
+
+`load_audioseal_python()` now sets the variable *before* importing audioseal —
+the decorators are applied at import time, so setting it afterwards would be
+too late in a long-lived process like the API server — and also flips
+`torch._dynamo.config.disable` for anything already imported.
+
+### 25.4 A detect bug the reorder exposed
+
+The AudioSeal branch in `watermark_detect()` returned its score
+unconditionally, while the WavMark branch fell through to spread-spectrum when
+its score was below 0.4. So an AudioSeal-enabled install reading a file marked
+by the CrispASR binary — spread-spectrum only — got 0.000, failed
+verification, and discarded valid audio. The AudioSeal branch now falls through
+on the same rule.
+
+### 25.5 The suite only passed because no extra was installed
+
+Six tests failed the moment AudioSeal became active, and none of them were
+wrong about marking — they were wrong about what they assumed. Four in
+`TestMarkingSufficiencyGate` assert that marking is *refused* for sub-frame
+audio and digital silence; those are limits of the spread-spectrum comb, and
+AudioSeal marks both successfully, so the gate correctly passed and the
+assertions failed. The other two compare `watermark_embed()` output against
+`spread_spectrum_embed()` or the spread-spectrum detector.
+
+They would have failed identically with WavMark installed, at any point since
+those backends existed. The suite was green only because the default install
+has neither — which means the recommended install path was the untested one.
+
+A `force_spread_spectrum()` helper now pins the dispatcher for the tests whose
+premise is a built-in-backend limitation, stubbing the loaders too so the lazy
+path cannot re-load a backend from the cleared globals. Verified in both
+configurations: 445 pass with AudioSeal installed, 444 with neither.
+
+### Status: COMPLETE — 445 pass with AudioSeal, 444 without, ruff clean

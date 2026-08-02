@@ -31,6 +31,43 @@ requires_c2pa = unittest.skipUnless(
     _HAVE_C2PA, "c2pa-python not installed — C2PA tests cannot run")
 
 
+def force_spread_spectrum(testcase):
+    """Pin the dispatcher to the built-in backend for one test.
+
+    Several gate tests assert what happens when the watermark *cannot* be
+    embedded — audio shorter than an FFT frame, digital silence. Those are
+    limits of the spread-spectrum comb, not of marking in general: AudioSeal
+    marks both successfully and the gate then correctly passes.
+
+    Without pinning, those tests only hold on a machine where no neural extra
+    is installed, and turn red the moment someone runs the install the README
+    recommends. The loaders are stubbed too, because the lazy-load path in
+    ``watermark_embed`` would otherwise re-load a backend the moment it sees
+    the cleared globals.
+    """
+    import watermark
+    saved = {
+        "_backend": watermark._backend,
+        "_audioseal_generator": watermark._audioseal_generator,
+        "_audioseal_detector": watermark._audioseal_detector,
+        "_wavmark_model": watermark._wavmark_model,
+        "load_audioseal_python": watermark.load_audioseal_python,
+        "load_wavmark": watermark.load_wavmark,
+    }
+
+    def restore():
+        for name, value in saved.items():
+            setattr(watermark, name, value)
+
+    testcase.addCleanup(restore)
+    watermark._backend = "spread_spectrum"
+    watermark._audioseal_generator = None
+    watermark._audioseal_detector = None
+    watermark._wavmark_model = None
+    watermark.load_audioseal_python = lambda: False
+    watermark.load_wavmark = lambda: False
+
+
 class TestPrng(unittest.TestCase):
     """Verify PRNG produces deterministic output matching the C++ implementation."""
 
@@ -261,6 +298,60 @@ class TestAudioSealPythonBackend(unittest.TestCase):
         from watermark import _backend
         self.assertIn(_backend, ("spread_spectrum", "audioseal_python", "audioseal_crispasr", "wavmark"))
 
+    def test_audioseal_is_tried_before_wavmark(self):
+        """Lazy-load must prefer AudioSeal, and only fall back to WavMark.
+
+        The order is what makes marking affordable: WavMark's detect did not
+        return within 10 minutes on 3 s of audio, and mark_audio_file() detects
+        after every embed. Asserted by observing which loader the dispatcher
+        calls first, so it fails if the two `if` branches are ever swapped
+        back.
+        """
+        import numpy as np
+
+        import watermark as wmod
+
+        calls = []
+        orig_as, orig_wm = wmod.load_audioseal_python, wmod.load_wavmark
+        orig_backend, orig_gen, orig_model = (
+            wmod._backend, wmod._audioseal_generator, wmod._wavmark_model)
+        try:
+            wmod._backend = "spread_spectrum"
+            wmod._audioseal_generator = None
+            wmod._wavmark_model = None
+            wmod.load_audioseal_python = lambda: (calls.append("audioseal"), False)[1]
+            wmod.load_wavmark = lambda: (calls.append("wavmark"), False)[1]
+            wmod.watermark_embed(np.zeros(4096, dtype=np.float32), sample_rate=16000)
+        finally:
+            wmod.load_audioseal_python, wmod.load_wavmark = orig_as, orig_wm
+            wmod._backend = orig_backend
+            wmod._audioseal_generator = orig_gen
+            wmod._wavmark_model = orig_model
+
+        self.assertEqual(calls, ["audioseal", "wavmark"],
+                         "AudioSeal must be attempted before WavMark")
+
+    def test_audioseal_loader_disables_torchdynamo(self):
+        """Dynamo must be off before audioseal is imported.
+
+        AudioSeal's SEANet layers go through torch.compile and CrispTTS feeds a
+        new tensor shape almost every run, so Dynamo recompiles rather than
+        reusing a graph: measured 56.5 s vs 2.0 s for one cold 10 s embed.
+        """
+        import os
+
+        from watermark import load_audioseal_python
+
+        prior = os.environ.pop("TORCHDYNAMO_DISABLE", None)
+        try:
+            load_audioseal_python()
+            self.assertEqual(os.environ.get("TORCHDYNAMO_DISABLE"), "1")
+        finally:
+            if prior is None:
+                os.environ.pop("TORCHDYNAMO_DISABLE", None)
+            else:
+                os.environ["TORCHDYNAMO_DISABLE"] = prior
+
 
 class TestC2PA(unittest.TestCase):
     """Test C2PA signing integration."""
@@ -444,27 +535,23 @@ class TestWavMarkBackend(unittest.TestCase):
         for i, (got, exp) in enumerate(zip(_WAVMARK_PAYLOAD, expected, strict=True)):
             self.assertEqual(int(got), exp, f"Bit {i}: expected {exp}, got {int(got)}")
 
-    def test_declared_wavmark_floor_is_installable(self):
-        """The `robust` extra must name a wavmark version that exists.
+    def test_declared_watermark_floors_are_installable(self):
+        """Every watermark extra must name a version that actually exists.
 
-        The floor read ">=0.3.0" until v0.9.4 — a transposition of 0.0.3, the
-        highest version ever published — so `pip install crisptts[robust]`
+        `robust` pinned wavmark>=0.3.0 until v0.9.4 — a transposition of 0.0.3,
+        the highest version ever published — so `pip install crisptts[robust]`
         failed to resolve. That is the command the README gives for Opus/OGG
         output, where a neural watermark is required rather than optional, so
         the documented route to a legal Opus file did not work.
 
-        Checked against the installed distribution rather than the network:
-        skipped where wavmark is absent, which is the default install.
+        Checked against installed distributions rather than the network, so
+        each package is skipped where it is absent (the default install has
+        neither). Whichever extras a machine does have get verified.
         """
         import re
         from importlib.metadata import PackageNotFoundError, version
 
         import tomllib
-
-        try:
-            installed = version("wavmark")
-        except PackageNotFoundError:
-            self.skipTest("wavmark not installed")
 
         with open(PROJECT_ROOT / "pyproject.toml", "rb") as fh:
             extras = tomllib.load(fh)["project"]["optional-dependencies"]
@@ -472,14 +559,41 @@ class TestWavMarkBackend(unittest.TestCase):
         def parts(v):
             return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
 
-        for extra in ("robust", "watermark-mit"):
-            spec = next(s for s in extras[extra] if s.startswith("wavmark"))
-            floor = re.search(r">=\s*([\d.]+)", spec)
-            self.assertIsNotNone(floor, f"{extra}: no floor in {spec!r}")
-            self.assertLessEqual(
-                parts(floor.group(1)), parts(installed),
-                f"{extra} pins {spec!r} but the installed wavmark is "
-                f"{installed}; no release satisfies that floor")
+        checked = 0
+        for extra, specs in extras.items():
+            for spec in specs:
+                pkg = re.match(r"^[A-Za-z0-9._-]+", spec).group(0)
+                if pkg not in ("wavmark", "audioseal"):
+                    continue
+                try:
+                    installed = version(pkg)
+                except PackageNotFoundError:
+                    continue
+                floor = re.search(r">=\s*([\d.]+)", spec)
+                self.assertIsNotNone(floor, f"{extra}: no floor in {spec!r}")
+                self.assertLessEqual(
+                    parts(floor.group(1)), parts(installed),
+                    f"extra {extra!r} pins {spec!r} but the installed {pkg} is "
+                    f"{installed}; no release satisfies that floor")
+                checked += 1
+        if not checked:
+            self.skipTest("neither wavmark nor audioseal installed")
+
+    def test_robust_extra_names_the_preferred_backend(self):
+        """`robust` must install whichever backend the dispatcher prefers.
+
+        The two are set independently — one in pyproject.toml, one in
+        watermark.py — so they can drift. If `robust` installed WavMark while
+        the dispatcher preferred AudioSeal, the documented "recommended"
+        install would silently leave the preferred backend absent.
+        """
+        import tomllib
+
+        with open(PROJECT_ROOT / "pyproject.toml", "rb") as fh:
+            robust = tomllib.load(fh)["project"]["optional-dependencies"]["robust"]
+        self.assertTrue(
+            any(s.startswith("audioseal") for s in robust),
+            f"the dispatcher prefers AudioSeal, but `robust` installs {robust}")
 
 
 class TestVoiceCloningKeywords(unittest.TestCase):
@@ -591,6 +705,7 @@ class TestWatermarkEmbedDispatcher(unittest.TestCase):
         band is ever retuned again.
         """
         from watermark import _FFT_SIZE, spread_spectrum_embed, watermark_embed, wm_params
+        force_spread_spectrum(self)  # alpha only reaches the built-in backend
         band_alpha = wm_params(_FFT_SIZE)[2]
         pcm = self._make_sine(sr=24000, duration=2.0)
         np.testing.assert_allclose(
@@ -602,6 +717,7 @@ class TestWatermarkEmbedDispatcher(unittest.TestCase):
     def test_default_alpha_is_quieter_than_legacy(self):
         """The band default must be measurably gentler than the legacy 0.08."""
         from watermark import spread_spectrum_embed, watermark_embed
+        force_spread_spectrum(self)  # alpha only reaches the built-in backend
 
         def snr(clean, marked):
             return 10 * np.log10(np.sum(clean ** 2) / np.sum((marked - clean) ** 2))
@@ -751,6 +867,9 @@ class TestComplianceCoverage(unittest.TestCase):
     def test_wav_watermark_roundtrip(self):
         """WAV files should have detectable watermark after embed."""
         from watermark import spread_spectrum_detect, watermark_embed
+        # Asserts with the *spread-spectrum* detector specifically, so the
+        # embed has to be the spread-spectrum one for the pair to match.
+        force_spread_spectrum(self)
         pcm = 0.5 * np.sin(
             2 * np.pi * 440 * np.linspace(0, 1, 24000, endpoint=False, dtype=np.float32)
         )
@@ -1069,6 +1188,7 @@ class TestMarkingSufficiencyGate(unittest.TestCase):
 
     def test_sub_frame_audio_refused(self):
         """Shorter than one FFT frame: the embed silently no-ops."""
+        force_spread_spectrum(self)
         from watermark import MarkingError, mark_audio_file
         self._without_c2pa()
         path = self._write("tiny.wav", np.zeros(400, dtype=np.float32) + 0.1)
@@ -1077,6 +1197,7 @@ class TestMarkingSufficiencyGate(unittest.TestCase):
         self.assertIn("not sufficient", str(ctx.exception))
 
     def test_digital_silence_refused(self):
+        force_spread_spectrum(self)
         from watermark import MarkingError, mark_audio_file
         self._without_c2pa()
         path = self._write("silence.wav", np.zeros(22050 * 2, dtype=np.float32))
@@ -1092,6 +1213,7 @@ class TestMarkingSufficiencyGate(unittest.TestCase):
         self.assertGreater(result.confidence, 0.65)
 
     def test_insufficient_but_allowed_when_responsibility_taken(self):
+        force_spread_spectrum(self)
         from watermark import mark_audio_file
         self._without_c2pa()
         path = self._write("tiny2.wav", np.zeros(400, dtype=np.float32) + 0.1)
@@ -1115,6 +1237,7 @@ class TestMarkingSufficiencyGate(unittest.TestCase):
 
     def test_metadata_alone_is_never_sufficient(self):
         """The rule C2PA must not quietly relax: tags are not marking."""
+        force_spread_spectrum(self)
         from watermark import MarkingError, mark_audio_file
         self._without_c2pa()
         path = self._write("silent2.wav", np.zeros(22050 * 2, dtype=np.float32))
