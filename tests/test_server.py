@@ -234,5 +234,34 @@ class TestDisclosureLanguageIsPartOfTheCacheKey(unittest.TestCase):
         self.assertNotEqual(de, el)
 
 
+class TestServerFollowsTheWrittenFile(unittest.TestCase):
+    """Most handlers force their own container regardless of the path given.
+
+    Reading back only the mkstemp path turned that into "synthesis produced no
+    output" for every such backend — the Edge handler included.
+    """
+
+    def test_written_output_is_resolved_before_the_empty_check(self):
+        import inspect
+
+        import server
+        src = inspect.getsource(server.TTSRequestHandler.do_POST)
+        self.assertLess(
+            src.index("resolve_written_output"), src.index("Synthesis produced no output"),
+            "the handler's real output must be found before declaring failure")
+
+    def test_response_is_converted_rather_than_relabelled(self):
+        """The response has a declared Content-Type, so following blindly is wrong."""
+        import inspect
+
+        import server
+        src = inspect.getsource(server.TTSRequestHandler.do_POST)
+        resolved = src.index("resolve_written_output")
+        tail = src[resolved:src.index("Synthesis produced no output")]
+        self.assertIn("save_audio", tail,
+                      "MP3 bytes labelled audio/wav would be worse than the error "
+                      "this replaces — convert to the requested format")
+
+
 if __name__ == "__main__":
     unittest.main()

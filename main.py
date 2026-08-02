@@ -118,7 +118,12 @@ _HANDLERS_LOADED = False
 from config import GERMAN_TTS_MODELS, LM_STUDIO_API_URL_DEFAULT, OLLAMA_API_URL_DEFAULT  # noqa: E402
 from utils import PYDUB_AVAILABLE as UTILS_PYDUB_AVAILABLE  # noqa: E402
 from utils import SOUNDFILE_AVAILABLE as UTILS_SOUNDFILE_AVAILABLE  # noqa: E402
-from utils import get_text_from_input, get_voice_info, list_available_models  # noqa: E402
+from utils import (  # noqa: E402
+    get_text_from_input,
+    get_voice_info,
+    list_available_models,
+    resolve_written_output,
+)
 
 _apply_triton_config_monkey_patch_for_vllm()
 
@@ -500,6 +505,14 @@ def test_all_models(text_to_synthesize, base_output_dir_str, cli_args):
                     cli_args.model_params, str(output_filename), False)
                 current_gen_time_sec = time.time() - start_time_model_test
 
+                # Follow the audio, as run_synthesis does: a handler that wrote
+                # its own container would otherwise leave an unmarked file on
+                # disk and be recorded as having produced nothing.
+                _written = resolve_written_output(str(output_filename), since=start_time_model_test)
+                if _written and _written != str(output_filename):
+                    output_filename = Path(_written)
+                    current_output_path = output_filename
+
                 if output_filename.exists() and output_filename.stat().st_size > 100:
                     current_model_status = "SUCCESS"
                     logger.info(f"SUCCESS: Output for {model_id} (Voice: {voice_id_for_test}) saved to {output_filename}")  # noqa: E501
@@ -641,6 +654,120 @@ def _discard_output(args, temp_play_file=None):
         args.output_file = None
 
 
+def _read_pcm(path):
+    """Read any handler-written container as mono float32 PCM.
+
+    soundfile covers WAV/FLAC and, with a recent libsndfile, MP3; pydub covers
+    the rest. Returns ``(None, None)`` if neither can read it.
+    """
+    try:
+        import soundfile as sf_read
+        data, sr = sf_read.read(path, dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        return data, sr
+    except Exception as e_sf:
+        logger.debug("soundfile could not read %s (%s); trying pydub.", path, e_sf)
+
+    try:
+        import numpy as np
+        from pydub import AudioSegment
+        seg = AudioSegment.from_file(path).set_channels(1)
+        data = np.array(seg.get_array_of_samples(), dtype=np.float32)
+        peak = float(1 << (8 * seg.sample_width - 1))
+        return data / peak, seg.frame_rate
+    except Exception as e_pd:
+        logger.warning("Could not read audio from %s: %s", path, e_pd)
+        return None, None
+
+
+def _synthesize_ssml_segments(args, segments, output_path):
+    """Render SSML segments individually and crossfade them into one file.
+
+    Called in place of the handler, so the combined result carries on through
+    the shared disclosure and marking block rather than bypassing it.
+
+    Segments are rendered with ``_ssml_segment`` set, which suppresses the
+    per-segment spoken disclosure and the per-segment marking. Both belong on
+    the combined file instead:
+
+    - The disclosure has to be one sentence at the front. Repeated before
+      every segment the crossfade would partly bury all but the first.
+    - Marking a segment is work that is thrown away: the combined file is
+      embedded and verified in its own right regardless, and each segment
+      would otherwise cost its own C2PA signature. It is also a hazard —
+      marking *discards* a file it cannot mark, so a segment that failed
+      verification would vanish from the combined audio instead of failing
+      the run.
+
+    Nothing unmarked escapes: each temp segment is deleted in ``finally``, and
+    the caller marks the combined file with the usual fail-closed handling.
+
+    Returns:
+        True if ``output_path`` now holds the combined audio. False means
+        nothing was written and the caller should fall back to synthesizing
+        the markup-free text.
+    """
+    import tempfile
+
+    import numpy as np
+    try:
+        import soundfile as sf_ssml
+    except ImportError:
+        logger.warning("SSML: soundfile is required to combine segments; "
+                       "synthesizing the text without its markup instead.")
+        return False
+    from utils import crossfade_segments
+
+    logger.info("SSML: %d segments detected", len(segments))
+    audio_parts = []
+    sr_out = None
+    for seg in segments:
+        if seg.silence_ms > 0 and sr_out:
+            audio_parts.append(np.zeros(int(sr_out * seg.silence_ms / 1000), dtype=np.float32))
+        if not seg.text.strip():
+            continue
+        fd_seg, tmp_seg = tempfile.mkstemp(suffix=".wav")
+        os.close(fd_seg)
+        written = tmp_seg
+        try:
+            seg_args = argparse.Namespace(**vars(args))
+            seg_args._ssml_segment = True
+            seg_args.input_text = seg.text
+            seg_args.input_file = None  # input_text wins, but be explicit
+            seg_args.output_file = tmp_seg
+            seg_args.play_direct = False
+            seg_args.batch = False
+            seg_args.translate = False  # the text is already translated
+            seg_args.verify = False  # verify the combined output, not fragments
+            if seg.speed != 1.0:
+                seg_args.speech_speed = seg.speed
+            seg_started = time.time()
+            run_synthesis(seg_args)
+            # The handler may have written its own container next to the temp
+            # path, exactly as it does for a real output.
+            written = resolve_written_output(tmp_seg, since=seg_started) or tmp_seg
+            if os.path.isfile(written) and os.path.getsize(written) > 100:
+                data_seg, sr_seg = _read_pcm(written)
+                if data_seg is not None:
+                    audio_parts.append(data_seg)
+                    sr_out = sr_out or sr_seg
+        finally:
+            for leftover in {tmp_seg, written}:
+                if leftover and os.path.exists(leftover):
+                    os.unlink(leftover)
+
+    if not audio_parts or sr_out is None:
+        logger.warning("SSML: no segment produced audio; "
+                       "synthesizing the text without its markup instead.")
+        return False
+
+    combined = crossfade_segments(audio_parts, sample_rate=sr_out)
+    sf_ssml.write(output_path, combined, sr_out, subtype="PCM_16")
+    logger.info("SSML: combined %d segments → %s", len(audio_parts), output_path)
+    return True
+
+
 def run_synthesis(args):
     current_all_handlers = _load_handlers_if_needed()
     if not _HANDLERS_LOADED or not current_all_handlers:
@@ -670,64 +797,38 @@ def run_synthesis(args):
         except Exception as e_tr:
             logger.warning("Translation failed, using original text: %s", e_tr)
 
-    # --- SSML-lite preprocessing ---
-    # If text contains SSML tags, parse into segments and synthesize each.
-    # Multi-segment SSML is handled by recursive calls + crossfade.
-    try:
-        from ssml import has_ssml, parse_ssml
-        if has_ssml(text_to_synthesize) and args.output_file:
-            segments = parse_ssml(text_to_synthesize)
-            if len(segments) > 1:
-                import tempfile
-
-                import numpy as np
-                try:
-                    import soundfile as sf_ssml
-                except ImportError:
-                    sf_ssml = None
-                from utils import crossfade_segments
-                logger.info("SSML: %d segments detected", len(segments))
-                audio_parts = []
-                sr_out = None
-                for _i, seg in enumerate(segments):
-                    if seg.silence_ms > 0 and sr_out:
-                        silence = np.zeros(int(sr_out * seg.silence_ms / 1000), dtype=np.float32)
-                        audio_parts.append(silence)
-                    if not seg.text.strip():
-                        continue
-                    fd_seg, tmp_seg = tempfile.mkstemp(suffix=".wav")
-                    os.close(fd_seg)
-                    try:
-                        seg_args = argparse.Namespace(**vars(args))
-                        seg_args.input_text = seg.text
-                        seg_args.output_file = tmp_seg
-                        seg_args.play_direct = False
-                        if seg.speed != 1.0:
-                            seg_args.speech_speed = seg.speed
-                        run_synthesis(seg_args)
-                        if sf_ssml and os.path.isfile(tmp_seg) and os.path.getsize(tmp_seg) > 100:
-                            data_seg, sr_seg = sf_ssml.read(tmp_seg, dtype="float32")
-                            if data_seg.ndim > 1:
-                                data_seg = data_seg[:, 0]
-                            audio_parts.append(data_seg)
-                            sr_out = sr_out or sr_seg
-                    finally:
-                        if os.path.exists(tmp_seg):
-                            os.unlink(tmp_seg)
-                if audio_parts and sr_out and sf_ssml:
-                    combined = crossfade_segments(audio_parts, sample_rate=sr_out)
-                    sf_ssml.write(args.output_file, combined, sr_out, subtype="PCM_16")
-                    logger.info("SSML: combined %d segments → %s", len(audio_parts), args.output_file)
-                    if args.play_direct:
-                        from utils import play_audio
-                        play_audio(args.output_file, is_path=True)
-                    return
-            elif len(segments) == 1:
-                text_to_synthesize = segments[0].text
-                if segments[0].speed != 1.0:
-                    args.speech_speed = segments[0].speed
-    except ImportError:
-        pass
+    # --- SSML-lite preprocessing (parsing only) ---
+    # Multi-segment SSML used to synthesize, crossfade, write and *return*
+    # right here — a second exit from run_synthesis that never reached the
+    # disclosure and marking block below. The combined file kept only whatever
+    # audio watermark happened to survive concatenation, with nothing checking
+    # that it still cleared threshold; its LIST/INFO metadata and its C2PA
+    # manifest were gone; the marking preflight never saw the real output
+    # format; and --play-direct played the result unverified.
+    #
+    # Segments are now rendered in place of the handler call further down
+    # instead, which puts the combined output through the same
+    # trim/normalize/resample/disclose/mark/play sequence as every other
+    # output and leaves run_synthesis with a single exit again.
+    _ssml_segments = None
+    if not getattr(args, '_ssml_segment', False):
+        try:
+            from ssml import has_ssml, parse_ssml
+            if has_ssml(text_to_synthesize):
+                segments = parse_ssml(text_to_synthesize)
+                if len(segments) > 1:
+                    _ssml_segments = segments
+                    # Fallback for the case where there is nowhere to render
+                    # segments to: speak the words without the markup rather
+                    # than reading the tags out loud.
+                    text_to_synthesize = " ".join(
+                        s.text.strip() for s in segments if s.text.strip())
+                elif len(segments) == 1:
+                    text_to_synthesize = segments[0].text
+                    if segments[0].speed != 1.0:
+                        args.speech_speed = segments[0].speed
+        except ImportError:
+            pass
 
     model_config_base = GERMAN_TTS_MODELS.get(args.model_id)
     if not model_config_base:
@@ -894,8 +995,20 @@ def run_synthesis(args):
                 "Drop --stream for playback that is marked and verified first.")
 
         try:
+            # SSML segments are rendered in place of the handler call. The
+            # combined file then continues through the shared post-processing
+            # below — the marking preflight above already ran against the real
+            # output path, so an unmarkable target was refused before this.
+            _ssml_handled = False
+            _synth_started = time.time()
+            if _ssml_segments and _effective_output:
+                _ssml_handled = _synthesize_ssml_segments(
+                    args, _ssml_segments, _effective_output)
+
+            if _ssml_handled:
+                pass  # combined SSML output written
             # Use streaming handler if --stream and crispasr backend
-            if getattr(args, 'stream', False) and handler_key == "crispasr":
+            elif getattr(args, 'stream', False) and handler_key == "crispasr":
                 from handlers.crispasr_handler import synthesize_with_crispasr_streaming
                 synthesize_with_crispasr_streaming(
                     current_config_for_handler, text_to_synthesize, effective_voice_id,
@@ -903,6 +1016,33 @@ def run_synthesis(args):
             else:
                 handler_func(current_config_for_handler, text_to_synthesize, effective_voice_id, args.model_params,
                     _effective_output, False if _play_after_marking else args.play_direct)
+
+            # --- Follow the audio the handler actually wrote ---
+            # Handlers routinely override the requested container, so the file
+            # to trim, disclaim, mark and play is not necessarily the one that
+            # was asked for. Rebinding args.output_file here means every step
+            # below — including _discard_output() on failure — acts on the real
+            # output instead of quietly skipping a path that does not exist.
+            _actual_output = resolve_written_output(_effective_output, since=_synth_started)
+            if _actual_output and _actual_output != _effective_output:
+                # Anything left at the requested path is an empty stub — the
+                # resolver only looks past a path that holds real audio. Drop
+                # it so it cannot be mistaken for unmarked output, but only
+                # once it is certain the two paths are not the same file.
+                try:
+                    _stale = (os.path.isfile(_effective_output)
+                              and not os.path.samefile(_effective_output, _actual_output))
+                except OSError:
+                    _stale = False
+                if _stale:
+                    try:
+                        os.unlink(_effective_output)
+                    except OSError:
+                        pass
+                if _temp_play_file and _temp_play_file == _effective_output:
+                    _temp_play_file = _actual_output
+                args.output_file = _actual_output
+                _effective_output = _actual_output
 
             # --- Post-synthesis silence trimming (Python fallback for non-crispasr) ---
             if getattr(args, 'trim_silence', False) and args.output_file and os.path.isfile(args.output_file):
@@ -946,8 +1086,13 @@ def run_synthesis(args):
             # ends up inside the watermarked audio. Fails closed, like marking:
             # a deepfake delivered without its disclosure is the failure mode
             # this exists to prevent, so a silent skip is not acceptable.
+            #
+            # Skipped for an SSML segment: that temp file is a fragment of the
+            # output, never the output. Its parent call disclaims and marks the
+            # combined file. See _synthesize_ssml_segments().
             if (_is_voice_cloning and args.output_file and os.path.isfile(args.output_file)
-                    and not getattr(args, 'no_spoken_disclaimer', False)):
+                    and not getattr(args, 'no_spoken_disclaimer', False)
+                    and not getattr(args, '_ssml_segment', False)):
                 try:
                     from watermark import DisclosureError, prepend_disclaimer_file
                 except ImportError:
@@ -972,7 +1117,13 @@ def run_synthesis(args):
             # resampling and the spoken disclaimer all rewrite the file, so
             # marking earlier would be stripped or weakened. Fails closed —
             # if the output cannot be marked it is not delivered at all.
-            if args.output_file and os.path.isfile(args.output_file):
+            #
+            # Skipped for an SSML segment, which is a temp fragment rather than
+            # a delivered output; its parent call marks the combined file, and
+            # marking a fragment that failed verification would silently delete
+            # it. See _synthesize_ssml_segments().
+            if (args.output_file and os.path.isfile(args.output_file)
+                    and not getattr(args, '_ssml_segment', False)):
                 _allow_unmarked = True if getattr(args, 'allow_unmarked', False) else None
                 try:
                     from watermark import MarkingError, mark_audio_file

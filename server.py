@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
@@ -310,6 +311,7 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
         os.close(fd)
 
         try:
+            _synth_started = time.time()
             handler_func(
                 model_config,
                 text,
@@ -318,6 +320,25 @@ class TTSRequestHandler(BaseHTTPRequestHandler):
                 tmp_path,
                 False,
             )
+
+            # Follow the audio, as the CLI does: most handlers force their own
+            # container regardless of the path they are handed, and reading
+            # back only tmp_path turned that into "synthesis produced no
+            # output" for every such backend. Unlike the CLI, the response has
+            # a declared Content-Type, so convert rather than simply following
+            # — returning MP3 bytes labelled audio/wav would be worse than the
+            # error it replaces. A missing codec leaves tmp_path unwritten and
+            # falls into the 500 below, so this stays fail-closed.
+            from utils import resolve_written_output, save_audio
+            _written = resolve_written_output(tmp_path, since=_synth_started)
+            if _written and _written != tmp_path:
+                if os.path.isfile(tmp_path):
+                    os.unlink(tmp_path)  # the empty mkstemp stub
+                save_audio(_written, tmp_path, source_is_path=True)
+                try:
+                    os.unlink(_written)
+                except OSError:
+                    pass
 
             if not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) < 100:
                 self._send_error(500, "Synthesis produced no output")

@@ -1,6 +1,7 @@
 """Tests for main.py — CLI argument parsing, model dispatch, entrypoint."""
 
 import argparse
+import contextlib
 import unittest
 
 # These tests drive the real marking and disclosure pipeline, which needs the
@@ -572,6 +573,378 @@ class TestConsentGateFailsClosed(unittest.TestCase):
         self.assertEqual(called, [],
                          "synthesis ran despite the consent gate being unevaluable")
         self.assertFalse(os.path.exists(out))
+
+
+def _synth_namespace(**overrides):
+    """A run_synthesis() args namespace with every flag at its CLI default."""
+    base = dict(
+        model_id="edge", german_voice_id=None, model_params=None,
+        output_file=None, play_direct=False, input_text="Hallo Welt",
+        input_file=None, speech_speed=1.0, trim_silence=False, tts_steps=None,
+        tts_language=None, pitch_shift=0.0, instruct=None, ref_text=None,
+        no_spoken_disclaimer=False, disclosure_lang=None, lexicon=None, normalize=False,
+        output_sample_rate=None, stream=False, verify=False,
+        verify_backend="parakeet", i_have_rights=False, allow_unmarked=False,
+        c2pa_cert=None, c2pa_key=None, batch=False, translate=False,
+        accept_marking_responsibility=False, no_watermark=False,
+        override_main_model_repo=None, override_model_filename=None,
+        override_tokenizer_repo=None, override_vocoder_repo=None,
+        override_speaker_embed_repo=None, override_piper_voices_repo=None,
+        lm_studio_api_url=None, gguf_model_name_in_api=None,
+        ollama_api_url=None, ollama_model_name=None,
+    )
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def _run_synthesis_with(args, stub, patches=()):
+    from unittest.mock import patch
+
+    import main
+    from config import GERMAN_TTS_MODELS
+
+    handler_key = GERMAN_TTS_MODELS.get(args.model_id, {}).get(
+        "handler_function_key", args.model_id)
+    with patch.object(main, "_load_handlers_if_needed",
+                      return_value={"edge": stub, handler_key: stub}), \
+            patch.object(main, "_HANDLERS_LOADED", True):
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            main.run_synthesis(args)
+
+
+@requires_soundfile
+class TestMarkingFollowsTheWrittenFile(unittest.TestCase):
+    """Marking must follow the audio, not the requested path.
+
+    Regression: 16 of the shipped handlers force their own container — the
+    Edge handler writes .mp3, most local ones write .wav — regardless of the
+    extension asked for. Every post-synthesis step was guarded by
+    ``os.path.isfile(args.output_file)``, so when the handler wrote next door
+    the guard was simply false: no disclosure, no marking, no verification, no
+    discard. `--output-file out.wav --model-id edge` delivered an unmarked
+    out.mp3 (measured: watermark 0.56, below the 0.65 threshold, no ID3 tag,
+    no C2PA manifest).
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+
+    def _stub_writing(self, suffix):
+        """A handler that ignores the requested extension, as the real ones do."""
+        import os
+
+        import numpy as np
+        import soundfile as sf
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            target = os.path.splitext(output_file)[0] + suffix
+            t = np.linspace(0, 2, 48000, endpoint=False, dtype=np.float32)
+            sf.write(target, (0.3 * np.sin(2 * np.pi * 180 * t)).astype(np.float32), 24000)
+        return stub
+
+    def test_output_under_another_suffix_is_still_marked(self):
+        import os
+
+        from watermark import _AI_MARKER_WAV, manifest_asserts_ai, watermark_verify_file
+
+        requested = os.path.join(self.tmpdir, "out.mp3")
+        actual = os.path.join(self.tmpdir, "out.wav")
+
+        _run_synthesis_with(_synth_namespace(output_file=requested),
+                            self._stub_writing(".wav"))
+
+        self.assertTrue(os.path.isfile(actual),
+                        "the handler's own output is missing")
+        confidence = watermark_verify_file(actual)
+        self.assertIsNotNone(confidence)
+        self.assertGreaterEqual(
+            confidence, 0.65,
+            f"output written under another suffix was never watermarked "
+            f"(confidence {confidence})")
+        with open(actual, "rb") as f:
+            raw = f.read()
+        self.assertIn(_AI_MARKER_WAV, raw, "output lost its AI-generated metadata")
+        self.assertTrue(manifest_asserts_ai(actual),
+                        "output carries no C2PA manifest asserting AI generation")
+
+    def test_requested_path_is_rebound_for_the_caller(self):
+        """Batch mode and --play-direct read args.output_file back afterwards."""
+        import os
+
+        requested = os.path.join(self.tmpdir, "out.mp3")
+        args = _synth_namespace(output_file=requested)
+        _run_synthesis_with(args, self._stub_writing(".wav"))
+
+        self.assertTrue(os.path.isfile(args.output_file),
+                        f"args.output_file still points at a path that was never "
+                        f"written: {args.output_file}")
+
+    def test_stale_file_from_an_earlier_run_is_not_adopted(self):
+        """A leftover from a previous run must not be marked as this run's output."""
+        import os
+        import time
+        from unittest.mock import patch
+
+        import watermark
+
+        requested = os.path.join(self.tmpdir, "out.mp3")
+        stale = os.path.join(self.tmpdir, "out.wav")
+        with open(stale, "wb") as f:
+            f.write(b"\0" * 5000)
+        old = time.time() - 86400
+        os.utime(stale, (old, old))
+
+        marked = []
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            pass  # produced nothing at all
+
+        _run_synthesis_with(
+            _synth_namespace(output_file=requested), stub,
+            patches=[patch.object(watermark, "mark_audio_file",
+                                  lambda p, **k: marked.append(str(p)))])
+
+        self.assertEqual(marked, [],
+                         f"adopted and marked a stale file from an earlier run: {marked}")
+
+    def test_playback_uses_the_file_that_was_written(self):
+        from unittest.mock import patch
+
+        import utils
+        import watermark
+
+        order = []
+        real_mark = watermark.mark_audio_file
+
+        def traced_mark(filepath, **kwargs):
+            order.append(("marked", str(filepath)))
+            return real_mark(filepath, **kwargs)
+
+        _run_synthesis_with(
+            _synth_namespace(output_file=None, play_direct=True),
+            self._stub_writing(".mp3"),
+            patches=[patch.object(watermark, "mark_audio_file", traced_mark),
+                     patch.object(utils, "play_audio",
+                                  lambda p, **k: order.append(("played", str(p))))])
+
+        self.assertEqual([step for step, _ in order], ["marked", "played"],
+                         f"playback did not follow marking: {order}")
+        self.assertEqual(order[0][1], order[1][1],
+                         f"marked one file and played another: {order}")
+
+
+@requires_soundfile
+class TestSSMLOutputIsMarked(unittest.TestCase):
+    """Multi-segment SSML output must go through marking like any other output.
+
+    Regression: run_synthesis used to synthesize SSML segments, crossfade them,
+    write the result and *return* — a second exit that never reached the
+    disclosure and marking block. The combined file kept only whatever audio
+    watermark survived concatenation; its container metadata and its C2PA
+    manifest were gone, nothing verified that the residual mark still cleared
+    threshold, the marking preflight never saw the real output format, and
+    --play-direct played the unverified result to the listener.
+    """
+
+    # Three segments: a long one, a short one, a long one.
+    SSML = ('Erstes Segment hier. <prosody rate="fast">Ja.</prosody> '
+            'Drittes Segment hier.')
+    SHORT_AMPLITUDE = 0.9
+    LONG_AMPLITUDE = 0.1
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+
+    def _stub(self, seen_texts=None):
+        import numpy as np
+        import soundfile as sf
+
+        def stub(config, text, voice, params, output_file, play_direct):
+            if seen_texts is not None:
+                seen_texts.append(text)
+            short = "Ja." in text
+            dur = 0.2 if short else 1.0
+            amp = self.SHORT_AMPLITUDE if short else self.LONG_AMPLITUDE
+            n = int(24000 * dur)
+            t = np.linspace(0, dur, n, endpoint=False, dtype=np.float32)
+            sf.write(output_file, (amp * np.sin(2 * np.pi * 180 * t)).astype(np.float32), 24000)
+        return stub
+
+    def _args(self, output_file, **overrides):
+        base = dict(
+            model_id="edge", german_voice_id=None, model_params=None,
+            output_file=output_file, play_direct=False, input_text=self.SSML,
+            input_file=None, speech_speed=1.0, trim_silence=False, tts_steps=None,
+            tts_language=None, pitch_shift=0.0, instruct=None, ref_text=None,
+            no_spoken_disclaimer=False, disclosure_lang=None, lexicon=None, normalize=False,
+            output_sample_rate=None, stream=False, verify=False,
+            verify_backend="parakeet", i_have_rights=False, allow_unmarked=False,
+            c2pa_cert=None, c2pa_key=None, batch=False, translate=False,
+            accept_marking_responsibility=False, no_watermark=False,
+            override_main_model_repo=None, override_model_filename=None,
+            override_tokenizer_repo=None, override_vocoder_repo=None,
+            override_speaker_embed_repo=None, override_piper_voices_repo=None,
+            lm_studio_api_url=None, gguf_model_name_in_api=None,
+            ollama_api_url=None, ollama_model_name=None,
+        )
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def _run(self, args, stub, patches=()):
+        from unittest.mock import patch
+
+        import main
+        from config import GERMAN_TTS_MODELS
+
+        handler_key = GERMAN_TTS_MODELS.get(args.model_id, {}).get(
+            "handler_function_key", args.model_id)
+        with patch.object(main, "_load_handlers_if_needed",
+                          return_value={"edge": stub, handler_key: stub}), \
+                patch.object(main, "_HANDLERS_LOADED", True):
+            with contextlib.ExitStack() as stack:
+                for p in patches:
+                    stack.enter_context(p)
+                main.run_synthesis(args)
+
+    def test_combined_output_carries_every_marking_layer(self):
+        import os
+
+        from watermark import _AI_MARKER_WAV, manifest_asserts_ai, watermark_verify_file
+
+        out = os.path.join(self.tmpdir, "ssml.wav")
+        seen = []
+        self._run(self._args(out), self._stub(seen))
+
+        self.assertGreater(len(seen), 1, "expected the SSML segment path to run")
+        self.assertTrue(os.path.isfile(out), "combined SSML output was not written")
+
+        confidence = watermark_verify_file(out)
+        self.assertIsNotNone(confidence, "combined output could not be read back")
+        self.assertGreaterEqual(confidence, 0.65,
+                                f"combined SSML output is not watermarked above "
+                                f"threshold (got {confidence})")
+
+        with open(out, "rb") as f:
+            raw = f.read()
+        self.assertIn(_AI_MARKER_WAV, raw,
+                      "combined SSML output lost its LIST/INFO AI-generated metadata")
+        self.assertTrue(manifest_asserts_ai(out),
+                        "combined SSML output carries no C2PA manifest asserting "
+                        "trainedAlgorithmicMedia")
+
+    def test_marking_is_applied_to_the_combined_file(self):
+        import os
+        from unittest.mock import patch
+
+        import watermark
+
+        out = os.path.join(self.tmpdir, "ssml.wav")
+        marked = []
+        real = watermark.mark_audio_file
+
+        def traced(filepath, **kwargs):
+            marked.append(str(filepath))
+            return real(filepath, **kwargs)
+
+        self._run(self._args(out), self._stub(),
+                  patches=[patch.object(watermark, "mark_audio_file", traced)])
+
+        self.assertIn(out, marked,
+                      f"the combined output was never marked; marked only: {marked}")
+
+    def test_every_segment_reaches_the_combined_audio(self):
+        """No segment may be lost on the way into the combined file.
+
+        Not a past regression — with the built-in backend even a 0.05 s tone
+        marks fine, so segments did survive. It guards the new arrangement:
+        segments are deliberately left unmarked, and marking is the step that
+        *deletes* what it cannot mark, so were that skip ever removed a segment
+        failing verification would disappear from the output instead of
+        failing the run.
+        """
+        import os
+
+        import numpy as np
+        import soundfile as sf
+
+        out = os.path.join(self.tmpdir, "ssml.wav")
+        self._run(self._args(out), self._stub())
+
+        data, _ = sf.read(out, dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        self.assertGreater(
+            float(np.max(np.abs(data))), self.LONG_AMPLITUDE * 3,
+            "the short SSML segment is missing from the combined audio — it was "
+            "discarded by per-segment marking")
+
+    def test_cloned_ssml_output_gets_exactly_one_disclosure(self):
+        """The Art. 50(4) disclosure belongs once at the front, not per segment."""
+        import os
+        from unittest.mock import patch
+
+        import watermark
+
+        out = os.path.join(self.tmpdir, "ssml_cloned.wav")
+        calls = []
+        real = watermark.prepend_disclaimer_file
+
+        def traced(filepath, **kwargs):
+            calls.append(str(filepath))
+            return real(filepath, **kwargs)
+
+        self._run(self._args(out, model_id="f5_tts_german", i_have_rights=True),
+                  self._stub(),
+                  patches=[patch.object(watermark, "prepend_disclaimer_file", traced)])
+
+        self.assertEqual(calls, [out],
+                         f"expected one disclosure, on the combined file; got {calls}")
+
+    def test_unmarkable_format_is_refused_before_synthesis(self):
+        """Preflight must see the real output format, not the segments' temp .wav."""
+        import os
+
+        out = os.path.join(self.tmpdir, "ssml.aac")
+        seen = []
+        self._run(self._args(out), self._stub(seen))
+
+        self.assertEqual(seen, [],
+                         "synthesis ran despite an output format that cannot be "
+                         "marked as AI-generated")
+        self.assertFalse(os.path.exists(out))
+
+    def test_playback_waits_for_marking(self):
+        import os
+        from unittest.mock import patch
+
+        import utils
+        import watermark
+
+        out = os.path.join(self.tmpdir, "ssml.wav")
+        order = []
+        real_mark = watermark.mark_audio_file
+
+        def traced_mark(filepath, **kwargs):
+            result = real_mark(filepath, **kwargs)
+            if str(filepath) == out:
+                order.append("marked")
+            return result
+
+        self._run(self._args(out, play_direct=True), self._stub(),
+                  patches=[patch.object(watermark, "mark_audio_file", traced_mark),
+                           patch.object(utils, "play_audio",
+                                        lambda *a, **k: order.append("played"))])
+
+        self.assertEqual(order, ["marked", "played"],
+                         f"SSML playback was not marked first: {order}")
 
 
 if __name__ == "__main__":

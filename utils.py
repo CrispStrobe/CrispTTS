@@ -1,5 +1,6 @@
 # utils.py
 
+import glob
 import io
 import logging
 import os
@@ -299,6 +300,74 @@ def get_text_from_input(input_text_direct: str | None, input_file_path_str: str 
 # destroy an audio watermark embedded earlier. Marking therefore happens once,
 # at the end, via watermark.mark_audio_file() in main.py (single synthesis,
 # --test-all, batch) and server.py (HTTP responses).
+
+# Extensions a handler might write. Deliberately wider than the set marking
+# can actually handle: finding an output in an unmarkable container has to end
+# in mark_audio_file() refusing it, not in never noticing the file at all.
+_AUDIO_OUTPUT_EXTS = frozenset({
+    ".wav", ".mp3", ".flac", ".opus", ".ogg", ".oga", ".m4a", ".mp4",
+    ".aac", ".aif", ".aiff", ".webm",
+})
+
+
+def resolve_written_output(requested_path, since=None):
+    """Return the file the handler actually wrote for ``requested_path``.
+
+    Most handlers force their own container regardless of the extension asked
+    for — the Edge handler writes ``.mp3``, the local ones almost all write
+    ``.wav``. The post-synthesis steps used to test
+    ``os.path.isfile(output_path)`` and silently do nothing when the audio had
+    landed next door under another suffix, so ``--output-file out.wav
+    --model-id edge`` delivered an out.mp3 that was never marked, never
+    disclaimed and never verified. Marking has to follow the audio, not the
+    request.
+
+    Args:
+        requested_path: The path synthesis was asked to write.
+        since: Epoch seconds before synthesis started. Files older than this
+            are treated as leftovers from an earlier run rather than as this
+            run's output.
+
+    Returns:
+        The path actually written, or None if nothing was found.
+    """
+    if not requested_path:
+        return None
+    requested = Path(requested_path)
+    # Size, not mere existence: --play-direct without --output-file creates the
+    # target with mkstemp before the handler runs, so an empty stub is left
+    # behind whenever the handler writes its own container instead.
+    try:
+        if requested.is_file() and requested.stat().st_size > 100:
+            # The caller's own string, not str(Path(...)) — "./out.wav"
+            # normalizes to "out.wav", and a caller comparing the two would
+            # conclude the handler had written somewhere else.
+            return requested_path
+    except OSError:
+        pass
+
+    candidates = []
+    for sibling in requested.parent.glob(f"{glob.escape(requested.stem)}.*"):
+        if not sibling.is_file() or sibling.suffix.lower() not in _AUDIO_OUTPUT_EXTS:
+            continue
+        try:
+            stat = sibling.stat()
+        except OSError:
+            continue
+        if stat.st_size <= 100:
+            continue
+        if since is not None and stat.st_mtime < since - 2:
+            continue  # predates this run
+        candidates.append((stat.st_mtime, str(sibling)))
+    if not candidates:
+        return None
+
+    candidates.sort(reverse=True)
+    actual = candidates[0][1]
+    logger.info("Handler wrote '%s' rather than the requested '%s'; the pipeline "
+                "follows the audio.", actual, requested_path)
+    return actual
+
 
 # --- Audio Handling Utilities ---
 def save_audio(audio_data_or_path, output_filepath_str: str, source_is_path=False, input_format=None, sample_rate=None):

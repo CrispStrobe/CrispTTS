@@ -384,5 +384,86 @@ class TestCrossfadeSegments(unittest.TestCase):
         self.assertLessEqual(float(np.max(np.abs(result))), 1.0)
 
 
+class TestResolveWrittenOutput(unittest.TestCase):
+    """Marking follows the file the handler wrote, not the one requested."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+
+    def _write(self, name, size=5000, mtime=None):
+        import os
+        path = os.path.join(self.tmpdir, name)
+        with open(path, "wb") as f:
+            f.write(b"\0" * size)
+        if mtime is not None:
+            os.utime(path, (mtime, mtime))
+        return path
+
+    def test_returns_the_requested_path_when_it_holds_audio(self):
+        from utils import resolve_written_output
+        requested = self._write("out.wav")
+        self.assertEqual(resolve_written_output(requested), requested)
+
+    def test_returns_the_callers_own_string_unnormalized(self):
+        """'./out.wav' normalizes to 'out.wav'; a caller comparing the two
+        would conclude the handler had written somewhere else and act on it."""
+        import os
+
+        from utils import resolve_written_output
+        self._write("out.wav")
+        cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(resolve_written_output("./out.wav"), "./out.wav")
+
+    def test_finds_a_sibling_under_another_extension(self):
+        import os
+
+        from utils import resolve_written_output
+        actual = self._write("out.mp3")
+        requested = os.path.join(self.tmpdir, "out.wav")
+        self.assertEqual(resolve_written_output(requested), actual)
+
+    def test_ignores_an_empty_mkstemp_stub_at_the_requested_path(self):
+        from utils import resolve_written_output
+        self._write("out.wav", size=0)
+        actual = self._write("out.mp3")
+        self.assertEqual(resolve_written_output(self._path("out.wav")), actual)
+
+    def _path(self, name):
+        import os
+        return os.path.join(self.tmpdir, name)
+
+    def test_ignores_a_leftover_from_an_earlier_run(self):
+        import time
+
+        from utils import resolve_written_output
+        self._write("out.mp3", mtime=time.time() - 86400)
+        self.assertIsNone(
+            resolve_written_output(self._path("out.wav"), since=time.time()))
+
+    def test_ignores_non_audio_siblings(self):
+        from utils import resolve_written_output
+        self._write("out.txt")
+        self.assertIsNone(resolve_written_output(self._path("out.wav")))
+
+    def test_prefers_the_newest_candidate(self):
+        import time
+
+        from utils import resolve_written_output
+        now = time.time()
+        self._write("out.flac", mtime=now - 30)
+        newest = self._write("out.mp3", mtime=now)
+        self.assertEqual(resolve_written_output(self._path("out.wav")), newest)
+
+    def test_returns_none_when_nothing_was_written(self):
+        from utils import resolve_written_output
+        self.assertIsNone(resolve_written_output(self._path("out.wav")))
+        self.assertIsNone(resolve_written_output(None))
+
+
 if __name__ == "__main__":
     unittest.main()
