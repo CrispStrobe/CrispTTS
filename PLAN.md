@@ -1113,12 +1113,209 @@ strippable container metadata. Detection is reliable from ~0.25 s upward
 
 ### Status: COMPLETE — 329 tests pass (15 new), ruff clean
 
-### Known limitation, deliberately not closed
+### Known limitation — RESOLVED in 18.3
 
-The built-in spread-spectrum watermark still does not survive resampling
-(0.63 against a 0.65 threshold). Closing that properly means either a hard
-`torch` dependency or original signal-processing work on rate-invariant
-embedding. The chosen mitigation is the `robust` extra plus a loud warning
-and honest documentation — see 16.8. Revisit if CrispTTS is ever distributed
-in a context where the maintainer is clearly a "provider placing on the
-market" under Art. 3(9).
+*Recorded as deliberately-not-closed at the time; superseded, kept for the
+reasoning.* The built-in spread-spectrum watermark did not survive resampling
+(0.63 against a 0.65 threshold). The assumption was that closing it meant
+either a hard `torch` dependency or original signal-processing work on
+rate-invariant embedding, so the mitigation was the `robust` extra plus a
+loud warning and honest documentation — see 16.8.
+
+Neither turned out to be necessary. Moving the comb into the speech band for
+*interop* reasons (18.3) raised post-resample detection to 0.78 as a side
+effect, because the bins now sit where the signal actually has energy. The
+immediate-after-embed reading fell from 0.94 to 0.84 in exchange, and the
+embed got ~6 dB quieter.
+
+---
+
+## Phase 18: Ecosystem interop, C2PA tiering, offline disclosure (v0.9.1)
+
+Phases 16–17 made marking fail closed and gated generation on it. This phase
+came out of actually *installing* CrispASR 0.8.25 and probing it, rather than
+reasoning about what it probably does — which is how three of the four
+defects below were found.
+
+### 18.1 Tiered C2PA signers, each verified rather than trusted
+
+`CRISPTTS_C2PA_BACKEND=auto|python|audio|crispasr|off`:
+
+1. `c2pa-audio` if importable — native, built from source, not on PyPI
+2. `c2pa-python` — always present, and the only path where CrispTTS controls
+   the manifest
+
+`c2pa-audio`'s `sign_wav()` takes a cert and a key but no manifest, so the
+library picks its own assertions — and a manifest without
+`trainedAlgorithmicMedia` marks a file as *unaltered* rather than as
+*AI-generated*. That is exactly how the original `c2pa-audio` path came to
+sign files carrying no AI claim. `manifest_asserts_ai()` now reads every
+native result back; if the claim is absent the result is discarded and
+`c2pa-python` re-signs.
+
+### 18.2 CrispASR is not a signing backend, and its watermark is not assumed
+
+Two claims about the sibling project turned out to be false when probed:
+
+- A CrispASR signing tier was added by matching `--c2pa` in `--help`, which
+  matches as a substring of `--c2pa-cert` and builds a command the binary
+  rejects. Probed against 0.8.25: `--c2pa-cert`/`--c2pa-key` configure signing
+  of its *own* synthesis output; no flag signs an existing file. Tier removed.
+- `audio-watermark:upstream` was reported for any `handler_key == "crispasr"`
+  output. Measured on 0.8.25 kokoro output, CrispTTS's detector read 0.44 —
+  its noise floor. The layer is now reported only when verification actually
+  detects a mark.
+
+**Upstream manifests are preserved, not overwritten.** CrispASR signs during
+synthesis with a manifest that already asserts `trainedAlgorithmicMedia`.
+Every marking step rewrites the file and breaks that manifest's hash —
+injecting the WAV `LIST/INFO` chunk alone takes it from `validation_state:
+Valid` to `Invalid`. Re-signing afterwards hid that, at the cost of discarding
+the upstream signer identity and leaving a tamper-looking file whenever the
+re-sign failed. Such files are now left untouched, reported `c2pa:preserved`.
+
+### 18.3 Watermark comb moved to CrispASR's speech band
+
+The two projects could no longer read each other's marks: same key, same PRNG,
+same FFT size and hop — only the comb placement differed. CrispASR moved theirs
+in their #260 because spreading 32 bins across ~1.5–11.7 kHz put ~20 of them
+where clean TTS speech is near-silent, making the comb audible as a tinny tone.
+CrispTTS stayed on the old band.
+
+| | CrispASR's detector | CrispTTS's detector |
+|---|---|---|
+| Before, on CrispASR kokoro output | 0.72 detected | **0.41 — missed** |
+| After, both directions | 0.81 | 0.81 |
+
+`wm_params()` now mirrors the C++ exactly (lo=`n_fft/16`, hi=`n_fft/5`,
+alpha 0.05); `CRISPASR_WATERMARK_LEGACY=1` restores the old band and is read
+by both projects. Detection sweeps both bands and takes the stronger reading,
+so previously-marked audio still verifies. `alpha=0` is now a true no-op as
+the C++ documents — the STFT round-trip previously perturbed the signal while
+embedding nothing.
+
+This is what resolved the Phase 17 known limitation; see the note there.
+
+### 18.4 Bundled spoken disclosures — the offline tier
+
+Pre-rendered clips in `crisptts_assets/`, mono 16 kHz FLAC, as tier 3 after
+CrispASR kokoro and Edge TTS. The Art. 50(4) spoken disclosure now works with
+no TTS backend, no model download and no network — previously the only remedy
+for that configuration was to discard the cloned output. A bundled clip is a
+real spoken sentence in the right language, so it counts as a disclosure; the
+tone marker is still refused.
+
+Disclosure wording aligned with Susurrus's `disclosure.spoken` for de/en, with
+the other languages following the same "the following audio" phrasing — the
+disclosure is prepended, so it describes what comes after it, not itself.
+
+### 18.5 Dependency and CI floors
+
+- `edge-tts >= 7.2`. Below that the Sec-MS-GEC auth token uses a scheme
+  Microsoft has retired and every request 403s at the websocket handshake
+  (measured minutes apart on one machine: 7.0.2 fails, 7.2.8 succeeds). The
+  previous `>=6.0` floor let a fresh environment resolve to a version that
+  cannot work. Survivable now that tier 3 exists, but a silently broken tier 2
+  is still a broken tier.
+- CI installs ffmpeg. The MP3 marking tests skip themselves without it, so the
+  MP3 path — a core provenance path, and the reason pydub is a hard dependency
+  — had never actually run in CI.
+
+### Status: COMPLETE (v0.9.1)
+
+---
+
+## Phase 19: Art. 50 audit — disclosure language and fail-open gaps
+
+Audited 2026-08-02, the day Art. 50 became applicable. Phases 16–18 hardened
+*marking*; this audit looked at the paths around it. The marking core held up:
+every file-writing path routes through `mark_audio_file()`, verification gates
+rather than warns, preflight refuses before a model loads. Five findings, one
+substantive.
+
+### 19.1 The disclosure was always German (the defect)
+
+The spoken Art. 50(4) disclosure took its language from a static config field
+that was either `"de"` or absent, so **all 34 cloning models emitted a German
+disclosure** — including CosyVoice3, OmniVoice, IndexTTS and
+LLaSA-Multilingual. A German sentence in front of Mandarin audio discloses
+nothing to that audience. The readme's claim of "in the language of the model
+being used, 8 languages" was not true of any shipped configuration.
+
+Twenty of the 34 declared no `language` at all, and the silent fallback made
+that indistinguishable from a deliberate `"de"`.
+
+- `resolve_disclaimer_lang()` returns `(lang, known)`. `"multilingual"`,
+  `None` and unrecognised codes resolve as *unknown* and warn, naming
+  `--disclosure-lang` and the Art. 50(4) duty, instead of becoming German.
+- `--disclosure-lang` / `"disclosure_lang"` override, because a multilingual
+  model's output language is a property of the input text, not of the model.
+  It cannot be derived from config at all.
+- Every cloning model declares a language; a test enforces it, so a new
+  backend cannot skip the question the way twenty existing ones had.
+- Coverage 8 → 27 languages: all 24 EU official, plus zh/ja/ko for the models
+  that target them. Art. 50 governs the EU market, so "a disclosure the
+  audience can understand" means any EU official language. Bundled offline
+  clips for all 27 (~2 MB in the wheel), each verified with edge-tts and
+  CrispASR both disabled.
+- The server's cache key omitted the disclosure language, so an `en` request
+  could be served a German-disclosed clip. Cloned audio carries its disclosure
+  *inside* it, so the language has to participate in the key.
+
+### 19.2 The consent gate failed open
+
+`except ImportError: pass` at all three sites (CLI, `--test-all`, server) —
+the one control standing between the tool and cloning someone's voice was also
+the only one that vanished when a module was missing, while marking ten lines
+below refused. An unknown cloning status is now treated as cloning, not as
+permission.
+
+### 19.3 CrispASR playback bypassed marking
+
+`if args.play_direct and handler_key != "crispasr"`. Every other backend wrote
+a file, marked it, verified, then played. CrispASR was exempt on the grounds
+that its binary marks internally — the same assumption `mark_audio_file()`
+already declines to make, and which 18.2 had just measured as unfounded. The
+one place audio reached a listener was the one place nothing was verified.
+
+Playback is now marked and verified first for every backend. Real `--stream`
+remains exempt by necessity — incremental playback cannot wait for a completed
+file — and now says so; any `--output-file` is still gated.
+
+### 19.4 Audit log retention
+
+The log records reference-audio *paths*, which routinely contain personal
+names, so it is personal data. It was append-forever and umask-default.
+Now `0600`, 730-day retention pruned on append (GDPR Art. 5(1)(e),
+`CRISPTTS_CONSENT_LOG_RETENTION_DAYS` to tune), plus `--consent-log-prune` and
+`--consent-log-erase [SUBJECT]` for Art. 17 — selective by reference-audio path
+or `ref_sha256`, or the whole log. Lines with no parseable timestamp are kept:
+an unreadable record is not evidence that it has expired.
+
+### 19.5 Documentation
+
+Art. 50 described as applying *now* rather than in the future. Art. 4 (AI
+literacy, in force since 2 Feb 2025) added. Art. 5 / Annex III / Chapter V
+recorded as checked-and-not-applicable, so the omissions are visible rather
+than silent: no biometric categorisation, no emotion *recognition*
+(Kartoffelbox's emotion control is synthesis), not Annex III, and
+single-purpose TTS models are not GPAI, so Chapter V does not attach to models
+converted by `convert_f5_to_mlx.py`.
+
+### 19.6 A test that measured the environment
+
+`test_streaming_still_marks_the_output_file` passed locally and failed on all
+three CI Pythons. `run_synthesis` imports `synthesize_with_crispasr_streaming`
+directly from the handler module, so the dispatch-table stub never intercepted
+it and the test reached real code. Notably it was green locally *despite* no
+`crispasr` binary on PATH, so local reasoning could not have caught it. It now
+patches the streaming entry point and asserts the stub was reached.
+
+### Status: COMPLETE — 410 tests pass (25 new), ruff clean, CI green on 3.10–3.12
+
+### Deployer-side, and not closable in code
+
+Publishing-point disclosure; genuine consent (`--i-have-rights` remains an
+unverified self-attestation and says so); voice/model licence compliance; and
+**choosing the disclosure language** — the tool now warns when it cannot
+determine one, but only the deployer knows what language the audience speaks.
