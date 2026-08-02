@@ -188,6 +188,11 @@ GERMAN_TTS_MODELS = {
     "edge": {
         "handler_function_key": "edge",
         "voice_cloning": False,
+        # Checked: Microsoft's TTS transparency note defines "voice talent" only for
+        # *custom* neural voice and says nothing about how the prebuilt voices are
+        # built. Whoever they were modelled on is not publicly identified, so no
+        # audience could recognise an individual — but the provider does not state
+        # it either way, so this stays a question rather than an answer.
         "speaker_identity": "unknown",
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
         "available_voices": EDGE_TTS_ALL_GERMAN_VOICES,
@@ -196,7 +201,11 @@ GERMAN_TTS_MODELS = {
     "orpheus_kartoffel_natural": {
         "handler_function_key": "orpheus_kartoffel", # Standardized key
         "voice_cloning": False,
-        "speaker_identity": "unknown",
+        # Model card: fine-tuned "primarily on natural human speech recordings" —
+        # permissive podcasts, lectures and OER. The 19 speakers were extracted from
+        # those recordings ("not all speakers could be reconstructed"), so they are
+        # real people who spoke in public, not designed personas.
+        "speaker_identity": "real_person",
         "model_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
         "tokenizer_repo_id": KARTORPHEUS_NATURAL_MODEL_ID,
         "snac_model_id": KARTORPHEUS_SNAC_MODEL_ID,
@@ -226,6 +235,11 @@ GERMAN_TTS_MODELS = {
     "orpheus_lex_au": {
         "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
         "voice_cloning": False,
+        # Checked HF card, the Canopy Labs GitHub and the web: the base Orpheus
+        # voices (tara, leah, jess, leo, dan, mia, zac, zoe) have no disclosed
+        # origin. Canopy states 100k+ h of "permissive/non-copyrighted" audio and
+        # nothing about the named voices. Applies to the four Orpheus entries below
+        # that serve them too.
         "speaker_identity": "unknown",
         "model_repo_id": "lex-au/Orpheus-3b-FT-Q4_K_M.gguf",
         "model_filename": "Orpheus-3b-FT-Q4_K_M.gguf",
@@ -237,7 +251,11 @@ GERMAN_TTS_MODELS = {
     "orpheus_sauerkraut": {
         "handler_function_key": "orpheus_gguf", # Standardized key for GGUF
         "voice_cloning": False,
-        "speaker_identity": "unknown",
+        # Model card speaker table: Tom and Anna include original human recordings
+        # (1-3 h each, Rhode/Mimic Studio); Max and Lena are wholly synthetic. The
+        # default voice is Tom, and a model that CAN speak as a real person is
+        # classified by that, not by its safest voice.
+        "speaker_identity": "real_person",
         "model_repo_id": "VAGOsolutions/SauerkrautTTS-Preview-0.1-Q4_K_M-GGUF",
         "model_filename": "sauerkrauttts_preview_0_1.Q4_K_M.gguf",
         "requires_hf_token": False,
@@ -248,7 +266,9 @@ GERMAN_TTS_MODELS = {
     "orpheus_lm_studio": {
         "handler_function_key": "orpheus_lm_studio",
         "voice_cloning": False,
-        "speaker_identity": "unknown",
+        # Serves SauerkrautTTS-Preview-0.1 over the LM Studio API and defaults to
+        # Tom — the same real recorded speaker as orpheus_sauerkraut.
+        "speaker_identity": "real_person",
         "api_url": LM_STUDIO_API_URL_DEFAULT,
         "gguf_model_name_in_api": "SauerkrautTTS-Preview-0.1",
         "default_voice_id": "Tom",
@@ -297,7 +317,11 @@ GERMAN_TTS_MODELS = {
     "speecht5_german_transformers": {
         "handler_function_key": "speecht5", # Standardized key
         "voice_cloning": False,
-        "speaker_identity": "unknown",
+        # Fine-tuned on Common Voice German (real crowd-sourced speakers), and the
+        # voice heard at inference is whichever CMU ARCTIC x-vector is selected.
+        # That corpus is seven identifiable recorded people (bdl, slt, jmk, awb,
+        # rms, clb, ksp) — pseudonymous codes, like VCTK's p225, not synthesis.
+        "speaker_identity": "real_person",
         "model_id": "sjdata/speecht5_finetuned_common_voice_11_de",
         "vocoder_id": "microsoft/speecht5_hifigan",
         "speaker_embeddings_repo": "Matthijs/cmu-arctic-xvectors",
@@ -308,7 +332,11 @@ GERMAN_TTS_MODELS = {
     "fastpitch_german_nemo": {
         "handler_function_key": "nemo_fastpitch", # Standardized key
         "voice_cloning": False,
-        "speaker_identity": "unknown",
+        # Trained on HUI-Audio-Corpus-German, whose speakers are named LibriVox
+        # narrators: Bernd, Hokuspokus, Friedrich, Eva, Karlsson, Sonja. Eva and
+        # Karlsson are the same donors as the Piper voices already marked
+        # real_person, so this is the same corpus reached by another route.
+        "speaker_identity": "real_person",
         "spectrogram_model_repo_id": "inOXcrm/German_multispeaker_FastPitch_nemo",
         "spectrogram_model_filename": "German_multispeaker_FastPitch_nemo.nemo",
         "vocoder_model_name": "tts_de_hui_hifigan_ft_fastpitch_multispeaker_5",
@@ -740,7 +768,9 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_orpheus_de",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
-        "speaker_identity": "unknown",
+        # Same Kartoffel model and the same 19 real speakers as
+        # orpheus_kartoffel_natural above.
+        "speaker_identity": "real_person",
         "crispasr_backend": "orpheus",
         "crispasr_model_path": "auto:kartoffel-orpheus-de-natural",
         "crispasr_codec_model": "auto",

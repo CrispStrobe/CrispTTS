@@ -776,6 +776,26 @@ sentence to every stock TTS voice. Override per run with
 `--speaker-identity real_person|synthetic|unknown` (API: `"speaker_identity"`)
 when you know more about a voice than the config does.
 
+The values come from reading each model's own documentation, and the evidence
+is recorded as a comment beside every non-obvious entry in `config.py`. The
+seven still marked `unknown` are the ones whose providers do not say:
+
+| Model(s) | What the provider discloses |
+|---|---|
+| `orpheus_lex_au`, `orpheus_ollama`, `mlx_audio_orpheus_llama`, `crispasr_orpheus` | Canopy Labs states 100k+ h of "permissive/non-copyrighted" audio and nothing about the origin of `tara`, `leah`, `jess`, `leo`, `dan`, `mia`, `zac`, `zoe` |
+| `edge` | Microsoft's TTS transparency note defines "voice talent" only for *custom* neural voice; it says nothing about how the prebuilt voices were built, and whoever they were modelled on is not publicly identified |
+| `crispasr_melotts` | MeloTTS documents its architecture lineage but not its speakers |
+| `crispasr_bananamind_tts` | No training-data documentation found |
+
+The `real_person` entries that are not self-evident from the model name trace
+back to identifiable recorded people: Kartoffel-Orpheus's 19 German speakers
+were extracted from podcasts and lectures; SauerkrautTTS's `Tom` and `Anna` are
+original studio recordings (`Max` and `Lena` are synthetic, but the model is
+classified by what it *can* speak as); SpeechT5's voice comes from a CMU ARCTIC
+x-vector, i.e. one of seven recorded individuals; and the German FastPitch is
+trained on HUI-Audio-Corpus-German, whose narrators — Eva, Karlsson and four
+others — are the same donors as the Piper voices.
+
 **Spoken disclosure** — prepended to cloned output and to `real_person` preset
 voices, in **all 24 EU official languages** plus Chinese, Japanese and Korean
 (27 total; `--list-disclosure-langs` prints them). Art. 50 governs content placed on the EU market, so a disclosure

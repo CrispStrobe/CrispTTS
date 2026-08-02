@@ -1565,8 +1565,8 @@ used for training is a licensing fact; it is not the audience knowing the audio
 is synthetic.
 
 Every non-cloning model now declares `speaker_identity`:
-`real_person` (7) gets the disclosure exactly as cloning does, `synthetic` (7)
-does not, `unknown` (13) warns once per model naming Art. 3(60) and
+`real_person` (13) gets the disclosure exactly as cloning does, `synthetic` (7)
+does not, `unknown` (7) warns once per model naming Art. 3(60) and
 `--speaker-identity`. `unknown` deliberately does not force a disclosure —
 the same reasoning as 19.1's `"multilingual"`: surface the question rather than
 guess, in either direction. `--speaker-identity` / `"speaker_identity"`
@@ -1601,3 +1601,27 @@ both confirmed to fail against the previous code.
 
 Unchanged from Phase 19, plus: answering `speaker_identity` for the models
 recorded as `unknown`, and carrying the disclosure into captions (50(5)).
+
+### 22.4 The values, from each model's own documentation
+
+The first pass classified from repo evidence alone and left 13 `unknown`.
+Reading the upstream model cards settled six of them, all toward
+`real_person` — the direction that adds a disclosure, which is why guessing
+`synthetic` would have been the costly error:
+
+| Model | Evidence |
+|---|---|
+| `orpheus_kartoffel_natural`, `crispasr_orpheus_de` | "fine-tuned primarily on natural human speech recordings" — podcasts, lectures, OER. The 19 speakers were *extracted* from those recordings ("not all speakers could be reconstructed"), so they are real people who spoke in public |
+| `orpheus_sauerkraut`, `orpheus_lm_studio` | The card's speaker table: `Tom` and `Anna` include 1–3 h of original studio recordings each; `Max` and `Lena` are wholly synthetic. Default voice is `Tom` |
+| `speecht5_german_transformers` | Fine-tuned on Common Voice German; the voice heard is whichever CMU ARCTIC x-vector is selected — seven identifiable recorded people (bdl, slt, jmk, awb, rms, clb, ksp), pseudonymous like VCTK's p225 |
+| `fastpitch_german_nemo` | HUI-Audio-Corpus-German, whose narrators are named: Bernd, Hokuspokus, Friedrich, Eva, Karlsson, Sonja. Eva and Karlsson are the same donors as the Piper voices already marked `real_person` — the same corpus reached by another route |
+
+Seven stay `unknown`, now with the check recorded in `config.py` so it is not
+re-litigated: the four Orpheus entries serving Canopy Labs' base voices (100k+ h
+of "permissive" audio disclosed, nothing about `tara`/`leah`/…), `edge`
+(Microsoft's transparency note defines "voice talent" only for *custom* neural
+voice), `crispasr_melotts` and `crispasr_bananamind_tts`.
+
+A mixed model like SauerkrautTTS is classified by what it *can* speak as, not
+by its safest voice: `speaker_identity` is per model, and the fail-safe
+direction is the one that discloses.
