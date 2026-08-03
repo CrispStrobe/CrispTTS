@@ -598,7 +598,7 @@ which is recorded as a `[MARKING]` audit line next to `[CONSENT]`.
 | **Spoken disclaimer** | AI disclosure prepended to voice-cloned audio, in the model's language | Auto for cloning | Built-in |
 | **Consent gate** | Voice-cloning attestation + persistent audit logging | Required for cloning | Built-in |
 
-**Watermark backend priority**: AudioSeal (Python) > WavMark (MIT) > CrispASR GGUF > spread-spectrum (always-on fallback). Neural backends are lazy-loaded on first synthesis — `--list-models` and `--help` remain instant.
+**Watermark backend priority**: AudioSeal (Python) > WavMark (MIT) > CrispASR GGUF > spread-spectrum (always-on fallback). Neural backends are lazy-loaded on first synthesis, so `--list-models` and `--help` stay fast — measured 0.36 s of CPU, against 0.10 s for starting a bare Python interpreter. (That claim was aspirational until v0.9.7: the `__main__` block imported torch unconditionally, so those commands cost 4.3 s of CPU. A test now asserts `--help` imports no ML framework.)
 
 ### Choosing a neural backend
 

@@ -32,6 +32,10 @@ logger = logging.getLogger("CrispTTS.watermark")
 WATERMARK_KEY = 0x437269737041535F   # "CrispASR" in hex-ish
 WATERMARK_NBINS = 32
 _FFT_SIZE = 1024
+#: Frames per batched FFT. Bounds peak memory (a complex spectra block is
+#: _FRAME_BLOCK x 513 x 16 bytes, ~4 MB here) while keeping the per-frame
+#: Python loop out of the embed and detect hot paths.
+_FRAME_BLOCK = 512
 _HOP = _FFT_SIZE // 2
 
 
@@ -160,32 +164,66 @@ def spread_spectrum_embed(pcm: np.ndarray, alpha: float | None = None) -> np.nda
         return pcm.copy()
 
     window = np.hanning(_FFT_SIZE).astype(np.float32)
+    starts = np.arange(0, n - _FFT_SIZE + 1, _HOP)
+    if len(starts) == 0:
+        return pcm.copy()
+
+    # Batched FFT over blocks of frames, rather than one call per frame. The
+    # loop below still runs once per *bin* (32 iterations) but no longer once
+    # per frame, which is where the cost was: a 20 s file at 44.1 kHz is ~1700
+    # frames, so this trades ~3400 FFT calls for a couple of dozen.
+    #
+    # Blocked rather than all-at-once on purpose: the spectra array is complex
+    # and (frames x 513), so a whole audiobook in one batch would be hundreds
+    # of megabytes. _FRAME_BLOCK caps that at a few MB while keeping the win.
+    all_frames = np.lib.stride_tricks.sliding_window_view(pcm, _FFT_SIZE)[::_HOP]
+    w_sq = (window ** 2).astype(np.float64)
     out = np.zeros(n, dtype=np.float64)
     norm = np.zeros(n, dtype=np.float64)
+    offsets = np.arange(_FFT_SIZE)
 
-    for start in range(0, n - _FFT_SIZE + 1, _HOP):
-        frame = pcm[start:start + _FFT_SIZE] * window
-        spectrum = np.fft.rfft(frame)
+    for block_start in range(0, len(starts), _FRAME_BLOCK):
+        sl = slice(block_start, block_start + _FRAME_BLOCK)
+        block_starts = starts[sl]
+        spectra = np.fft.rfft(all_frames[sl] * window, axis=1)
 
-        # RMS magnitude for energy-proportional nudge
-        mags = np.abs(spectrum[1:_FFT_SIZE // 2])
-        rms_mag = np.sqrt(np.mean(mags ** 2)) if len(mags) > 0 else 0.0
-        nudge = alpha * rms_mag
+        # RMS magnitude per frame, for the energy-proportional nudge
+        mags = np.abs(spectra[:, 1:_FFT_SIZE // 2])
+        rms_mag = (np.sqrt(np.mean(mags ** 2, axis=1)) if mags.shape[1] > 0
+                   else np.zeros(len(block_starts)))
+        nudge = alpha * rms_mag  # (F,)
 
+        # Bins are applied in order and may repeat — `_generate_bin_pattern`
+        # draws with replacement, and a repeated index must be nudged twice,
+        # cumulatively. So this stays a loop over bins; only frames vectorise.
         for b_idx, b_sign in bins:
-            if b_idx >= len(spectrum):
+            if b_idx >= spectra.shape[1]:
                 continue
-            mag = abs(spectrum[b_idx])
-            new_mag = max(mag + nudge * b_sign, 0.0)
-            if mag > 1e-15:
-                scale = new_mag / mag
-                spectrum[b_idx] *= scale
-            elif b_sign > 0:
-                spectrum[b_idx] = complex(nudge, 0.0)
+            col = spectra[:, b_idx]
+            mag = np.abs(col)
+            new_mag = np.maximum(mag + nudge * b_sign, 0.0)
+            big = mag > 1e-15
+            # Where the bin has energy, rescale it; where it is empty and the
+            # sign is positive, plant the nudge as a real value. Mirrors the
+            # scalar form exactly.
+            col *= np.where(big, new_mag / np.where(big, mag, 1.0), 1.0)
+            if b_sign > 0:
+                col[~big] = nudge[~big]
+            spectra[:, b_idx] = col
 
-        reconstructed = np.fft.irfft(spectrum, n=_FFT_SIZE).astype(np.float32)
-        out[start:start + _FFT_SIZE] += reconstructed * window
-        norm[start:start + _FFT_SIZE] += window ** 2
+        reconstructed = np.fft.irfft(spectra, n=_FFT_SIZE, axis=1).astype(np.float32) * window
+
+        # Overlap-add. _HOP is _FFT_SIZE // 2, so frames of the same parity
+        # never overlap each other — within one parity the target indices are
+        # unique, so plain fancy-index accumulation is correct here (and,
+        # unlike np.add.at, fast).
+        for parity in (0, 1):
+            sel = np.arange(parity, len(block_starts), 2)
+            if len(sel) == 0:
+                continue
+            idx = (block_starts[sel][:, None] + offsets).reshape(-1)
+            out[idx] += reconstructed[sel].reshape(-1)
+            norm[idx] += np.tile(w_sq, len(sel))
 
     result = pcm.copy().astype(np.float64)
     mask = norm > 1e-8
@@ -236,18 +274,24 @@ def _spread_spectrum_detect_band(pcm: np.ndarray, lo_bin: int, hi_bin: int) -> f
     window = np.hanning(_FFT_SIZE).astype(np.float32)
     n_fft_half = _FFT_SIZE // 2
 
-    # Phase 1: Accumulate magnitude spectra across all frames
-    all_mags = []
-    for start in range(0, n - _FFT_SIZE + 1, _HOP):
-        frame = pcm[start:start + _FFT_SIZE] * window
-        spectrum = np.fft.rfft(frame)
-        all_mags.append(np.abs(spectrum[:n_fft_half]).astype(np.float64))
-
-    if not all_mags:
+    # Phase 1: magnitude spectra across all frames, in one batched FFT rather
+    # than one call per frame. Same framing as the embed side.
+    if n < _FFT_SIZE:
         return 0.0
+    all_frames = np.lib.stride_tricks.sliding_window_view(pcm, _FFT_SIZE)[::_HOP]
+    n_frames = all_frames.shape[0]
+    if n_frames == 0:
+        return 0.0
+    # Blocked for the same memory reason as the embed side; the running sum is
+    # exact, so the averaged spectrum is unchanged.
+    mag_sum = np.zeros(n_fft_half, dtype=np.float64)
+    for block_start in range(0, n_frames, _FRAME_BLOCK):
+        block = all_frames[block_start:block_start + _FRAME_BLOCK] * window
+        spectra = np.fft.rfft(block, axis=1)[:, :n_fft_half]
+        mag_sum += np.abs(spectra).astype(np.float64).sum(axis=0)
 
     # Phase 2: Average spectrum (cancels per-frame noise, preserves watermark)
-    avg_mags = np.mean(all_mags, axis=0)
+    avg_mags = mag_sum / n_frames
 
     # Phase 3: Correlate watermark pattern against averaged spectrum
     correlation = 0.0

@@ -1737,19 +1737,14 @@ def main_cli_entrypoint():
     run_synthesis(args)
 
 if __name__ == "__main__":
-    _torch_available_main = False
-    _is_mps_main = False # Keep these checks light and local if only for info
-    try:
-        import torch
-        _torch_available_main = True
-    except ImportError:
-        pass
-    if _torch_available_main:
-        try:
-            _is_mps_main = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-        except Exception:  # noqa: S110
-            pass # Catch any error during mps check
-    # The logger isn't configured yet if main_cli_entrypoint hasn't run.
-    # So, these debug logs won't show with default config.
-    # print(f"DEBUG (pre-log): Torch available: {_torch_available_main}, MPS available: {_is_mps_main}")
+    # Nothing heavyweight belongs here. This block used to `import torch` and
+    # probe `torch.backends.mps` to set two locals, whose only consumer was a
+    # debug print that had already been commented out — so every invocation,
+    # including `--help` and `--list-models`, paid a full torch import and
+    # threw the answer away. Measured with `-X importtime`: torch was 16.7 s of
+    # cumulative import time, and it was the entire startup cost.
+    #
+    # Note this cost only ever appeared when running `main.py` as a script, not
+    # via `import main`, which is why the import profile of the module looked
+    # clean. Backends that need torch import it themselves, lazily.
     main_cli_entrypoint()

@@ -182,6 +182,46 @@ class TestSpreadSpectrumRoundTrip(unittest.TestCase):
         self.assertLessEqual(confidence, 0.5)
 
 
+class TestFrameBlocking(unittest.TestCase):
+    """The batched FFT path must not depend on where the block boundary falls.
+
+    embed and detect process frames in blocks of _FRAME_BLOCK to bound memory.
+    Overlap-add spans block boundaries, so a bug there would show up only on
+    signals long enough to need more than one block — which the rest of the
+    suite, built on 1-2 s clips, would never reach.
+    """
+
+    def _speech_like(self, n, seed=3):
+        rng = np.random.default_rng(seed)
+        t = np.arange(n, dtype=np.float32) / 24000.0
+        tone = 0.3 * np.sin(2 * np.pi * 220 * t) + 0.15 * np.sin(2 * np.pi * 700 * t)
+        return (tone * (0.5 + 0.5 * np.sin(2 * np.pi * 3 * t))
+                + 0.01 * rng.standard_normal(n)).astype(np.float32)
+
+    def test_detects_across_block_boundaries(self):
+        from watermark import _FFT_SIZE, _FRAME_BLOCK, _HOP, spread_spectrum_detect, spread_spectrum_embed
+        # Comfortably more than one block of frames
+        n = _FFT_SIZE + _HOP * (_FRAME_BLOCK * 2 + 7)
+        pcm = self._speech_like(n)
+        conf = spread_spectrum_detect(spread_spectrum_embed(pcm))
+        self.assertGreater(conf, 0.65, f"multi-block embed not detected ({conf:.3f})")
+
+    def test_block_size_does_not_change_the_result(self):
+        """Same audio, different block size — same samples out."""
+        import watermark as wmod
+        n = wmod._FFT_SIZE + wmod._HOP * 300
+        pcm = self._speech_like(n)
+        original = wmod._FRAME_BLOCK
+        try:
+            wmod._FRAME_BLOCK = 4096  # one block
+            whole = wmod.spread_spectrum_embed(pcm)
+            wmod._FRAME_BLOCK = 7  # many small blocks, boundaries everywhere
+            chopped = wmod.spread_spectrum_embed(pcm)
+        finally:
+            wmod._FRAME_BLOCK = original
+        np.testing.assert_allclose(whole, chopped, rtol=1e-5, atol=1e-6)
+
+
 class TestDispatcher(unittest.TestCase):
     """Test the watermark_embed/detect dispatcher."""
 

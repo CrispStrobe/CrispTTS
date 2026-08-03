@@ -2077,3 +2077,102 @@ output nearer the floor. That is a compliance trade in both directions and a
 decision for the maintainer, not a change to slip into a performance phase.
 
 ### Status: COMPLETE — 447 pass with both backends, ruff clean
+
+## Phase 27: startup, and the FFT called once per frame (v0.9.7)
+
+Profiled the pipeline rather than guessing at it. Two findings, one an order of
+magnitude larger than anything else in the codebase.
+
+### 27.0 A note on the measurements
+
+The machine was under load average 85 from unrelated work for most of this
+phase, which makes wall clock meaningless — the same command varied 5x between
+runs, and one early reading claimed `--help` had got *slower* after an
+optimisation. Everything below is **child-process CPU time** (user+sys, best of
+five), which is largely insensitive to contention. Where wall clock appears it
+is labelled as such.
+
+### 27.1 `--help` imported torch (the defect)
+
+```python
+if __name__ == "__main__":
+    _torch_available_main = False
+    _is_mps_main = False
+    try:
+        import torch
+        _torch_available_main = True
+    ...
+    # print(f"DEBUG (pre-log): Torch available: ...")   <- the only reader
+    main_cli_entrypoint()
+```
+
+Both locals were written, never read: their sole consumer was a debug print
+that had already been commented out. So every invocation imported torch and
+probed MPS to fill two variables it then discarded.
+
+| | before | after |
+|---|---|---|
+| `main.py --help` | 4.28 s CPU | **0.36 s** |
+| `main.py --list-models` | 4.00 s CPU | **0.36 s** |
+| `import main` | 0.67 s CPU | 0.37 s |
+| bare `python -c pass` | 0.10 s CPU | — |
+
+`-X importtime` attributed 16.7 s of cumulative import time to torch.
+
+It hid well. `python -c "import main"` never showed it, because the cost only
+lands when main.py runs **as a script** — which is how every user runs it and
+how no profiler in this repo had ever exercised it. The regression test
+therefore invokes the script, not the module, and asserts `torch`,
+`transformers` and `TTS` are absent from `-X importtime` output.
+
+`readme.md` had claimed `--help` and `--list-models` "remain instant" for
+several releases. That is now true and measured; before it was aspiration.
+
+### 27.2 Optional parsers were imported eagerly
+
+`utils.py` imported bs4, markdown, pypdfium2 and ebooklib at module scope to
+set the `None` sentinels the four text-extraction functions check. Those back
+`.md` / `.html` / `.pdf` / `.epub` input and nothing else, so a run that
+synthesises `--input-text` paid for parsers it never touched.
+
+Now resolved on first use and cached. A module-level `__getattr__` (PEP 562)
+keeps `from utils import pdfium` working — the tests rely on exactly that — and
+keeps returning `None` when a package is absent. Worth 0.67 -> 0.49 s CPU on
+`import main`; real, and much smaller than `-X importtime`'s headline numbers
+implied, which is a caution about reading cumulative import cost as savings.
+
+### 27.3 One FFT per frame, in Python
+
+`spread_spectrum_embed` and `_spread_spectrum_detect_band` looped over frames
+in Python, calling `np.fft.rfft`/`irfft` once each: ~3,400 FFT calls for a 20 s
+file at 44.1 kHz. Both now batch frames and call the FFT once per block.
+
+Two constraints made this less mechanical than it looks:
+
+- **Bins repeat.** `_generate_bin_pattern` draws 32 indices *with replacement*,
+  and the scalar code nudges a repeated index twice, cumulatively. Vectorising
+  across bins with fancy indexing would silently apply it once. The bin loop
+  therefore stays; only the frame axis is vectorised. 32 iterations, not
+  32 x frames.
+- **Memory.** A whole audiobook in one batch would allocate hundreds of MB of
+  complex spectra. Frames are processed in blocks of `_FRAME_BLOCK` (512),
+  capping a block at ~4 MB. Overlap-add spans block boundaries, so two tests
+  cover it: one embeds across multiple blocks and detects, one asserts a
+  block size of 4096 and of 7 produce the same samples.
+
+Overlap-add uses the parity trick: `_HOP` is `_FFT_SIZE // 2`, so same-parity
+frames never overlap each other, which makes their target indices unique and
+plain fancy-index accumulation correct — and far faster than `np.add.at`.
+
+Verified equivalent to the previous implementation: max absolute sample
+difference 1.4e-06 (float32 epsilon territory) and *identical* detection
+confidence, 0.8125 at 5 s and 0.8438 at 20 s before and after. Embed CPU is now
+42 ms / 118 ms / 596 ms for 5 s / 20 s / 100 s — linear, as it should be.
+
+### 27.4 Not changed
+
+The C2PA sign step (19 ms) and soundfile I/O (14 ms) are already small
+fractions of `mark_audio_file`, which runs in 0.29-0.83 s end-to-end depending
+on container. Nothing there justifies the risk of touching a signing path.
+
+### Status: COMPLETE — 449 pass, 7 skipped, ruff clean

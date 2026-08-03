@@ -34,27 +34,100 @@ except ImportError:
 
 
 # --- Conditional Imports for Optional Features ---
-try:
-    from bs4 import BeautifulSoup
-except ImportError:
-    BeautifulSoup = None
-try:
-    import markdown
-    try:
-        from markdown.extensions.wikilinks import WikiLinkExtension
-    except ImportError:
-        WikiLinkExtension = None
-except ImportError:
-    markdown = None
-    WikiLinkExtension = None
-try:
-    import pypdfium2 as pdfium
-except ImportError:
-    pdfium = None
-try:
-    from ebooklib import epub
-except ImportError:
-    epub = None
+#
+# Deferred, not eager. These four back the `.md` / `.html` / `.pdf` / `.epub`
+# input paths and nothing else, but importing them at module scope charged
+# every invocation for them — including `--help` and `--list-models`, which
+# read no files at all. Measured on `import main`: pypdfium2 1.49 s and bs4
+# 1.20 s out of 6.14 s total, so 44% of startup was spent loading parsers for
+# an input format the run may never touch.
+#
+# Resolution happens on first use and is cached in the module globals below, so
+# the second call is a plain dict lookup. The module-level ``__getattr__``
+# (PEP 562) at the bottom of this block means ``from utils import pdfium``
+# keeps working and keeps returning None when the package is absent — the
+# sentinel the extraction functions and the tests both check against.
+
+_OPTIONAL_SENTINEL = object()
+_BeautifulSoup = _OPTIONAL_SENTINEL
+_markdown = _OPTIONAL_SENTINEL
+_WikiLinkExtension = _OPTIONAL_SENTINEL
+_pdfium = _OPTIONAL_SENTINEL
+_epub = _OPTIONAL_SENTINEL
+
+
+def _load_bs4():
+    global _BeautifulSoup
+    if _BeautifulSoup is _OPTIONAL_SENTINEL:
+        try:
+            from bs4 import BeautifulSoup as _BS
+            _BeautifulSoup = _BS
+        except ImportError:
+            _BeautifulSoup = None
+    return _BeautifulSoup
+
+
+def _load_markdown():
+    """Return ``(markdown_module, WikiLinkExtension_or_None)``."""
+    global _markdown, _WikiLinkExtension
+    if _markdown is _OPTIONAL_SENTINEL:
+        try:
+            import markdown as _md
+            _markdown = _md
+            try:
+                from markdown.extensions.wikilinks import WikiLinkExtension as _WLE
+                _WikiLinkExtension = _WLE
+            except ImportError:
+                _WikiLinkExtension = None
+        except ImportError:
+            _markdown = None
+            _WikiLinkExtension = None
+    return _markdown, _WikiLinkExtension
+
+
+def _load_pdfium():
+    global _pdfium
+    if _pdfium is _OPTIONAL_SENTINEL:
+        try:
+            import pypdfium2 as _pd
+            _pdfium = _pd
+        except ImportError:
+            _pdfium = None
+    return _pdfium
+
+
+def _load_epub():
+    global _epub
+    if _epub is _OPTIONAL_SENTINEL:
+        try:
+            from ebooklib import epub as _ep
+            _epub = _ep
+        except ImportError:
+            _epub = None
+    return _epub
+
+
+#: Attribute name -> loader, for the PEP 562 fallback below.
+_LAZY_OPTIONAL = {
+    "BeautifulSoup": _load_bs4,
+    "markdown": lambda: _load_markdown()[0],
+    "WikiLinkExtension": lambda: _load_markdown()[1],
+    "pdfium": _load_pdfium,
+    "epub": _load_epub,
+}
+
+
+def __getattr__(name):
+    """Resolve the optional third-party names on first attribute access.
+
+    Keeps ``from utils import pdfium`` working for callers and tests that
+    check the old module-level sentinels, without importing anything until
+    something actually asks.
+    """
+    loader = _LAZY_OPTIONAL.get(name)
+    if loader is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return loader()
 
 # Audio libraries — soundfile is safe to import at module level (no audio
 # hardware init).  pydub and sounddevice are deferred to first use because
@@ -195,6 +268,8 @@ def extract_text_from_txt(filepath: Path) -> str | None:
         return None
 
 def extract_text_from_md(filepath: Path) -> str | None:
+    markdown, WikiLinkExtension = _load_markdown()
+    BeautifulSoup = _load_bs4()
     if not markdown:
         logger.error("Markdown library not available for .md extraction.")
         return None
@@ -212,6 +287,7 @@ def extract_text_from_md(filepath: Path) -> str | None:
         return None
 
 def extract_text_from_html(filepath: Path) -> str | None:
+    BeautifulSoup = _load_bs4()
     if not BeautifulSoup:
         logger.error("BeautifulSoup4 library not available for .html extraction.")
         return None
@@ -226,6 +302,7 @@ def extract_text_from_html(filepath: Path) -> str | None:
         return None
 
 def extract_text_from_pdf(filepath: Path) -> str | None:
+    pdfium = _load_pdfium()
     if not pdfium:
         logger.error("pypdfium2 library not available for .pdf extraction.")
         return None
@@ -245,6 +322,8 @@ def extract_text_from_pdf(filepath: Path) -> str | None:
         return None
 
 def extract_text_from_epub(filepath: Path) -> str | None:
+    epub = _load_epub()
+    BeautifulSoup = _load_bs4()
     if not epub:
         logger.error("EbookLib library not available for .epub extraction.")
         return None

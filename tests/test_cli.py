@@ -174,6 +174,39 @@ class TestMainEntrypoint(unittest.TestCase):
         from main import _load_handlers_if_needed
         self.assertTrue(callable(_load_handlers_if_needed))
 
+    def test_help_does_not_import_torch(self):
+        """`--help` must not drag in a machine-learning framework.
+
+        The `if __name__ == "__main__"` block used to `import torch` and probe
+        `torch.backends.mps` to set two locals whose only reader was an
+        already-commented-out debug print. Every invocation paid for it —
+        measured 4.28 s of CPU for `--help`, against 0.36 s once removed, with
+        torch accounting for 16.7 s of cumulative import time.
+
+        It was invisible to `import main`, because the cost only landed when
+        main.py ran as a script. So this test runs it as a script, which is how
+        users invoke it.
+        """
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        proc = subprocess.run(
+            [sys.executable, "-X", "importtime", str(root / "main.py"), "--help"],
+            capture_output=True, text=True, cwd=str(root), timeout=600,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        self.assertIn("usage:", proc.stdout)
+        imported = {
+            line.rsplit("|", 1)[-1].strip()
+            for line in proc.stderr.splitlines() if line.startswith("import time:")
+        }
+        for heavy in ("torch", "transformers", "TTS"):
+            self.assertNotIn(
+                heavy, imported,
+                f"`--help` imported {heavy}; startup must stay free of ML frameworks")
+
 
 @requires_soundfile
 class TestRunSynthesisMarking(unittest.TestCase):
