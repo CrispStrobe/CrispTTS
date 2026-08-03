@@ -2675,3 +2675,64 @@ for 20 s. The FFT is shared across all patterns and only the correlation is
 repeated, so the decoys are close to free. No action.
 
 ### Status: COMPLETE — 471 pass, 7 skipped, ruff clean
+
+## Phase 34: the audit chain made writing the log quadratic (v0.9.14)
+
+Phase 33 fixed the chain's concurrency. The CI run for that commit took **32
+minutes** against 1–7 for its recent neighbours, and passing is not the same as
+being right. Chasing it found a second defect in the same code.
+
+### 34.1 Two full scans per append
+
+Chaining and retention pruning each walked the whole log on every write:
+
+- `_chain_head(lines)` hashed every line to find the predecessor, and
+  `_write_anchor()` hashed them all again for the anchor — 2n hashes.
+- `prune_audit_log()` ran on every append and parsed a timestamp on every
+  line — n `strptime` calls, which are not cheap.
+
+So appending n entries cost O(n²). Measured: 19 ms/append at 25 entries,
+55 ms at 200, still climbing; the real log is at 848. It also slowed the test
+suite from 3½ minutes to nearly 12.
+
+### 34.2 Both fixed by not rescanning
+
+**The head comes from the anchor.** It is already stored there, so the append
+path reads one short file instead of hashing the log, and computes the new head
+incrementally from the line it just wrote. The anchor is trusted only when its
+entry count still matches the file; otherwise the full recompute runs, which is
+also what repairs a log an older version appended to.
+
+**Pruning stops at the first live entry.** The log is append-only and therefore
+chronological, so expired entries are a prefix. Scanning stops at the first
+line inside the retention window, which makes the ordinary case — nothing to
+prune — a single timestamp parse.
+
+Result: **~2 ms/append, flat** to 800 entries, from 19 ms rising to 55. The
+suite went back to 3:25.
+
+### 34.3 A wrong fix, caught by a test that meant what it said
+
+The first attempt was to prune every hundredth append instead. It made the
+numbers look right and broke `test_append_prunes_expired_entries`, which
+asserts the log bounds itself on every append.
+
+The test was correct and the change was wrong. Retention is a duty in *days*:
+on an install used a few times a month, "every 100 appends" leaves expired
+personal data for years, which inverts Art. 5(1)(e). The early-exit scan gets
+the same speed without trading the guarantee away.
+
+A counting test now pins the property — appending to a 40-entry log must parse
+fewer than 10 timestamps. Counting rather than timing, so it means the same
+thing on a loaded runner.
+
+### 34.4 What this says about the last three phases
+
+Phase 30 added the chain, 33 fixed its concurrency, 34 fixed its performance.
+Each defect was introduced by the fix before it, and each was found by
+following an anomaly rather than by the tests: a 758-issue false alarm on the
+real log, a threading path nobody had exercised, a CI run that was green but
+five times too slow. Green is not the same as correct, and the interesting
+signal was in the number nobody was asserting on.
+
+### Status: COMPLETE — 472 pass, 7 skipped, ruff clean

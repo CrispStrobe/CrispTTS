@@ -1368,9 +1368,35 @@ def prune_audit_log(retention_days: int | None = None) -> int:
             logger.debug("Could not read the consent audit log for pruning: %s", e)
             return 0
 
-        kept = [ln for ln in lines
-                if (ts := _parse_audit_timestamp(ln)) is None or ts >= cutoff]
-        removed = len(lines) - len(kept)
+        # The log is append-only and therefore chronological, so the expired
+        # entries are a prefix: scan from the front and stop at the first line
+        # inside the window, because everything after it is newer.
+        #
+        # This matters because pruning runs on every append. Parsing a
+        # timestamp on every line made that O(n) per write and the log O(n^2)
+        # overall — measured 19 ms/append at 25 entries, 55 ms at 200, on a log
+        # that reaches 848 in ordinary use. Stopping early makes the normal
+        # case (nothing to prune) a single strptime.
+        #
+        # Doing it by append count instead was tried and rejected: on an
+        # install used a few times a month, "prune every 100 appends" leaves
+        # expired personal data for years, which is the opposite of what
+        # Art. 5(1)(e) asks for.
+        kept: list[str] = []
+        index, total = 0, len(lines)
+        while index < total:
+            ts = _parse_audit_timestamp(lines[index])
+            if ts is None:
+                # Unreadable timestamp: kept, per the rule above, and it does
+                # not tell us the live entries have been reached.
+                kept.append(lines[index])
+                index += 1
+                continue
+            if ts >= cutoff:
+                break  # this line and everything after it is inside the window
+            index += 1  # expired: dropped
+        kept.extend(lines[index:])
+        removed = total - len(kept)
         if not removed:
             return 0
         try:
@@ -1507,17 +1533,27 @@ def _chain_head(lines: list[str]) -> str:
     return head
 
 
-def _write_anchor(lines: list[str]) -> None:
-    """Mirror entry count and head hash beside the log, atomically."""
+def _write_anchor_direct(entries: int, head: str) -> None:
+    """Mirror an already-computed count and head beside the log, atomically."""
     try:
-        entries = sum(1 for ln in lines if ln.strip())
         tmp = anchor_path() + ".tmp"
         with open(tmp, "w") as fh:
-            fh.write(f"entries={entries} head={_chain_head(lines)}\n")
+            fh.write(f"entries={entries} head={head}\n")
         os.chmod(tmp, _CONSENT_LOG_MODE)
         os.replace(tmp, anchor_path())
     except OSError as e:
         logger.debug("Could not update the consent audit anchor: %s", e)
+
+
+def _write_anchor(lines: list[str]) -> None:
+    """Mirror entry count and head hash beside the log, recomputing both.
+
+    Used where the log has just been rewritten wholesale (prune, erase) and
+    there is no incremental head to carry forward. The append path uses
+    :func:`_write_anchor_direct` instead, because recomputing here is what made
+    appending quadratic.
+    """
+    _write_anchor_direct(sum(1 for ln in lines if ln.strip()), _chain_head(lines))
 
 
 def _read_log_lines() -> list[str]:
@@ -1526,6 +1562,18 @@ def _read_log_lines() -> list[str]:
             return fh.readlines()
     except OSError:
         return []
+
+
+def _read_anchor() -> tuple[int, str] | None:
+    """Return ``(entries, head)`` from the anchor, or None if unusable."""
+    try:
+        with open(anchor_path()) as fh:
+            fields = dict(part.split("=", 1) for part in fh.read().split() if "=" in part)
+        return int(fields["entries"]), fields["head"]
+    except (OSError, KeyError, ValueError):
+        return None
+
+
 
 
 def _record_chain_rebuild(reason: str, removed: int) -> None:
@@ -1618,23 +1666,35 @@ def verify_audit_chain() -> dict:
 
 def _append_audit_line(msg: str) -> None:
     """Append a chained line to the audit log, owner-only, pruning expired entries."""
+    entries = 0
     try:
         with _audit_lock():
             os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
             existed = os.path.exists(_CONSENT_LOG_PATH)
             lines = _read_log_lines() if existed else []
-            chained = msg.rstrip("\n") + f" prev={_chain_head(lines)}\n"
+            # Take the previous head from the anchor rather than rehashing the
+            # whole log. Recomputing it per append was O(n) in hashes, twice
+            # over (once here, once for the anchor), which made writing the log
+            # quadratic. The anchor is only trusted when its entry count still
+            # matches the file; otherwise fall back to the full recompute,
+            # which is also what repairs a log appended to by an older version.
+            entries = sum(1 for ln in lines if ln.strip())
+            anchor = _read_anchor()
+            head = anchor[1] if anchor and anchor[0] == entries else _chain_head(lines)
+            chained = msg.rstrip("\n") + f" prev={head}\n"
             with open(_CONSENT_LOG_PATH, "a") as f_audit:
                 f_audit.write(chained)
             if not existed:
                 os.chmod(_CONSENT_LOG_PATH, _CONSENT_LOG_MODE)
-            lines.append(chained)
-            _write_anchor(lines)
+            entries += 1
+            _write_anchor_direct(entries, _line_hash(head, chained))
     except OSError as e:
         logger.debug("Could not write consent audit log: %s", e)
         return
     # Outside the lock: prune_audit_log() takes it itself, and flock is per-fd
-    # rather than reentrant, so nesting them would deadlock.
+    # rather than reentrant, so nesting them would deadlock. Still on every
+    # append — it stops at the first live entry, so the usual case costs one
+    # timestamp parse.
     prune_audit_log()
 
 

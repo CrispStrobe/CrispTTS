@@ -429,6 +429,35 @@ class TestConsentLogChain(unittest.TestCase):
         self.assertEqual(erase_audit_log(subject="speaker2"), 1)
         self.assertTrue(verify_audit_chain()["ok"])
 
+    def test_appending_does_not_rescan_the_whole_log(self):
+        """Writing the log must not be quadratic in its length.
+
+        Chaining and retention pruning both originally walked every line on
+        every append: measured 19 ms/append at 25 entries rising to 55 ms at
+        200, on a log that reaches 848 in ordinary use, and it slowed the test
+        suite from 3 to 12 minutes.
+
+        Asserted as a counting property rather than a wall-clock threshold, so
+        it means the same thing on a loaded CI runner. Pruning stops at the
+        first entry inside the retention window, so a log with nothing to prune
+        costs a small constant number of timestamp parses regardless of size.
+        """
+        import watermark
+        for i in range(40):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+
+        calls = []
+        original = watermark._parse_audit_timestamp
+        watermark._parse_audit_timestamp = lambda line: (calls.append(1), original(line))[1]
+        try:
+            self._log("one_more", "/refs/one_more.wav")
+        finally:
+            watermark._parse_audit_timestamp = original
+
+        self.assertLess(len(calls), 10,
+                        f"appending parsed {len(calls)} timestamps over a 40-entry log; "
+                        "the prune scan is not stopping at the first live entry")
+
     def test_absent_log_is_not_an_error(self):
         from watermark import verify_audit_chain
         report = verify_audit_chain()
