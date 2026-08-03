@@ -18,6 +18,7 @@
 # The dispatcher tries AudioSeal (Python or crispasr) first, then falls
 # back to the built-in spread-spectrum.
 
+import contextlib
 import logging
 import os
 import struct
@@ -1356,29 +1357,33 @@ def prune_audit_log(retention_days: int | None = None) -> int:
         return 0
     from datetime import datetime, timedelta, timezone
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    try:
-        with open(_CONSENT_LOG_PATH) as f_audit:
-            lines = f_audit.readlines()
-    except OSError as e:
-        logger.debug("Could not read the consent audit log for pruning: %s", e)
-        return 0
+    # One lock for read, rewrite and re-chain: a concurrent append landing
+    # between them would be pruned away or would chain onto a head that no
+    # longer exists.
+    with _audit_lock():
+        try:
+            with open(_CONSENT_LOG_PATH) as f_audit:
+                lines = f_audit.readlines()
+        except OSError as e:
+            logger.debug("Could not read the consent audit log for pruning: %s", e)
+            return 0
 
-    kept = [ln for ln in lines
-            if (ts := _parse_audit_timestamp(ln)) is None or ts >= cutoff]
-    removed = len(lines) - len(kept)
-    if not removed:
-        return 0
-    try:
-        tmp = f"{_CONSENT_LOG_PATH}.tmp"
-        with open(tmp, "w") as f_new:
-            f_new.writelines(kept)
-        os.chmod(tmp, _CONSENT_LOG_MODE)
-        os.replace(tmp, _CONSENT_LOG_PATH)
-        logger.info("Pruned %d consent audit line(s) older than %d days.", removed, days)
-    except OSError as e:
-        logger.debug("Could not prune the consent audit log: %s", e)
-        return 0
-    _record_chain_rebuild(f"retention prune >{days}d", removed)
+        kept = [ln for ln in lines
+                if (ts := _parse_audit_timestamp(ln)) is None or ts >= cutoff]
+        removed = len(lines) - len(kept)
+        if not removed:
+            return 0
+        try:
+            tmp = f"{_CONSENT_LOG_PATH}.tmp"
+            with open(tmp, "w") as f_new:
+                f_new.writelines(kept)
+            os.chmod(tmp, _CONSENT_LOG_MODE)
+            os.replace(tmp, _CONSENT_LOG_PATH)
+            logger.info("Pruned %d consent audit line(s) older than %d days.", removed, days)
+        except OSError as e:
+            logger.debug("Could not prune the consent audit log: %s", e)
+            return 0
+        _record_chain_rebuild(f"retention prune >{days}d", removed)
     return removed
 
 
@@ -1396,6 +1401,12 @@ def erase_audit_log(subject: str | None = None) -> int:
     """
     if not os.path.isfile(_CONSENT_LOG_PATH):
         return 0
+    with _audit_lock():
+        return _erase_audit_log_locked(subject)
+
+
+def _erase_audit_log_locked(subject: str | None) -> int:
+    """Body of :func:`erase_audit_log`; the caller holds the audit lock."""
     if subject is None:
         try:
             with open(_CONSENT_LOG_PATH) as f_audit:
@@ -1437,6 +1448,48 @@ def erase_audit_log(subject: str | None = None) -> int:
 def anchor_path() -> str:
     """Path of the sidecar that mirrors the chain head outside the chain."""
     return _CONSENT_LOG_PATH + _CONSENT_ANCHOR_SUFFIX
+
+
+@contextlib.contextmanager
+def _audit_lock():
+    """Serialise the log's read-modify-write across threads and processes.
+
+    Chaining turned appending from a bare ``open(..., "a")`` — which the OS
+    already makes atomic — into read-the-tail, hash it, write. Two of those
+    interleaved produce two entries claiming the same predecessor, and the
+    chain reads as tampered afterwards. CrispTTS has two concurrent paths that
+    reach here: the threading API server (``daemon_threads = True``) and batch
+    mode with ``--jobs > 1``. Measured before this lock existed: 24 attestations
+    over 8 threads left all 24 entries present and the chain broken in four
+    places — a false tamper alarm produced by ordinary use, which is worse than
+    having no chain at all.
+
+    A separate lock file, so the lock can be taken before the log exists.
+    Failure to lock is not failure to record: if the platform has no ``fcntl``
+    or the lock file cannot be opened, the attestation is still written. A
+    missing audit line is a worse outcome than a racy one.
+    """
+    lock_file = _CONSENT_LOG_PATH + ".lock"
+    fd = None
+    try:
+        os.makedirs(os.path.dirname(lock_file), exist_ok=True)
+        fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, _CONSENT_LOG_MODE)
+    except OSError as e:
+        logger.debug("Could not open the consent audit lock (%s); proceeding unserialised.", e)
+        yield
+        return
+    try:
+        try:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except (ImportError, OSError) as e:  # non-POSIX, or a filesystem without locks
+            logger.debug("Consent audit lock unavailable (%s); proceeding unserialised.", e)
+        yield
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def _line_hash(prev: str, line: str) -> str:
@@ -1566,19 +1619,22 @@ def verify_audit_chain() -> dict:
 def _append_audit_line(msg: str) -> None:
     """Append a chained line to the audit log, owner-only, pruning expired entries."""
     try:
-        os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
-        existed = os.path.exists(_CONSENT_LOG_PATH)
-        lines = _read_log_lines() if existed else []
-        chained = msg.rstrip("\n") + f" prev={_chain_head(lines)}\n"
-        with open(_CONSENT_LOG_PATH, "a") as f_audit:
-            f_audit.write(chained)
-        if not existed:
-            os.chmod(_CONSENT_LOG_PATH, _CONSENT_LOG_MODE)
-        lines.append(chained)
-        _write_anchor(lines)
+        with _audit_lock():
+            os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
+            existed = os.path.exists(_CONSENT_LOG_PATH)
+            lines = _read_log_lines() if existed else []
+            chained = msg.rstrip("\n") + f" prev={_chain_head(lines)}\n"
+            with open(_CONSENT_LOG_PATH, "a") as f_audit:
+                f_audit.write(chained)
+            if not existed:
+                os.chmod(_CONSENT_LOG_PATH, _CONSENT_LOG_MODE)
+            lines.append(chained)
+            _write_anchor(lines)
     except OSError as e:
         logger.debug("Could not write consent audit log: %s", e)
         return
+    # Outside the lock: prune_audit_log() takes it itself, and flock is per-fd
+    # rather than reentrant, so nesting them would deadlock.
     prune_audit_log()
 
 

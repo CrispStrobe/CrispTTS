@@ -2603,3 +2603,75 @@ marked tone still verifies — rejecting the unmarked tone must not make the
 marked one invisible.
 
 ### Status: COMPLETE — 468 pass, 7 skipped, ruff clean
+
+## Phase 33: reviewing the week's own changes (v0.9.13)
+
+No new feature. A pass over what this session shipped, looking for what it
+broke — the compliance-critical paths moved a lot in a short time, and two of
+the checks had not been made.
+
+### 33.1 The audit chain was not concurrency-safe (a defect introduced in 30)
+
+Chaining turned appending from a bare `open(..., "a")` — which the OS makes
+atomic — into read-the-tail, hash it, write. Two of those interleaved produce
+two entries claiming the same predecessor, and every later verification reports
+tampering.
+
+CrispTTS has two concurrent paths that reach the consent log: the threading API
+server (`server.py`, `daemon_threads = True`) and batch mode with `--jobs > 1`.
+Measured before the fix, 24 attestations over 8 threads:
+
+```
+entries: 24 of 24 expected
+ok     : False
+  - line 2: chain broken — a preceding entry was changed or removed
+  - line 3: chain broken ...
+```
+
+Every record present, chain broken in four places. That is worse than shipping
+no chain: ordinary concurrent use manufactures a tamper alarm, and an alarm
+that fires on normal operation trains its reader to ignore it.
+
+Fixed with an exclusive `flock` over the whole read-modify-write, on a separate
+lock file so it can be taken before the log exists. Two design points:
+
+- **Failing to lock is not failing to record.** No `fcntl`, or a filesystem
+  without locks, logs at debug and proceeds unserialised. A missing audit line
+  is a worse outcome than a racy one.
+- **`prune_audit_log()` takes the lock itself and therefore runs outside the
+  append's.** `flock` is per-descriptor rather than reentrant, so nesting them
+  would deadlock. `erase_audit_log()` splits into a locking wrapper and a
+  `_locked` body for the same reason.
+
+### 33.2 Short outputs, checked rather than assumed
+
+`_DETECT_MIN_FRAMES` (Phase 28) makes the watermark unmeasurable below about
+0.5 s, because that is where a real mark stops being distinguishable from
+unmarked audio. Marking fails closed. On its own that would delete the output
+of `--input-text "Ja."`, which is an ordinary request.
+
+Measured across three sample rates and four durations. In the **shipping**
+configuration it does not: C2PA is a core dependency, and the manifest carries
+sufficiency for WAV/MP3/FLAC/M4A when the clip is too short for the watermark
+to verify — 0.3 s and 0.4 s files mark and ship, with a logged warning that the
+watermark itself did not verify.
+
+The refusal appears only with C2PA *also* unavailable, which is not a default
+install. A test now pins the combination rather than either half, because the
+combination is what users get.
+
+Worth recording how nearly this was mismeasured: the first run reported
+`conf=1.000` for every duration, which looked like proof the concern was
+imaginary. AudioSeal was installed from Phase 25's benchmarking and was
+silently handling the short clips. Forcing the built-in backend showed the real
+behaviour. A passing measurement taken in the wrong configuration is not
+evidence.
+
+### 33.3 Detector cost, since Phase 32 added 15 decoy patterns
+
+16 patterns across 2 bands, and the fear was that a detector run after every
+embed had become expensive. Measured at 44.1 kHz: 55 ms for 5 s of audio, 87 ms
+for 20 s. The FFT is shared across all patterns and only the correlation is
+repeated, so the decoys are close to free. No action.
+
+### Status: COMPLETE — 471 pass, 7 skipped, ruff clean

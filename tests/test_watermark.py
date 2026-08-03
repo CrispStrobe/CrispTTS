@@ -398,6 +398,37 @@ class TestConsentLogChain(unittest.TestCase):
         self._write(lines)
         self.assertFalse(verify_audit_chain()["ok"])
 
+    def test_concurrent_appends_keep_the_chain_intact(self):
+        """Two concurrent paths reach this log: the threading server and --jobs.
+
+        Chaining turned a bare append — which the OS makes atomic — into
+        read-the-tail, hash, write. Interleave two of those and you get entries
+        claiming the same predecessor, so ordinary concurrent use manufactures
+        a tamper alarm. Measured before the lock: 24 attestations over 8 threads
+        left all 24 entries present and the chain broken in four places.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        from watermark import verify_audit_chain
+
+        def one(i):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(one, range(24)))
+
+        report = verify_audit_chain()
+        self.assertEqual(report["entries"], 24)
+        self.assertTrue(report["ok"], report["issues"][:4])
+
+    def test_erase_still_works_while_locking(self):
+        """The lock must not deadlock the prune/erase path that runs inside it."""
+        from watermark import erase_audit_log, verify_audit_chain
+        for i in range(4):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+        self.assertEqual(erase_audit_log(subject="speaker2"), 1)
+        self.assertTrue(verify_audit_chain()["ok"])
+
     def test_absent_log_is_not_an_error(self):
         from watermark import verify_audit_chain
         report = verify_audit_chain()
@@ -1625,6 +1656,34 @@ class TestMarkingSufficiencyGate(unittest.TestCase):
         path = self._write("silence.wav", np.zeros(22050 * 2, dtype=np.float32))
         with self.assertRaises(MarkingError):
             mark_audio_file(path)
+
+    @requires_c2pa
+    def test_short_output_still_ships_in_the_default_configuration(self):
+        """A sub-second synthesis must not be deleted by the v0.9.8 detector.
+
+        `_DETECT_MIN_FRAMES` makes the watermark unmeasurable below ~0.5 s,
+        because that is where a real mark stops being distinguishable from
+        unmarked audio. Marking fails closed, so on its own that would discard
+        the output of `--input-text "Ja."` — a short phrase is an ordinary
+        request, not an edge case.
+
+        It does not, because C2PA is a core dependency and the manifest carries
+        sufficiency for WAV/MP3/FLAC/M4A when the watermark is too short to
+        verify. This asserts that combination rather than either half, since it
+        is the combination users actually get.
+        """
+        from watermark import mark_audio_file
+        rng = np.random.default_rng(4)
+        for sr in (16000, 24000):
+            n = int(sr * 0.4)
+            t = np.arange(n, dtype=np.float32) / sr
+            pcm = (0.3 * np.sin(2 * np.pi * 190 * t) * (0.5 + 0.5 * np.sin(2 * np.pi * 4 * t))
+                   + 0.01 * rng.standard_normal(n)).astype(np.float32)
+            path = self._write(f"short_{sr}.wav", pcm, sr=sr)
+            result = mark_audio_file(path, handler_key="t", model_id="t")
+            self.assertTrue(result.marked, f"0.4 s at {sr} Hz was discarded")
+            self.assertTrue(any(layer.startswith("c2pa") for layer in result.layers),
+                            f"expected C2PA to carry it, got {result.layers}")
 
     def test_normal_audio_accepted(self):
         from watermark import mark_audio_file
