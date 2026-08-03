@@ -962,10 +962,11 @@ proposals since adoption.
 
 - Marks every synthetic audio output in a machine-readable format
 - Signs WAV/MP3/FLAC/M4A output with a C2PA manifest by default, so the
-  provenance claim is readable by any C2PA verifier and not only by Crisp
-  tools. Read *Certificate trust* below before relying on this for compliance:
-  out of the box the manifest is **self-signed**, which is interoperable in
-  format but not in trust
+  `trainedAlgorithmicMedia` claim is readable by any C2PA verifier and not only
+  by Crisp tools. Measured, such a file reads back `validation_state: Valid`
+  with the AI assertion intact; the manifest is self-signed, so a verifier
+  additionally reports `signingCredential.untrusted` — see *Certificate trust*,
+  which is about attribution rather than about marking
 - Fails closed rather than emitting unmarked audio
 - Reports honestly what was applied (`MarkResult`, server `X-CrispTTS-*`
   headers), and never presents a bundled-certificate signature as trusted
@@ -1028,16 +1029,44 @@ known-certificate trust list.
 
 So the layer is interoperable in *format* and not in *trust*. CrispTTS does not
 paper over this — it warns once per run and `MarkResult.c2pa_signer`
-distinguishes `self-signed` from `ca-issued` — but no amount of code closes it.
-Closing it requires a certificate issued to a real identity:
+distinguishes `self-signed` from `ca-issued`.
+
+**What that does and does not cost you.** Earlier revisions of this file called
+the self-signed certificate the largest remaining Art. 50(2) gap and told you
+to go and buy one. That was wrong, and measuring it says so. Reading a
+default-signed CrispTTS file back through `c2pa-python`:
+
+```
+validation_state : Valid
+success          : claimSignature.validated, claimSignature.insideValidity,
+                   assertion.hashedURI.match (x3), assertion.dataHash.match
+failure          : signingCredential.untrusted
+action           : c2pa.created
+                   digitalSourceType: ...#trainedAlgorithmicMedia
+```
+
+The manifest validates, the signature verifies, the hashes match, and **the
+AI-generation assertion is read out in full** by any C2PA tool. The single
+failure is about the *signer*, not the marking.
+
+Art. 50(2) requires outputs to be "marked in a machine-readable format and
+detectable as artificially generated". It does not require the mark to prove
+*who* generated it. That is attribution, and it is a different property — a
+valuable one, but not the one the article asks for. On the evidence above, the
+default configuration satisfies the marking duty.
+
+Supply your own credential when you want **attribution** — a claim others can
+tie back to you, which matters for a publisher, a newsroom, or anyone whose
+provenance chain has to survive being contested:
 
 ```bash
 crisptts --c2pa-cert /path/to/chain.pem --c2pa-key /path/to/key.pem ...
 # or: C2PA_CERT_PATH=... C2PA_KEY_PATH=... crisptts ...
 ```
 
-If you are placing synthetic audio on the EU market and relying on the manifest
-rather than the watermark as your Art. 50(2) marking, get a real certificate.
+CrispASR ships a self-signed certificate too (`assets/c2pa/`, CN literally
+"CrispASR (AI-generated, self-signed)"), so this is the ecosystem's shared
+position rather than a CrispTTS shortcut.
 
 #### Code of Practice on Transparency of AI-generated Content
 

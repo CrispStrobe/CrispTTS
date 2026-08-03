@@ -232,6 +232,70 @@ class TestSpreadSpectrumRoundTrip(unittest.TestCase):
         self.assertLessEqual(confidence, 0.5)
 
 
+@requires_soundfile
+@requires_c2pa
+class TestSelfSignedManifestStillMarks(unittest.TestCase):
+    """A self-signed manifest is an *attribution* limit, not a marking one.
+
+    Earlier docs called the bundled certificate the largest remaining
+    Art. 50(2) gap. Art. 50(2) asks for outputs "marked in a machine-readable
+    format and detectable as artificially generated" — it does not ask the mark
+    to prove who generated it. This pins the distinction to measured behaviour
+    so the claim cannot drift back into prose.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _signed_wav(self):
+        import soundfile as sf
+
+        from watermark import c2pa_sign_file_ex
+        path = os.path.join(self.tmp, "a.wav")
+        sr = 24000
+        t = np.linspace(0, 2, sr * 2, endpoint=False, dtype=np.float32)
+        sf.write(path, (0.2 * np.sin(2 * np.pi * 300 * t)).astype(np.float32), sr)
+        ok, signer = c2pa_sign_file_ex(path, model_id="test")
+        self.assertTrue(ok)
+        self.assertEqual(signer, "self-signed")
+        return path
+
+    def _manifest(self, path):
+        import json
+
+        import c2pa
+        with open(path, "rb") as fh:
+            return json.loads(c2pa.Reader("audio/wav", fh).json())
+
+    def test_manifest_validates_and_carries_the_ai_assertion(self):
+        manifest = self._manifest(self._signed_wav())
+        self.assertEqual(manifest.get("validation_state"), "Valid")
+        active = manifest["manifests"][manifest["active_manifest"]]
+        source_types = [
+            action.get("digitalSourceType", "")
+            for assertion in active.get("assertions", [])
+            for action in assertion.get("data", {}).get("actions", [])
+        ]
+        self.assertTrue(any("trainedAlgorithmicMedia" in s for s in source_types),
+                        f"AI assertion missing from a self-signed manifest: {source_types}")
+
+    def test_the_only_failure_is_signer_trust(self):
+        """If a self-signed manifest ever fails for another reason, marking is affected."""
+        manifest = self._manifest(self._signed_wav())
+        failures = {
+            entry["code"]
+            for entry in manifest["validation_results"]["activeManifest"]["failure"]
+        }
+        self.assertEqual(
+            failures, {"signingCredential.untrusted"},
+            f"a self-signed manifest should fail only on signer trust, got {failures}")
+
+
 class TestConsentLogChain(unittest.TestCase):
     """The consent log is evidence, so silent edits to it must be detectable.
 

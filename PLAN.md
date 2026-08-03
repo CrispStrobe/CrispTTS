@@ -2440,3 +2440,72 @@ for this phase's audit chain and for the neural-detector fallback rule it had
 right before CrispTTS did.
 
 ### Status: COMPLETE — 465 pass, 7 skipped, ruff clean
+
+## Phase 31: the certificate was never an Art. 50(2) gap (v0.9.11)
+
+Prompted by a question — CrispASR ships a C2PA certificate, can CrispTTS do
+likewise? Checking it produced two answers, and the second corrects several
+earlier phases of this plan.
+
+### 31.1 CrispASR's certificate is self-signed too
+
+`assets/c2pa/crispasr-default-c2pa.crt`, subject == issuer, CN literally
+"CrispASR (AI-generated, self-signed)", one certificate with no chain. It does
+not solve the trust problem, because it is the same certificate posture
+CrispTTS already has. If anything CrispTTS's is structurally closer to a real
+credential:
+
+| | CrispASR | CrispTTS |
+|---|---|---|
+| Chain | 1 cert, self-issued | 2 certs (leaf + own root CA) |
+| Key Usage | Digital Signature | Digital Signature, Non Repudiation |
+| Extended Key Usage | E-mail Protection (critical) | E-mail Protection |
+| Key / signature | EC P-256 / ECDSA-SHA256 | EC P-256 / ECDSA-SHA256 |
+
+Both meet C2PA's certificate profile. There was nothing to port.
+
+### 31.2 The claim this plan has been repeating is wrong
+
+Phases 16.10, 23.5 and the README described the self-signed certificate as the
+largest remaining Art. 50(2) gap, and told readers to obtain a CA-issued
+credential for compliance. Measured, reading a default-signed CrispTTS file
+back through `c2pa-python`:
+
+```
+validation_state : Valid
+success          : claimSignature.validated, claimSignature.insideValidity,
+                   assertion.hashedURI.match (x3), assertion.dataHash.match
+failure          : signingCredential.untrusted
+action           : c2pa.created
+                   digitalSourceType: ...#trainedAlgorithmicMedia
+```
+
+The manifest validates, the signature verifies, every hash matches, and the
+AI-generation assertion is read out in full by any C2PA tool. The **only**
+failure is `signingCredential.untrusted`.
+
+Art. 50(2) requires outputs "marked in a machine-readable format and detectable
+as artificially generated or manipulated". It does not require the mark to
+establish *who* generated it. That is attribution — worth having, and a
+different property. On this evidence the default configuration already
+satisfies the marking duty, and the advice to go and buy a certificate for
+compliance was mistaken.
+
+This was the single largest open item carried through five phases of this plan,
+and it turned out to rest on an assumption nobody had tested. The pattern is
+the same one Phases 23, 24, 26 and 28 hit: a claim written in prose, repeated
+until it read as established, and wrong when finally measured.
+
+### 31.3 Pinned, so it cannot drift back
+
+Two tests assert the measured behaviour rather than the prose: one that a
+self-signed manifest validates and carries `trainedAlgorithmicMedia`, one that
+its *only* validation failure is signer trust — so if a self-signed manifest
+ever starts failing for some other reason, marking really is affected and the
+suite says so.
+
+`--c2pa-cert` / `--c2pa-key` remain documented, now framed as what they
+actually buy: attribution for a publisher or newsroom whose provenance chain
+has to survive being contested.
+
+### Status: COMPLETE — 467 pass, 7 skipped, ruff clean
