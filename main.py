@@ -1297,6 +1297,8 @@ def main_cli_entrypoint():
              "removed; with no argument the whole log is erased.")
     action_group.add_argument("--consent-log-prune", action="store_true",
         help="Drop consent audit entries past the retention window and exit.")
+    action_group.add_argument("--consent-log-verify", action="store_true",
+        help="Check the consent audit log's hash chain and anchor for tampering.")
     action_group.add_argument("--cache-stats", action="store_true",
         help="Show synthesis cache statistics (size, entries).")
     action_group.add_argument("--cache-clear", action="store_true",
@@ -1628,6 +1630,34 @@ def main_cli_entrypoint():
             removed = prune_audit_log()
             print(f"Pruned {removed} expired entr{'y' if removed == 1 else 'ies'} "
                   f"from {consent_log_path()}")
+        except ImportError:
+            logger.error("watermark module not available.")
+        return
+
+    if getattr(args, 'consent_log_verify', False):
+        try:
+            from watermark import anchor_path, consent_log_path, verify_audit_chain
+            report = verify_audit_chain()
+            print(f"Log:      {consent_log_path()}")
+            print(f"Anchor:   {anchor_path()}")
+            print(f"Entries:  {report['entries']}")
+            if report.get("legacy"):
+                print(f"Legacy:   {report['legacy']} entr"
+                      f"{'y' if report['legacy'] == 1 else 'ies'} predate hash chaining "
+                      "(v0.9.10) —\n          they are covered from the next append onward.")
+            if report["rebuilds"]:
+                print(f"Rebuilds: {report['rebuilds']} (retention prune or Art. 17 erasure — "
+                      "lawful, and recorded)")
+            if report["ok"]:
+                print("Result:   chain intact — no undocumented change detected")
+            else:
+                print("Result:   CHAIN BROKEN")
+                for issue in report["issues"]:
+                    print(f"  - {issue}")
+                print("\nThis is tamper-evidence, not tamper-proofing: anyone who can write\n"
+                      "the file can rebuild the chain. A break means the log is no longer\n"
+                      "reliable evidence of what was attested, not that it definitely was\n"
+                      "edited maliciously.")
         except ImportError:
             logger.error("watermark module not available.")
         return

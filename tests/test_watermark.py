@@ -232,6 +232,143 @@ class TestSpreadSpectrumRoundTrip(unittest.TestCase):
         self.assertLessEqual(confidence, 0.5)
 
 
+class TestConsentLogChain(unittest.TestCase):
+    """The consent log is evidence, so silent edits to it must be detectable.
+
+    Ported from Susurrus's utils/audit_log.py, which hash-chains and anchors
+    its biometric records. This log's job is to record that somebody attested
+    they had the right to clone a voice, tied to a digest of the exact
+    recording — a plain text file anyone can edit is weak evidence of that.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        import watermark
+        self.tmp = tempfile.mkdtemp()
+        self._saved = watermark._CONSENT_LOG_PATH
+        watermark._CONSENT_LOG_PATH = os.path.join(self.tmp, "consent_audit.log")
+
+    def tearDown(self):
+        import shutil
+
+        import watermark
+        watermark._CONSENT_LOG_PATH = self._saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _log(self, model, voice):
+        import contextlib
+        import io
+
+        from watermark import log_consent_attestation
+        with contextlib.redirect_stderr(io.StringIO()):
+            log_consent_attestation(model, voice, source="unit test")
+
+    def _lines(self):
+        import watermark
+        with open(watermark._CONSENT_LOG_PATH) as fh:
+            return fh.readlines()
+
+    def _write(self, lines):
+        import watermark
+        with open(watermark._CONSENT_LOG_PATH, "w") as fh:
+            fh.writelines(lines)
+
+    def test_clean_chain_verifies(self):
+        from watermark import verify_audit_chain
+        for i in range(4):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+        report = verify_audit_chain()
+        self.assertTrue(report["ok"], report["issues"])
+        self.assertEqual(report["entries"], 4)
+
+    def test_editing_a_line_is_detected(self):
+        from watermark import verify_audit_chain
+        for i in range(4):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+        lines = self._lines()
+        lines[1] = lines[1].replace("model1", "modelX")
+        self._write(lines)
+        self.assertFalse(verify_audit_chain()["ok"])
+
+    def test_truncating_the_tail_is_detected_by_the_anchor(self):
+        """A hash chain cannot see its own tail being cut — the anchor can."""
+        from watermark import verify_audit_chain
+        for i in range(4):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+        self._write(self._lines()[:2])
+        report = verify_audit_chain()
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("anchor" in issue for issue in report["issues"]), report["issues"])
+
+    def test_lawful_erasure_leaves_a_verifiable_chain(self):
+        """GDPR Art. 17 must not permanently break the evidence trail."""
+        from watermark import erase_audit_log, verify_audit_chain
+        for i in range(5):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+        self.assertEqual(erase_audit_log(subject="speaker2"), 1)
+        report = verify_audit_chain()
+        self.assertTrue(report["ok"], report["issues"])
+        self.assertEqual(report["rebuilds"], 1)
+        self.assertNotIn("speaker2", "".join(self._lines()),
+                         "the erased subject must be gone")
+
+    def test_rebuild_record_does_not_reintroduce_the_subject(self):
+        """The record of an erasure must not re-add the data it erased."""
+        from watermark import erase_audit_log
+        for i in range(3):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+        erase_audit_log(subject="speaker1")
+        rebuilds = [ln for ln in self._lines() if ln.startswith("[CHAIN-REBUILT]")]
+        self.assertEqual(len(rebuilds), 1)
+        self.assertNotIn("speaker1", rebuilds[0])
+
+    def test_tampering_after_a_lawful_rebuild_is_still_detected(self):
+        """Re-chaining must not become a way to launder later edits."""
+        from watermark import erase_audit_log, verify_audit_chain
+        for i in range(4):
+            self._log(f"model{i}", f"/refs/speaker{i}.wav")
+        erase_audit_log(subject="speaker1")
+        lines = self._lines()
+        lines[0] = lines[0].replace("model0", "modelX")
+        self._write(lines)
+        self.assertFalse(verify_audit_chain()["ok"])
+
+    def test_absent_log_is_not_an_error(self):
+        from watermark import verify_audit_chain
+        report = verify_audit_chain()
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["entries"], 0)
+
+    def test_a_log_written_before_chaining_is_not_reported_as_tampered(self):
+        """Upgrading must not accuse every existing user of tampering.
+
+        Entries written before v0.9.10 carry no chain hash. They are counted as
+        legacy and folded into the head so later appends are covered, but they
+        are not evidence of anything having been edited.
+        """
+        from watermark import verify_audit_chain
+        self._write([
+            '[CONSENT] ts=2026-01-01T00:00:00+0000 model=m voice=v attestation="old"\n',
+            '[CONSENT] ts=2026-01-02T00:00:00+0000 model=m voice=v attestation="old"\n',
+        ])
+        report = verify_audit_chain()
+        self.assertTrue(report["ok"], report["issues"])
+        self.assertEqual(report["legacy"], 2)
+
+    def test_appending_to_a_legacy_log_covers_everything_after(self):
+        from watermark import verify_audit_chain
+        self._write(['[CONSENT] ts=2026-01-01T00:00:00+0000 model=m voice=v attestation="old"\n'])
+        self._log("new_model", "/refs/new.wav")
+        self.assertTrue(verify_audit_chain()["ok"])
+        # Editing the legacy line now breaks the chain, because the new entry
+        # committed to it.
+        lines = self._lines()
+        lines[0] = lines[0].replace("model=m", "model=TAMPERED")
+        self._write(lines)
+        self.assertFalse(verify_audit_chain()["ok"])
+
+
 @requires_soundfile
 class TestDetectionReport(unittest.TestCase):
     """`--detect-watermark` must not read one backend's number off another's dial.
@@ -2432,12 +2569,22 @@ class TestConsentAuditLogRetention(unittest.TestCase):
         return f'[CONSENT] ts={ts} model=m voice={subject} attestation="t"\n'
 
     def test_expired_entries_are_pruned(self):
+        """Asserts the property, not the line count.
+
+        A prune re-chains the survivors and appends a `[CHAIN-REBUILT]` record,
+        so the file legitimately holds one more line than the survivors. What
+        must hold is that the expired entry is gone and the fresh one stayed.
+        """
         import watermark
         from watermark import prune_audit_log
-        self._write([self._line(1000), self._line(1)])
+        old, fresh = self._line(1000), self._line(1)
+        self._write([old, fresh])
         self.assertEqual(prune_audit_log(), 1)
         with open(watermark._CONSENT_LOG_PATH) as f:
-            self.assertEqual(len(f.readlines()), 1)
+            body = f.read()
+        self.assertNotIn(old.split(" model=")[0], body, "the expired line should be gone")
+        self.assertIn(fresh.split(" model=")[0], body, "the fresh line should have survived")
+        self.assertIn("[CHAIN-REBUILT]", body, "the prune should be recorded, not silent")
 
     def test_fresh_entries_survive(self):
         from watermark import prune_audit_log
@@ -2485,13 +2632,19 @@ class TestConsentAuditLogRetention(unittest.TestCase):
         self.assertEqual(mode, 0o600, f"audit log is {oct(mode)}, expected 0o600")
 
     def test_append_prunes_expired_entries(self):
+        import contextlib
+        import io
+
         import watermark
-        self._write([self._line(1000)])
-        watermark.log_consent_attestation("some_model", None)
+        expired = self._line(1000)
+        self._write([expired])
+        with contextlib.redirect_stderr(io.StringIO()):
+            watermark.log_consent_attestation("some_model", None)
         with open(watermark._CONSENT_LOG_PATH) as f:
-            lines = f.readlines()
-        self.assertEqual(len(lines), 1, "the expired line should have been pruned")
-        self.assertIn("some_model", lines[0])
+            body = f.read()
+        self.assertNotIn(expired.split(" model=")[0], body,
+                         "the expired line should have been pruned")
+        self.assertIn("some_model", body, "the new attestation should be there")
 
 
 if __name__ == "__main__":

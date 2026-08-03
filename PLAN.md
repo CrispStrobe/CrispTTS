@@ -2363,3 +2363,80 @@ human-made**. Saturating backends get no "inconclusive" band, because for them
 it would be a fiction. Five tests cover it.
 
 ### Status: COMPLETE — 456 pass, 7 skipped, ruff clean
+
+## Phase 30: a tamper-evident consent log, from Susurrus (v0.9.10)
+
+Phase 29 read the siblings for ideas. This implements the best one, and
+corrects a table that had been quietly misrepresenting one of them.
+
+### 30.1 The log was evidence stored in a file anyone could edit
+
+`consent_audit.log` exists to record that someone attested a right to clone a
+voice, tied to a SHA-256 of the exact reference recording (Phase 16.11). Its
+whole value is evidential — and it was a plain text file with no integrity
+protection, so any line could be edited or removed without trace.
+
+Susurrus's `utils/audit_log.py` had already solved this for its biometric
+records: hash-chained, with the chain head *anchored* in a sibling file.
+Adopted here, with the same two-part reasoning:
+
+- **Chain.** Every line carries the SHA-256 of its predecessor, so editing or
+  deleting an entry breaks everything after it.
+- **Anchor.** A chain cannot detect truncation of its own tail — drop the last
+  n lines and the remainder still verifies. The entry count and head hash are
+  mirrored into `consent_audit.log.anchor` after every write, so a shortened
+  log contradicts its own anchor.
+
+It is tamper-*evidence*, not tamper-proofing, and says so: whoever can write
+the file can rebuild the chain.
+
+### 30.2 The conflict this had to resolve: Art. 17 versus immutability
+
+GDPR Art. 17 erasure and Art. 5(1)(e) retention pruning both *require*
+removing entries. That is precisely what a hash chain exists to detect, so the
+two duties are in direct tension.
+
+Exempting them would leave a hole any tampering could hide in. Not exempting
+them would leave the log permanently unverifiable after the first lawful
+prune. The resolution is to **record** them: survivors are re-chained from
+genesis and a `[CHAIN-REBUILT]` line notes the reason and the number removed.
+An unexplained gap is tampering; a gap with a rebuild record beside it is a
+documented erasure, and `verify_audit_chain()` reports rebuild counts rather
+than hiding them.
+
+The rebuild record deliberately does not name the erasure subject — it has to
+outlive the erasure it documents, so it must not re-introduce the personal
+data just removed.
+
+A test asserts that tampering *after* a lawful rebuild is still caught, so
+re-chaining cannot become a way to launder later edits.
+
+### 30.3 Migration, which nearly shipped as a false alarm
+
+First run against the real log reported **CHAIN BROKEN** with 758 issues — every
+entry predating this change lacks a hash. Shipping that would have told every
+existing user their audit log had been tampered with.
+
+Unchained lines are now counted as `legacy` rather than flagged. They are still
+folded into the running head, so everything appended from now on commits to
+them: a test confirms that editing a legacy line *after* a new entry has been
+appended does break the chain. The real log now reads 773 entries, 758 legacy,
+chain intact.
+
+### 30.4 The comparison table was stale, and unfair
+
+`readme.md`'s marking-enforcement table described Susurrus as marking WAV only,
+warning rather than discarding, having no watermark floor and no attestation
+gate. Checked against the current code, all four are wrong: it discards and
+raises `ProvenanceError` ("Art. 50(2) has no 'unless a dependency'"), marks
+mp3/flac/m4a/opus, has a declarative floor, and takes
+`accept_marking_responsibility`.
+
+Publishing a stale comparison of someone else's project is worse than
+publishing none. The table is now dated, marked as re-checked on 2026-08-03,
+and carries a note that it goes out of date silently. Provenance for each idea
+is credited: CrispASR for the watermark floor and attestation gate, Susurrus
+for this phase's audit chain and for the neural-detector fallback rule it had
+right before CrispTTS did.
+
+### Status: COMPLETE — 465 pass, 7 skipped, ruff clean

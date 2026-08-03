@@ -1266,6 +1266,22 @@ _CONSENT_LOG_RETENTION_DAYS = 730
 #: The audit log is personal data; keep it owner-only rather than umask-default.
 _CONSENT_LOG_MODE = 0o600
 
+#: Hash-chain state mirrored outside the log itself. Ported from Susurrus's
+#: ``utils/audit_log.py``, which chains its biometric records the same way.
+#:
+#: The point is evidential. This log's whole job is to record that somebody
+#: attested they had the right to clone a voice, tied to a digest of the exact
+#: recording. A plain text file that anyone can silently edit is weak evidence
+#: of that; a chain where each line carries the hash of its predecessor makes
+#: deletion and rewriting *detectable*.
+#:
+#: It is tamper-evidence, not tamper-proofing: whoever can write the file can
+#: rebuild the chain. And a chain cannot detect truncation of its own tail —
+#: drop the last n lines and the remainder still verifies — so the entry count
+#: and head hash are mirrored into this sibling file after every write.
+_CONSENT_ANCHOR_SUFFIX = ".anchor"
+_CHAIN_GENESIS = "0" * 64
+
 
 def consent_log_path() -> str:
     """Filesystem path of the persistent consent audit log."""
@@ -1339,6 +1355,7 @@ def prune_audit_log(retention_days: int | None = None) -> int:
     except OSError as e:
         logger.debug("Could not prune the consent audit log: %s", e)
         return 0
+    _record_chain_rebuild(f"retention prune >{days}d", removed)
     return removed
 
 
@@ -1361,6 +1378,12 @@ def erase_audit_log(subject: str | None = None) -> int:
             with open(_CONSENT_LOG_PATH) as f_audit:
                 count = sum(1 for _ in f_audit)
             os.unlink(_CONSENT_LOG_PATH)
+            # The anchor describes a log that no longer exists; leaving it
+            # behind would make the next append look like a truncated chain.
+            try:
+                os.unlink(anchor_path())
+            except OSError:
+                pass
             logger.info("Erased the consent audit log (%d line(s)).", count)
             return count
         except OSError as e:
@@ -1377,6 +1400,10 @@ def erase_audit_log(subject: str | None = None) -> int:
                 f_new.writelines(kept)
             os.chmod(tmp, _CONSENT_LOG_MODE)
             os.replace(tmp, _CONSENT_LOG_PATH)
+            # Deliberately does not name the subject: this record has to survive
+            # the erasure it documents, so it must not re-introduce the personal
+            # data that was just removed.
+            _record_chain_rebuild("GDPR Art. 17 erasure request", removed)
         logger.info("Erased %d consent audit line(s) matching %r.", removed, subject)
         return removed
     except OSError as e:
@@ -1384,15 +1411,148 @@ def erase_audit_log(subject: str | None = None) -> int:
         return 0
 
 
+def anchor_path() -> str:
+    """Path of the sidecar that mirrors the chain head outside the chain."""
+    return _CONSENT_LOG_PATH + _CONSENT_ANCHOR_SUFFIX
+
+
+def _line_hash(prev: str, line: str) -> str:
+    """Hash of one audit line, bound to its predecessor."""
+    import hashlib
+    return hashlib.sha256((prev + line.rstrip("\n")).encode("utf-8")).hexdigest()
+
+
+def _chain_head(lines: list[str]) -> str:
+    """Recompute the chain head over ``lines`` from genesis."""
+    head = _CHAIN_GENESIS
+    for line in lines:
+        if line.strip():
+            head = _line_hash(head, line)
+    return head
+
+
+def _write_anchor(lines: list[str]) -> None:
+    """Mirror entry count and head hash beside the log, atomically."""
+    try:
+        entries = sum(1 for ln in lines if ln.strip())
+        tmp = anchor_path() + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write(f"entries={entries} head={_chain_head(lines)}\n")
+        os.chmod(tmp, _CONSENT_LOG_MODE)
+        os.replace(tmp, anchor_path())
+    except OSError as e:
+        logger.debug("Could not update the consent audit anchor: %s", e)
+
+
+def _read_log_lines() -> list[str]:
+    try:
+        with open(_CONSENT_LOG_PATH) as fh:
+            return fh.readlines()
+    except OSError:
+        return []
+
+
+def _record_chain_rebuild(reason: str, removed: int) -> None:
+    """Note that the chain was rebuilt lawfully, so it does not read as tampering.
+
+    Retention pruning and Art. 17 erasure both *have* to remove entries, which
+    is exactly what a hash chain exists to detect. The resolution is not to
+    exempt them but to record them: an unexplained gap is tampering, a gap with
+    a rebuild record next to it is a documented erasure. Verification reports
+    the rebuilds it finds rather than hiding them.
+    """
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
+
+    # Re-chain the survivors. Their recorded predecessors refer to entries that
+    # are lawfully gone, so without this every prune would leave the log
+    # permanently unverifiable and real tampering would hide in the noise.
+    survivors = [ln for ln in _read_log_lines() if ln.strip()]
+    lines, head = [], _CHAIN_GENESIS
+    for survivor in survivors:
+        body = survivor.rstrip("\n").rpartition(" prev=")[0] or survivor.rstrip("\n")
+        chained = f"{body} prev={head}\n"
+        head = _line_hash(head, chained)
+        lines.append(chained)
+    rebuilt = f'[CHAIN-REBUILT] ts={ts} reason="{reason}" removed={removed} prev={head}\n'
+    lines.append(rebuilt)
+    try:
+        tmp = f"{_CONSENT_LOG_PATH}.tmp"
+        with open(tmp, "w") as fh:
+            fh.writelines(lines)
+        os.chmod(tmp, _CONSENT_LOG_MODE)
+        os.replace(tmp, _CONSENT_LOG_PATH)
+    except OSError as e:
+        logger.debug("Could not record the chain rebuild: %s", e)
+        return
+    _write_anchor(lines)
+
+
+def verify_audit_chain() -> dict:
+    """Check the consent log's hash chain against its anchor.
+
+    Returns a dict with ``ok``, ``entries``, ``rebuilds`` and ``issues``. An
+    absent log is fine and reports ok; an absent *anchor* is reported as an
+    issue, because the anchor is what makes tail truncation visible.
+    """
+    result = {"ok": True, "entries": 0, "rebuilds": 0, "legacy": 0, "issues": []}
+    if not os.path.isfile(_CONSENT_LOG_PATH):
+        return result
+
+    lines = [ln for ln in _read_log_lines() if ln.strip()]
+    result["entries"] = len(lines)
+    result["rebuilds"] = sum(1 for ln in lines if ln.startswith("[CHAIN-REBUILT]"))
+
+    head = _CHAIN_GENESIS
+    for n, line in enumerate(lines, 1):
+        body, _, recorded = line.rstrip("\n").rpartition(" prev=")
+        if not recorded or len(recorded) != 64:
+            # Written before v0.9.10, when chaining was added. Counted, not
+            # flagged: an upgrade must not tell every existing user their audit
+            # log has been tampered with. These lines are folded into the head,
+            # so everything appended from now on is covered.
+            result["legacy"] += 1
+            head = _line_hash(head, line)
+            continue
+        if recorded != head:
+            result["issues"].append(f"line {n}: chain broken — a preceding entry was changed or removed")
+            head = recorded  # resynchronise so one break does not cascade
+        head = _line_hash(head, body + " prev=" + recorded)
+
+    chained = len(lines) - result["legacy"]
+    try:
+        with open(anchor_path()) as fh:
+            anchor = fh.read().strip()
+    except OSError:
+        anchor = None
+        if chained:
+            result["issues"].append("no anchor file — truncation of the log's tail cannot be detected")
+    if anchor:
+        fields = dict(part.split("=", 1) for part in anchor.split() if "=" in part)
+        if int(fields.get("entries", -1)) != len(lines):
+            result["issues"].append(
+                f"anchor expects {fields.get('entries')} entries, found {len(lines)} — "
+                "entries were removed without a rebuild record")
+        elif fields.get("head") != head:
+            result["issues"].append("anchor head does not match the log — the log was rewritten")
+
+    result["ok"] = not result["issues"]
+    return result
+
+
 def _append_audit_line(msg: str) -> None:
-    """Append a line to the audit log, owner-only, pruning expired entries."""
+    """Append a chained line to the audit log, owner-only, pruning expired entries."""
     try:
         os.makedirs(os.path.dirname(_CONSENT_LOG_PATH), exist_ok=True)
         existed = os.path.exists(_CONSENT_LOG_PATH)
+        lines = _read_log_lines() if existed else []
+        chained = msg.rstrip("\n") + f" prev={_chain_head(lines)}\n"
         with open(_CONSENT_LOG_PATH, "a") as f_audit:
-            f_audit.write(msg)
+            f_audit.write(chained)
         if not existed:
             os.chmod(_CONSENT_LOG_PATH, _CONSENT_LOG_MODE)
+        lines.append(chained)
+        _write_anchor(lines)
     except OSError as e:
         logger.debug("Could not write consent audit log: %s", e)
         return

@@ -1103,6 +1103,24 @@ implemented — but it is the operative deadline.
 - `--consent-log-erase [SUBJECT]` handles an Art. 17 erasure request: with a
   reference-audio path or `ref_sha256` digest it removes only that speaker's
   lines; with no argument it erases the whole log
+- **Hash-chained and anchored.** Each line carries the SHA-256 of its
+  predecessor, and the entry count plus head hash are mirrored into a sibling
+  `.anchor` file. `--consent-log-verify` checks both. The log's whole purpose
+  is to evidence that somebody attested a right to clone a voice, tied to a
+  digest of the exact recording — a text file anyone can silently edit is weak
+  evidence of that. The chain catches edits and deletions; the anchor catches
+  truncation of the tail, which a chain cannot see on its own.
+
+  This is tamper-*evidence*, not tamper-proofing: whoever can write the file
+  can rebuild the chain. Ship the log somewhere append-only if you need more.
+
+  Retention pruning and Art. 17 erasure both have to remove entries, which is
+  exactly what the chain exists to detect. They are not exempted — they are
+  *recorded*: the survivors are re-chained and a `[CHAIN-REBUILT]` line notes
+  the reason and how many entries went. An unexplained gap is tampering; a gap
+  with a rebuild record beside it is a documented erasure. The rebuild record
+  deliberately does not name the subject, since it has to outlive the erasure
+  it documents.
 
 Lines with no parseable timestamp are kept — an unreadable record is not
 evidence that it has expired.
@@ -1137,25 +1155,41 @@ regulation, not legal advice.
 The layers above answer *what* is applied. This answers *what happens when it
 doesn't work* — which is where the projects genuinely differ:
 
+Re-checked against the sibling repositories on **2026-08-03**. The previous
+version of this table was stale and understated Susurrus on four rows — it had
+since gained fail-closed discard, non-WAV marking, a declarative floor and an
+attestation-gated opt-out. A comparison of other people's projects goes out of
+date silently and unfairly; re-read the code before trusting this.
+
 | Enforcement | CrispTTS | CrispASR | Susurrus | CrisperWeaver |
 |---|---|---|---|---|
 | Refuse **before** generating if unmarkable | Yes | — | — | — |
 | Marking verified after embedding | Yes (gates) | — | — | — |
-| Unmarkable output discarded | Yes | — | No (warns) | No |
-| Watermark floor (opt-out only if C2PA carries it) | Yes | Yes | No | No |
-| Opt-out requires marking attestation | Yes | Yes | No (single flag) | No |
-| `[MARKING]` audit line | Yes | Yes | — | — |
-| Non-WAV outputs marked | Yes | Yes | **No** (WAV only) | — |
+| Unmarkable output discarded | Yes | — | **Yes** | No |
+| Watermark floor (opt-out only if C2PA carries it) | Yes | Yes | **Yes** (declarative) | No |
+| Opt-out requires marking attestation | Yes | Yes | **Yes** | No |
+| Non-WAV outputs marked | Yes | Yes | **Yes** (mp3/flac/m4a/opus) | — |
 | Silent no-op on short audio | Refused | — | — | Yes (<4608 samples) |
 | Playback marked+verified before it is heard | Yes | — | — | — |
 | Consent gate fails closed if unevaluable | Yes | — | — | — |
-| Disclosure in all 24 EU official languages | Yes | — | — | — |
+| Disclosure in all 24 EU official languages | Yes | — | 2 locales | — |
 | Audit-log retention limit + erasure command | Yes | — | — | — |
+| **Hash-chained, anchored audit log** | **Yes** | — | **Yes** (biometric events) | — |
+| Detector reports its own statistical power | p-band per backend | **p-value + 3-way verdict** | backend named | — |
 
-CrispASR contributed the watermark floor and the attestation gate, which
-CrispTTS adopts here. CrispTTS adds preflight refusal and verification-as-gate,
-which the others do not yet have — in Susurrus and CrisperWeaver a failed or
-skipped mark currently produces a warning and the audio still ships.
+Where each idea came from, since none of this is one project's work: CrispASR
+contributed the watermark floor and the attestation gate, and independently
+found the detector's coin-flip null that Phase 28 fixed here — answering it
+with binomial p-values where CrispTTS replaced the statistic. Susurrus
+contributed the hash-chained, anchored audit log adopted above, and had the
+"fall back to spread-spectrum when the neural detector says no" rule right
+before CrispTTS did.
+
+The gap CrispTTS still has alone: preflight refusal and verification-as-gate.
+That cuts both ways — because marking failure here *deletes* the output, a
+detector error is not a diagnostic inconvenience the way it is in CrispASR,
+where "embedding is unconditional and the watertight floor does not consult the
+detector".
 
 ### Usage
 
