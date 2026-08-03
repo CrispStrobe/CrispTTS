@@ -2287,3 +2287,79 @@ An untested idea for whoever picks this up: require `t_true` to exceed
 → accepted). It was not evaluated on the full corpus and is not shipped.
 
 ### Status: COMPLETE — 451 pass, 7 skipped, ruff clean
+
+## Phase 29: what the sibling projects already knew (v0.9.9)
+
+Read CrispASR and Susurrus for anything CrispTTS should adopt. Both had found
+parts of this session's ground independently, and one of them had reached a
+better answer.
+
+### 29.1 CrispASR found the same defect, and answered it differently
+
+`examples/cli/crispasr_watermark_stats.h` and `docs/eu-ai-act.md` §6.7 describe
+exactly the flaw Phase 28 fixed here: the sign-agreement test is a coin flip per
+bin, so `> 0.65` is 21/32 agreements, which clean audio reaches **5.5% of the
+time** by chance. Measured there on 55 clips of real speech: **4.8% false
+positives**, against 8.6% measured here. The gap is explained — CrispTTS sweeps
+*two* bands and keeps the larger reading, which doubles the exposure.
+
+The responses diverged, and both are defensible:
+
+| | CrispASR | CrispTTS (Phase 28) |
+|---|---|---|
+| Statistic | kept the sign test | replaced it (per-frame t + decoy calibration) |
+| Reporting | exact binomial p-value, three-way verdict | calibrated confidence, three-way verdict |
+| Bar | p < 0.01 | FP 2.5% / TP 98.3% operating point |
+
+CrispASR's reasoning for not replacing the statistic — "raising the bar cannot
+make this instrument strong" — is right about *their* instrument. Their own
+table shows the cost: at p < 0.01 the true-positive rate on 1 s clips falls to
+18%. That is the trade Phase 28 avoided by changing the statistic rather than
+the threshold.
+
+### 29.2 The architectural difference that matters more
+
+From §6.7: *"None of this affects marking: embedding is unconditional and the
+watertight floor does not consult the detector."*
+
+That is not true here. `mark_audio_file()` verifies **after** embedding and
+deletes the output if verification fails, so in CrispTTS a detector error is
+not a diagnostic error — a false negative destroys a user's file, and a false
+positive on the `already_marked` path can let an unmarked file through.
+
+So CrispTTS carries strictly higher stakes on detector accuracy than the
+project it borrowed the detector from, which is the real reason Phase 28 was
+worth doing rather than just relabelling the output. Worth revisiting whether
+the delivery gate should depend on a statistical detector at all; recorded, not
+changed.
+
+### 29.3 Susurrus had the fallback right first
+
+`utils/audio_watermark.py` returns the **backend** alongside the score, and
+when AudioSeal reports nothing it falls back to the spread-spectrum detector,
+commented: *"the file may still carry a spread-spectrum mark from a build
+without torch, or from CrispASR/CrispTTS."*
+
+That is precisely the bug fixed here in Phase 25.4, where an AudioSeal-enabled
+CrispTTS returned 0.000 for CrispASR-marked audio and discarded it. Susurrus
+had it right before CrispTTS did.
+
+### 29.4 Adopted: `--detect-watermark` no longer reads one dial for three instruments
+
+The CLI applied a fixed `0.65 / 0.4` pair of bands to whatever score came back.
+Two things were wrong with that:
+
+- **Three backends, one scale.** The spread-spectrum reading is a calibrated
+  statistic, AudioSeal's detector saturates at 0.000/1.000, WavMark returns a
+  payload match ratio. The README already said these are not comparable; the
+  CLI compared them anyway.
+- **A stale boundary.** `0.4` was tied to the *old* detector's ~0.44 noise
+  floor. Phase 28 moved unmarked audio to ~0.17 median and left the band behind.
+
+`describe_detection()` now reports confidence, the backend that produced it,
+the applicable threshold, a three-way verdict, and — taking CrispASR's framing
+— the caveat that **a negative result is not evidence the audio is
+human-made**. Saturating backends get no "inconclusive" band, because for them
+it would be a fiction. Five tests cover it.
+
+### Status: COMPLETE — 456 pass, 7 skipped, ruff clean

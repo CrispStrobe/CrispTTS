@@ -1583,19 +1583,22 @@ def main_cli_entrypoint():
 
     if args.detect_watermark:
         try:
-            from watermark import watermark_verify_file
-            confidence = watermark_verify_file(args.detect_watermark)
-            if confidence is None:
+            from watermark import describe_detection
+            report = describe_detection(args.detect_watermark)
+            if report is None:
                 print(f"Could not read audio file: {args.detect_watermark}")
             else:
-                print(f"File: {args.detect_watermark}")
-                print(f"Watermark confidence: {confidence:.4f}")
-                if confidence > 0.65:
-                    print("Result: AI-GENERATED WATERMARK DETECTED")
-                elif confidence > 0.4:
-                    print("Result: UNCERTAIN (possible watermark)")
-                else:
-                    print("Result: No watermark detected")
+                print(f"File:       {args.detect_watermark}")
+                print(f"Backend:    {report['backend']}")
+                print(f"Confidence: {report['confidence']:.4f} "
+                      f"(detected at >= {report['threshold']:.2f})")
+                print(f"Result:     {report['verdict']}")
+                if not report["verdict"].startswith("AI-GENERATED"):
+                    print(f"Note:       {report['caveat']}")
+                if report["backend"] == "spread_spectrum":
+                    print("            The built-in detector is a convenience check. Install "
+                          "a neural\n            backend (pip install 'crisptts[robust]') when "
+                          "the answer matters.")
         except ImportError:
             logger.error("watermark module not available.")
         return

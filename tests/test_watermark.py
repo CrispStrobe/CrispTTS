@@ -232,6 +232,71 @@ class TestSpreadSpectrumRoundTrip(unittest.TestCase):
         self.assertLessEqual(confidence, 0.5)
 
 
+@requires_soundfile
+class TestDetectionReport(unittest.TestCase):
+    """`--detect-watermark` must not read one backend's number off another's dial.
+
+    The CLI applied a fixed 0.65/0.4 pair of bands to whatever score came back,
+    but three backends can produce it and they are not on one scale: the
+    spread-spectrum reading is a calibrated statistic, AudioSeal's saturates at
+    0.000/1.000, WavMark returns a payload match ratio. The 0.4 boundary was
+    also tied to the *old* detector's ~0.44 noise floor and outlived it.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, name, pcm, sr=24000):
+        import soundfile as sf
+        path = os.path.join(self.tmp, name)
+        sf.write(path, pcm, sr)
+        return path
+
+    def _speech(self, seconds=4.0, sr=24000, seed=5):
+        rng = np.random.default_rng(seed)
+        t = np.arange(int(sr * seconds), dtype=np.float32) / sr
+        tone = 0.3 * np.sin(2 * np.pi * 200 * t) + 0.12 * np.sin(2 * np.pi * 650 * t)
+        env = (0.5 + 0.5 * np.sin(2 * np.pi * 3.1 * t)).astype(np.float32)
+        return (tone * env + 0.01 * rng.standard_normal(len(t))).astype(np.float32)
+
+    def test_reports_backend_and_threshold(self):
+        from watermark import describe_detection
+        report = describe_detection(self._write("a.wav", self._speech()))
+        self.assertIsNotNone(report)
+        for key in ("confidence", "backend", "threshold", "verdict", "caveat"):
+            self.assertIn(key, report)
+
+    def test_marked_and_unmarked_get_opposite_verdicts(self):
+        from watermark import describe_detection, spread_spectrum_embed
+        pcm = self._speech()
+        clean = describe_detection(self._write("clean.wav", pcm))
+        marked = describe_detection(self._write("marked.wav", spread_spectrum_embed(pcm)))
+        self.assertTrue(marked["verdict"].startswith("AI-GENERATED"))
+        self.assertFalse(clean["verdict"].startswith("AI-GENERATED"))
+
+    def test_negative_result_carries_the_caveat(self):
+        """Not finding a mark is weak evidence, and must say so."""
+        from watermark import describe_detection
+        report = describe_detection(self._write("q.wav", self._speech()))
+        self.assertIn("NOT evidence", report["caveat"])
+
+    def test_missing_file_reports_none(self):
+        from watermark import describe_detection
+        self.assertIsNone(describe_detection(os.path.join(self.tmp, "nope.wav")))
+
+    def test_saturating_backends_have_no_uncertain_band(self):
+        """AudioSeal reads 0.000 or 1.000, so an "inconclusive" band is a fiction."""
+        from watermark import _DETECT_UNCERTAIN_FLOOR
+        self.assertIsNone(_DETECT_UNCERTAIN_FLOOR["audioseal_python"])
+        self.assertIsNone(_DETECT_UNCERTAIN_FLOOR["audioseal_crispasr"])
+        self.assertIsNotNone(_DETECT_UNCERTAIN_FLOOR["spread_spectrum"])
+
+
 class TestFrameBlocking(unittest.TestCase):
     """The batched FFT path must not depend on where the block boundary falls.
 

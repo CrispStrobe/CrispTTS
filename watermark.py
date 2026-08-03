@@ -881,6 +881,60 @@ def watermark_verify_file(filepath: str) -> float | None:
         return None
 
 
+#: Verdict bands per backend, because the scores are not on one scale. The
+#: spread-spectrum reading is a calibrated statistic (unmarked ~0.17 median,
+#: a healthy mark ~0.99); AudioSeal's detector saturates at 0.000/1.000, so it
+#: has no meaningful middle ground to report as uncertain; WavMark returns a
+#: payload match ratio. Applying one set of bands to all three — which this
+#: CLI did until v0.9.9 — reads a number from one instrument off another's
+#: dial. Susurrus already returned the backend alongside the score; this is
+#: that idea brought over.
+#: Values are the floor of the "inconclusive" band; the detected bar is always
+#: _VERIFY_THRESHOLD, which is defined further down this module.
+_DETECT_UNCERTAIN_FLOOR = {
+    "spread_spectrum": 0.50,
+    "audioseal_python": None,    # saturates at 0.000/1.000 — no middle ground
+    "audioseal_crispasr": None,
+    "wavmark": 0.55,
+}
+
+
+def describe_detection(filepath: str) -> dict | None:
+    """Read a file and report what its watermark reading actually supports.
+
+    Returns a dict with ``confidence``, ``backend``, ``verdict`` and ``caveat``,
+    or None if the file could not be read.
+
+    The verdict is deliberately three-way. CrispASR reached the same conclusion
+    from the other direction — see ``docs/eu-ai-act.md`` §6.7 there — after
+    measuring that its binary "> 0.65 means detected" rule called 4.8% of clean
+    speech watermarked, in the confident past tense. The honest answer for a
+    reading that clears chance but not the bar is "inconclusive", not a claim.
+    """
+    confidence = watermark_verify_file(filepath)
+    if confidence is None:
+        return None
+    detected_at = _VERIFY_THRESHOLD
+    uncertain_at = _DETECT_UNCERTAIN_FLOOR.get(_backend, 0.50)
+    if confidence >= detected_at:
+        verdict = "AI-GENERATED WATERMARK DETECTED"
+    elif uncertain_at is not None and confidence >= uncertain_at:
+        verdict = "INCONCLUSIVE — above chance, but not evidence"
+    else:
+        verdict = "No watermark detected"
+    return {
+        "confidence": float(confidence),
+        "backend": _backend,
+        "threshold": detected_at,
+        "verdict": verdict,
+        # The asymmetry matters and is easy to misread: finding the mark is
+        # strong evidence, not finding it is weak. Every lossy step erodes the
+        # watermark, and most audio in the world was simply never marked.
+        "caveat": ("A negative result is NOT evidence the audio is human-made — "
+                   "it is often just a short, transcoded or unmarked clip."),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Marker strings used both for injection and for the is_marked() probe
 # ---------------------------------------------------------------------------
