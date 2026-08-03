@@ -31,6 +31,56 @@ requires_c2pa = unittest.skipUnless(
     _HAVE_C2PA, "c2pa-python not installed — C2PA tests cannot run")
 
 
+def read_optional_dependencies():
+    """Return pyproject's ``[project.optional-dependencies]`` as a dict.
+
+    ``tomllib`` is stdlib only from 3.11, and this project supports 3.10 (the
+    CI matrix is 3.10-3.12), so the extras tests cannot simply import it — they
+    passed locally on 3.11 and broke the 3.10 job. ``tomli`` is not a
+    dependency either, so on 3.10 fall back to a small parser that reads just
+    the one table these tests need: names and quoted requirement strings.
+    """
+    path = PROJECT_ROOT / "pyproject.toml"
+    try:
+        import tomllib
+        with open(path, "rb") as fh:
+            return tomllib.load(fh)["project"]["optional-dependencies"]
+    except ModuleNotFoundError:
+        pass
+    try:
+        import tomli
+        with open(path, "rb") as fh:
+            return tomli.load(fh)["project"]["optional-dependencies"]
+    except ModuleNotFoundError:
+        pass
+
+    import re
+    extras, current = {}, None
+    in_table = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_table = stripped == "[project.optional-dependencies]"
+            current = None
+            continue
+        if not in_table or stripped.startswith("#") or not stripped:
+            continue
+        m = re.match(r'^([A-Za-z0-9._-]+)\s*=\s*\[(.*)$', stripped)
+        if m:
+            current = m.group(1)
+            extras[current] = []
+            rest = m.group(2)
+            extras[current].extend(re.findall(r'"([^"]+)"', rest))
+            if "]" in rest:
+                current = None
+            continue
+        if current is not None:
+            extras[current].extend(re.findall(r'"([^"]+)"', stripped))
+            if stripped.startswith("]"):
+                current = None
+    return extras
+
+
 def force_spread_spectrum(testcase):
     """Pin the dispatcher to the built-in backend for one test.
 
@@ -663,10 +713,7 @@ class TestWavMarkBackend(unittest.TestCase):
         import re
         from importlib.metadata import PackageNotFoundError, version
 
-        import tomllib
-
-        with open(PROJECT_ROOT / "pyproject.toml", "rb") as fh:
-            extras = tomllib.load(fh)["project"]["optional-dependencies"]
+        extras = read_optional_dependencies()
 
         def parts(v):
             return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
@@ -699,10 +746,7 @@ class TestWavMarkBackend(unittest.TestCase):
         the dispatcher preferred AudioSeal, the documented "recommended"
         install would silently leave the preferred backend absent.
         """
-        import tomllib
-
-        with open(PROJECT_ROOT / "pyproject.toml", "rb") as fh:
-            robust = tomllib.load(fh)["project"]["optional-dependencies"]["robust"]
+        robust = read_optional_dependencies()["robust"]
         self.assertTrue(
             any(s.startswith("audioseal") for s in robust),
             f"the dispatcher prefers AudioSeal, but `robust` installs {robust}")
