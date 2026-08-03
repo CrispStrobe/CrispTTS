@@ -2176,3 +2176,114 @@ fractions of `mark_audio_file`, which runs in 0.29-0.83 s end-to-end depending
 on container. Nothing there justifies the risk of touching a signing path.
 
 ### Status: COMPLETE — 449 pass, 7 skipped, ruff clean
+
+## Phase 28: the detector was a coin flip (v0.9.8)
+
+Phase 26.5 recorded that the built-in detector read 0.656 on unmarked human
+speech against its own 0.65 threshold, and left the decision open. This phase
+closes it, and the defect was larger than the one reading suggested.
+
+### 28.1 Why it false-positived
+
+`_spread_spectrum_detect_band` scored each of 32 bins by the **sign** of its
+excess over neighbouring bins and threw the size away:
+
+```python
+correlation += (1.0 if delta > 0 else -1.0) * b_sign
+```
+
+Under the null that is a coin flip per bin, so the score had mean 0.5 and
+standard deviation `sqrt(32) / (2*32)` = 0.088, leaving the 0.65 threshold
+**1.7 sigma** above chance. Sweeping two bands and keeping the larger reading
+doubled the exposure again. The observed 0.656 is exactly 21/32 — the
+quantisation confirms the mechanism.
+
+Measured over 197 clips of genuinely unmarked audio (a real recording plus the
+bundled disclosure clips, which `scripts/make_disclosure_assets.py` renders
+straight from edge_tts and never marks):
+
+| | FP at 0.65 | TP at 0.65 | separation |
+|---|---|---|---|
+| sign test | **8.6%** | 97.0% | **-0.125** (overlapping) |
+
+It was not only flagging real recordings as AI-generated; it was also missing
+3% of real watermarks, and no threshold separated the two populations.
+
+### 28.2 What replaced it
+
+Two questions, and a mark must answer both:
+
+- **Consistency** — a one-sample t-statistic over *per-frame* comb excess.
+  Sample count becomes the frame count (hundreds to thousands) instead of 32,
+  and the magnitude of each difference is kept rather than its sign alone.
+- **Specificity** — the same statistic computed for 15 **decoy** sign patterns
+  over the same bins, from keys never used for embedding, then the real
+  pattern standardised against their median and MAD. This asks whether the
+  audio carries *our* comb or merely has spectral structure that any pattern
+  would correlate with.
+
+The embed is untouched, so audio marked by every earlier release, and by
+CrispASR, reads through the new detector — better than before, not worse.
+
+### 28.3 Four things measurement contradicted
+
+Recorded because each was a plausible idea that turned out wrong:
+
+- **Excluding comb bins from the local baseline.** The baseline's ±2
+  neighbours are themselves comb bins 12% of the time, which looked like
+  contamination. Removing them made separation *worse* (+0.031 → +0.017), and
+  widening the window to ±4 or ±6 inverted it entirely. The comb's signs are
+  random, so an opposite-signed neighbour raises the contrast rather than
+  muddying it.
+- **Consistency alone.** Per-frame t gave FP 0.0% / TP 100% on real audio — and
+  read 0.99 on a stationary three-tone signal, because every frame is identical
+  so a chance correlation repeats endlessly. Its mean excess, 0.116, was as
+  large as a real watermark on real speech, 0.108.
+- **Specificity alone.** Subtracting only the decoy median left the tone at
+  16.5, above genuinely marked speech. Standardising by the decoy spread as
+  well fixed the tone but rejected real marks at 44.1 kHz, where the comb sits
+  in a low-energy region and the decoy spread grows: TP fell to 75%.
+- **A "null" corpus that was not null.** An early sweep put the null maximum at
+  12.89, above every positive. Splitting by source showed the tail was almost
+  all `tts_test_outputs/` — TTS output from earlier runs, which is *actually
+  watermarked* — plus clips upsampled 16k → 44.1k in the harness itself, whose
+  8 kHz spectral cliff falls inside the 44.1 kHz comb band and manufactures the
+  contrast being looked for. Both were measurement artefacts, not detector
+  behaviour.
+
+### 28.4 The operating point, and what it costs
+
+Grid over 53 unmarked and 159 marked clips, 16/22.05/24/44.1 kHz, 1–5 s, clean
+plus 64 kbps MP3 and resample, including deliberately pathological synthetic
+signals:
+
+| rule | FP | TP |
+|---|---|---|
+| sign test (shipped before) | 8.6% | 97.0% |
+| **t ≥ 3.0 and z ≥ 1.0 (chosen)** | **1.9%** | **99.4%** |
+| t ≥ 3.0 and z ≥ 1.5 | 0.0% | 94.3% |
+
+The zero-false-positive row is the wrong trade. Marking fails closed, so
+rejecting 5.7% of *valid* marks means deleting that share of users' audio. On
+the broader 79/237 corpus the chosen rule measures FP 2.5% / TP 98.3%, against
+8.6% / 97.0% — better in both directions at once.
+
+### 28.5 The residual, pinned by a test
+
+The only false positive left in the null corpus is the perfectly stationary
+synthetic tone (z = 1.49 against 2.8 for real marks). It is a mathematical sum
+of sines with no noise, dynamics or vibrato; recorded audio does not do this,
+and `german.wav` and all 27 disclosure clips read well below threshold.
+
+`test_sweeping_does_not_raise_false_positives` now uses a realistic signal —
+amplitude-varying, with noise — and a second test,
+`test_stationary_tone_is_a_known_false_positive`, pins the bare tone as a
+*known* failure so it cannot regress unnoticed. That test is written to fail if
+someone fixes the limitation, with instructions to delete it when they do.
+
+An untested idea for whoever picks this up: require `t_true` to exceed
+`max(|t_decoy|)`. On the four diagnostic cases it separates all of them
+(tone unmarked 11.44 vs decoy max 19.44 → rejected; speech marked 11.12 vs 5.83
+→ accepted). It was not evaluated on the full corpus and is not shipped.
+
+### Status: COMPLETE — 451 pass, 7 skipped, ruff clean

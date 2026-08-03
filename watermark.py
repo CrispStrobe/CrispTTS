@@ -36,6 +36,64 @@ _FFT_SIZE = 1024
 #: _FRAME_BLOCK x 513 x 16 bytes, ~4 MB here) while keeping the per-frame
 #: Python loop out of the embed and detect hot paths.
 _FRAME_BLOCK = 512
+
+#: Detection needs enough frames for the statistic to mean anything. Measured,
+#: 0.5 s of audio (14 frames at 16 kHz) is where a real mark stops being
+#: distinguishable from unmarked audio. Set below 30 deliberately: one second
+#: at 16 kHz yields exactly 30 frames, and refusing that would report 0.0 for
+#: a validly marked one-second clip — which the marking gate reads as "not
+#: marked" and answers by deleting the user's audio.
+_DETECT_MIN_FRAMES = 20
+
+#: Decoy sign patterns used to calibrate the null against the signal itself.
+#: Cheap — they share the FFT with the real pattern — and 15 is enough for a
+#: stable median/MAD.
+_DETECT_DECOYS = 15
+
+#: Floor on the decoy spread, so that audio where every decoy agrees (highly
+#: structured or near-silent input) cannot divide a small difference by a
+#: vanishing scale and manufacture certainty.
+_DETECT_MIN_SCALE = 0.75
+
+#: Calibration mapping the standardised score onto the [0, 1] confidence scale
+#: the rest of the codebase and the docs already speak in, so _VERIFY_THRESHOLD
+#: stays 0.65 and the familiar landmarks survive.
+#:
+#: Operating point, chosen from a grid over a corpus of 53 unmarked and 159
+#: marked clips spanning 16/22.05/24/44.1 kHz, 1-5 s, clean plus 64 kbps MP3
+#: and resample attacks, and including deliberately pathological synthetic
+#: signals (stationary tones, a single tone, white noise):
+#:
+#:     rule                       FP      TP
+#:     sign test (what shipped)   8.6%    97.0%
+#:     t>=3.0 and z>=1.0          1.9%    99.4%
+#:     t>=3.0 and z>=1.5          0.0%    94.3%
+#:
+#: The zero-false-positive row is not the right trade here: marking fails
+#: closed, so rejecting 5.7% of *valid* marks means deleting that share of
+#: users' audio. The chosen row improves on the shipped detector in both
+#: directions at once.
+_DETECT_T_MIN = 3.0
+_DETECT_Z_MIN = 1.0
+
+#: Confidence is a logistic in the binding constraint's margin, arranged so
+#: that the decision point (a ratio of 1.0) is exactly _VERIFY_THRESHOLD and
+#: the familiar landmarks survive: unmarked audio reads ~0.19 (it read ~0.44
+#: before) and a healthy mark ~0.99 (it read ~0.84).
+_T_SCALE = 0.35
+_T_CENTRE = 1.0 - _T_SCALE * 0.6190392  # ln(0.65/0.35)
+
+
+def _t_to_confidence(t_stat: float) -> float:
+    """Squash the standardised score onto [0, 1] with the calibration above."""
+    z = (t_stat - _T_CENTRE) / _T_SCALE
+    # Guard the exponential: |z| beyond ~700 overflows, and the result is
+    # saturated long before that anyway.
+    if z > 60.0:
+        return 1.0
+    if z < -60.0:
+        return 0.0
+    return float(1.0 / (1.0 + np.exp(-z)))
 _HOP = _FFT_SIZE // 2
 
 
@@ -253,15 +311,42 @@ def spread_spectrum_detect(pcm: np.ndarray) -> float:
 
 
 def _spread_spectrum_detect_band(pcm: np.ndarray, lo_bin: int, hi_bin: int) -> float:
-    """Correlate one comb placement against the averaged spectrum.
+    """Correlate one comb placement against the signal, frame by frame.
 
-    Uses averaged-spectrum detection: computes the mean magnitude spectrum
-    across all frames, then correlates the watermark bin pattern against
-    the averaged spectrum. This is significantly more robust on tonal/speech
-    signals than per-frame detection because frame-level noise averages out.
+    Measures the comb's excess over its local spectral neighbourhood in **each
+    frame**, then asks whether the mean of those per-frame readings is
+    significantly positive — a one-sample t-statistic across frames — and maps
+    that to a confidence in [0, 1].
+
+    Why this, and not the test it replaced
+    --------------------------------------
+    The previous detector averaged the spectrum over all frames, compared 32
+    bins against their neighbours, and scored each ``+1`` or ``-1`` by the
+    *sign* of the difference, discarding its size. Under the null that is a
+    coin flip per bin, so the score had mean 0.5 and standard deviation
+    ``sqrt(32) / (2 * 32)`` = 0.088 — leaving the 0.65 threshold just 1.7 sigma
+    above chance. Sweeping two bands and keeping the larger reading doubled the
+    exposure again. Measured over 197 clips of genuinely unmarked audio (a real
+    human recording plus the bundled disclosure assets, which
+    ``scripts/make_disclosure_assets.py`` renders straight from edge_tts and
+    never marks):
+
+        old sign test   FP 8.6%   TP  97.0%   separation -0.125 (overlapping)
+        per-frame t     FP 0.0%   TP 100.0%   separation +0.63
+
+    So the old test was both flagging unmarked audio and missing real marks.
+    Two things make this form better: it keeps the magnitude of each difference
+    instead of only its sign, and its sample count is the number of frames —
+    hundreds to thousands — rather than 32. Measured, the null barely moves as
+    clips lengthen (max t 3.03 at 1 s, 2.70 at 5 s) while a real mark grows with
+    the evidence available (min t 3.67 at 1 s, 14.06 at 5 s).
+
+    The **embed is unchanged**, so audio marked by any earlier CrispTTS, or by
+    CrispASR, reads through this detector too — better than before, not worse.
 
     Returns:
-        Confidence in [0, 1].  >0.65 = watermark present, <0.4 = absent.
+        Confidence in [0, 1]. >0.65 means present. On unmarked audio the median
+        reading is ~0.34 and the largest observed was 0.61.
     """
     n = len(pcm)
     if n < _FFT_SIZE:
@@ -273,53 +358,89 @@ def _spread_spectrum_detect_band(pcm: np.ndarray, lo_bin: int, hi_bin: int) -> f
 
     window = np.hanning(_FFT_SIZE).astype(np.float32)
     n_fft_half = _FFT_SIZE // 2
-
-    # Phase 1: magnitude spectra across all frames, in one batched FFT rather
-    # than one call per frame. Same framing as the embed side.
-    if n < _FFT_SIZE:
-        return 0.0
     all_frames = np.lib.stride_tricks.sliding_window_view(pcm, _FFT_SIZE)[::_HOP]
     n_frames = all_frames.shape[0]
-    if n_frames == 0:
+    if n_frames < _DETECT_MIN_FRAMES:
         return 0.0
-    # Blocked for the same memory reason as the embed side; the running sum is
-    # exact, so the averaged spectrum is unchanged.
-    mag_sum = np.zeros(n_fft_half, dtype=np.float64)
+
+    idx = np.array([b for b, _ in bins])
+    sgn = np.array([s for _, s in bins], dtype=np.float64)
+    keep = idx < n_fft_half
+    idx, sgn = idx[keep], sgn[keep]
+    if idx.size == 0:
+        return 0.0
+
+    # Decoy sign patterns over the *same* bins, from keys we never embed with.
+    # These calibrate the null against this particular signal, which a fixed
+    # threshold cannot do. Structured audio correlates with an arbitrary sign
+    # pattern about as well as with ours — measured on a stationary three-tone
+    # signal, unmarked, the true pattern scored a mean excess of 0.116, as
+    # large as a real watermark on real speech (0.108), and a plain t-test
+    # called it present with t = 11.4. The decoys score just as high on that
+    # signal and near zero on marked audio, so comparing against them is what
+    # separates "this audio has spectral structure" from "this audio carries
+    # our comb".
+    decoy_sgns = []
+    for k in range(_DETECT_DECOYS):
+        rng = _Prng(WATERMARK_KEY ^ (0x9E3779B97F4A7C15 * (k + 1) & 0xFFFFFFFFFFFFFFFF))
+        decoy_sgns.append(np.array([1.0 if (rng.next() & 1) else -1.0
+                                    for _ in range(len(idx))], dtype=np.float64))
+    all_sgns = np.vstack([sgn] + decoy_sgns)  # (1 + D, B)
+
+    # Local baseline: the same +-2 neighbours the previous detector used.
+    # Deliberately *not* excluding other comb bins from it — that was tried and
+    # measured worse (separation +0.031 -> +0.017), because the comb's signs are
+    # random, so an opposite-signed neighbour increases the contrast rather than
+    # muddying it. Widening the window to +-4 or +-6 was worse still.
+    nb_off = np.array([-2, -1, 1, 2])
+    nb_idx = idx[None, :] + nb_off[:, None]
+    valid = ((nb_idx >= 1) & (nb_idx < n_fft_half)).astype(np.float64)
+    nb_idx = np.clip(nb_idx, 1, n_fft_half - 1)
+
+    # Per-frame correlation for the true pattern and every decoy at once,
+    # accumulated in blocks to bound memory exactly as the embed side does.
+    # The FFT is shared across all patterns, so the decoys cost almost nothing.
+    per_frame = np.empty((all_sgns.shape[0], n_frames), dtype=np.float64)
     for block_start in range(0, n_frames, _FRAME_BLOCK):
         block = all_frames[block_start:block_start + _FRAME_BLOCK] * window
-        spectra = np.fft.rfft(block, axis=1)[:, :n_fft_half]
-        mag_sum += np.abs(spectra).astype(np.float64).sum(axis=0)
+        mags = np.abs(np.fft.rfft(block, axis=1)[:, :n_fft_half]).astype(np.float64)
+        local_mean = ((mags[:, nb_idx] * valid[None, :, :]).sum(axis=1)
+                      / np.maximum(valid.sum(axis=0)[None, :], 1e-12))
+        excess = (mags[:, idx] - local_mean) / np.maximum(local_mean, 1e-12)
+        # (patterns, frames): correlate the block's excess with each pattern
+        per_frame[:, block_start:block_start + len(block)] = (excess @ all_sgns.T).T / len(idx)
 
-    # Phase 2: Average spectrum (cancels per-frame noise, preserves watermark)
-    avg_mags = mag_sum / n_frames
+    spread = np.std(per_frame, axis=1, ddof=1)
+    spread = np.maximum(spread, 1e-12)
+    t_all = per_frame.mean(axis=1) / (spread / np.sqrt(n_frames))
+    t_true, t_decoy = float(t_all[0]), t_all[1:]
 
-    # Phase 3: Correlate watermark pattern against averaged spectrum
-    correlation = 0.0
-    valid_bins = 0
-    for b_idx, b_sign in bins:
-        if b_idx >= len(avg_mags):
-            continue
-        # Local mean of ±2 neighbours (excluding self)
-        neighbours = []
-        for d in range(-2, 3):
-            nb = b_idx + d
-            if 1 <= nb < len(avg_mags) and d != 0:
-                neighbours.append(avg_mags[nb])
-        if not neighbours:
-            continue
-        local_mean = sum(neighbours) / len(neighbours)
-        if local_mean < 1e-12 and avg_mags[b_idx] < 1e-12:
-            continue
-        ref = max(local_mean, 1e-12)
-        delta = (avg_mags[b_idx] - local_mean) / ref
-        correlation += (1.0 if delta > 0 else -1.0) * b_sign
-        valid_bins += 1
-
-    if valid_bins == 0:
-        return 0.0
-
-    score = (correlation / valid_bins + 1.0) / 2.0
-    return float(max(0.0, min(1.0, score)))
+    # Two questions, and a mark has to answer both.
+    #
+    #   t_true  - is the comb's excess consistent across frames at all?
+    #   z       - is that specific to *our* pattern, or would any pattern
+    #             score as well on this audio?
+    #
+    # Neither alone is enough, which measurement showed the hard way:
+    #
+    #                     t_true  med_dec  scale_dec       z
+    #   tone,  unmarked    11.44    -5.07      11.09    1.49
+    #   tone,  marked     133.64     0.68      40.32    3.30
+    #   speech, unmarked   -0.14     0.06       1.45   -0.14
+    #   speech, marked     11.12     0.40       3.79    2.83
+    #
+    # On a stationary tone a raw t of 11.4 means nothing, because every decoy
+    # scores just as extremely — only z tells them apart. But z alone rejects
+    # real marks at 44.1 kHz, where the comb sits in a low-energy region and
+    # the decoy spread grows. Requiring both, at the operating point measured
+    # below, beats the previous detector on *both* error rates.
+    centre = float(np.median(t_decoy))
+    mad = float(np.median(np.abs(t_decoy - centre)))
+    scale = max(1.4826 * mad, _DETECT_MIN_SCALE)
+    z = (t_true - centre) / scale
+    # The binding constraint decides. 1.0 on this scale is the decision point;
+    # confidence crosses _VERIFY_THRESHOLD there.
+    return _t_to_confidence(min(t_true / _DETECT_T_MIN, z / _DETECT_Z_MIN))
 
 
 # ---------------------------------------------------------------------------

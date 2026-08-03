@@ -647,7 +647,7 @@ Unmarked audio is the worst case for both backends and stays slow (~35 s for
 
 > **Confidence values are not comparable across backends.** AudioSeal's
 > detector saturates (measured 1.000 watermarked / 0.000 clean); the
-> spread-spectrum detector spans roughly 0.44–0.91. Both are gated at 0.65 and
+> spread-spectrum detector reads ~0.17 unmarked and ~0.99 marked. Both are gated at 0.65 and
 > each clears it unambiguously, but do not compare a number from one against a
 > number from the other.
 
@@ -670,19 +670,34 @@ comb by bin index. Perceptually the placement is not equivalent at every rate,
 and the "~1.5–4.8 kHz" figure quoted here previously was only ever true at
 24 kHz.
 
-Measured over five 20 s segments of real speech (`german.wav`), detection
-threshold 0.65, reported as **mean / worst-case across segments**:
+**The detector was replaced in v0.9.8** and these numbers describe the new one.
+The old one scored 32 bins by the *sign* of their excess over neighbouring
+bins, discarding the size — a coin flip per bin, so its score sat only 1.7
+standard deviations above chance at the 0.65 threshold. Measured over a corpus
+of unmarked audio and marked audio under attack:
 
-| Condition | 16 kHz | 24 kHz | 44.1 kHz |
-|-----------|--------|--------|----------|
-| Immediately after embedding | 0.86 / 0.84 | 0.88 / 0.84 | 0.83 / 0.81 |
-| After a → 16k → back resample | 0.86 / 0.84 | 0.88 / 0.84 | 0.81 / 0.78 |
-| After an MP3 round-trip (128 kbps) | 0.86 / 0.84 | 0.88 / 0.84 | 0.82 / 0.78 |
-| After an MP3 round-trip (64 kbps) | 0.86 / 0.84 | 0.88 / 0.84 | 0.79 / 0.75 |
-| Unwatermarked human recording (false positive) | — | — | 0.44 |
+| | old (sign test) | new |
+|---|---|---|
+| False positives at 0.65 | **8.6%** | **2.5%** |
+| True positives at 0.65 | 97.0% | **98.3%** |
 
-Every attack stays above threshold at every rate, with the narrowest margin
-(0.75 vs 0.65) at 44.1 kHz through 64 kbps MP3.
+So the old detector was both flagging genuine recordings as AI-generated *and*
+missing 3% of real watermarks. The new one measures how far the comb's excess
+is consistent across frames, and how far that is specific to our pattern rather
+than to any pattern (by scoring 15 decoy patterns on the same audio). The embed
+is unchanged, so files marked by earlier releases and by CrispASR still verify.
+
+Confidence landmarks moved with the statistic — unmarked audio now reads ~0.17
+median (it read ~0.44), a healthy mark ~0.99 (it read ~0.84). The threshold is
+still 0.65.
+
+**Known limitation.** A perfectly stationary synthetic tone reads as marked
+(0.88). Every frame is identical, so a chance correlation with the comb repeats
+without end and imitates consistency. Clearing it entirely would also reject
+5.7% of genuinely marked audio, and since marking fails closed that means
+deleting that share of real output — the wrong trade. Recorded audio always
+varies frame to frame: `german.wav` and all 27 bundled disclosure clips read
+well below threshold when unmarked.
 
 **Signal-to-noise ratio: 20–25 dB mean, 14–17 dB worst case** — not the
 "~38 dB" / "~39.5 dB" quoted in earlier revisions of this file. Those figures

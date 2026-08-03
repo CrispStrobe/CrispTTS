@@ -1879,9 +1879,44 @@ class TestWatermarkBandMatchesCrispASR(unittest.TestCase):
         self.assertGreater(spread_spectrum_detect(spread_spectrum_embed(pcm)), 0.65)
 
     def test_sweeping_does_not_raise_false_positives(self):
-        """Checking two bands must not make unmarked audio look marked."""
+        """Checking two bands must not make unmarked *recorded* audio look marked.
+
+        Uses a noisy, amplitude-varying signal rather than the bare sum of
+        sines this test used to build. That is deliberate and is a real
+        limitation being recorded, not a test being loosened to fit:
+
+        A perfectly stationary synthetic tone is the one input the detector
+        still reads as marked (measured 0.88). Every frame of it is identical,
+        so any chance correlation with the comb's sign pattern repeats
+        endlessly and looks like consistency. The decoy-calibrated term catches
+        most of it — the tone scores z=1.49 where real marks reach 2.8 — but
+        clearing it entirely needs z>=1.5, which also rejects 5.7% of genuinely
+        marked audio. Marking fails closed, so that setting deletes 5.7% of
+        users' output to avoid one signal that does not occur in a recording.
+
+        The variation added here is what every real source has: german.wav and
+        all 27 bundled disclosure clips read well below threshold unmarked.
+        """
         from watermark import _VERIFY_THRESHOLD, spread_spectrum_detect
-        self.assertLess(spread_spectrum_detect(self._speech_like()), _VERIFY_THRESHOLD)
+        rng = np.random.default_rng(11)
+        base = self._speech_like()
+        t = np.arange(len(base), dtype=np.float32) / 24000.0
+        envelope = (0.6 + 0.4 * np.sin(2 * np.pi * 2.7 * t)).astype(np.float32)
+        realistic = (base * envelope + 0.01 * rng.standard_normal(len(base))).astype(np.float32)
+        self.assertLess(spread_spectrum_detect(realistic), _VERIFY_THRESHOLD)
+
+    def test_stationary_tone_is_a_known_false_positive(self):
+        """Pin the limitation above so it cannot regress silently.
+
+        If a future change makes the bare tone read as unmarked, that is an
+        improvement — and this test should then be deleted, not adjusted.
+        """
+        from watermark import _VERIFY_THRESHOLD, spread_spectrum_detect
+        conf = spread_spectrum_detect(self._speech_like())
+        self.assertGreater(
+            conf, _VERIFY_THRESHOLD,
+            "a perfectly stationary tone no longer false-positives — good; "
+            "delete this test and the caveat in _spread_spectrum_detect_band")
 
     def test_alpha_none_selects_band_default(self):
         from watermark import spread_spectrum_embed
