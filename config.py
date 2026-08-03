@@ -193,6 +193,12 @@ GERMAN_TTS_MODELS = {
         # built. Whoever they were modelled on is not publicly identified, so no
         # audience could recognise an individual — but the provider does not state
         # it either way, so this stays a question rather than an answer.
+        #
+        # Re-verified 2026-08-03 against the live document: "Voice talent —
+        # Individuals whose voices are recorded and used to create synthetic voice
+        # models" sits under the terms listed as "relevant to custom neural voice";
+        # the prebuilt-neural-voice section describes the models technically and
+        # never says whose voice they are. Unchanged, and now dated.
         "speaker_identity": "unknown",
         "default_voice_id": EDGE_TTS_DEFAULT_GERMAN_VOICE,
         "available_voices": EDGE_TTS_ALL_GERMAN_VOICES,
@@ -595,7 +601,21 @@ GERMAN_TTS_MODELS = {
     "mlx_audio_bark_de": {
         "handler_function_key": "mlx_audio",
         "voice_cloning": False,
-        "speaker_identity": "synthetic",
+        # Downgraded from "synthetic" to "unknown" on 2026-08-03. The old value
+        # was a claim with nothing behind it. Third-party write-ups describe
+        # Bark's presets as "fully synthetic", and that phrasing appears in none
+        # of Suno's own documents — checked here against the suno-ai/bark GitHub
+        # README and the suno/bark model card, neither of which says where the
+        # v2/*_speaker_* presets came from. CrispASR reached the same verdict
+        # independently after also reading the repo's model-card.md and the
+        # linked prompt library.
+        #
+        # The direction matters: "synthetic" silently removes the Art. 50(4)
+        # spoken disclosure, so asserting it without provider evidence is the
+        # costly error. "unknown" warns and asks the operator, which is what the
+        # evidence actually supports. Set --speaker-identity per run if you know
+        # better.
+        "speaker_identity": "unknown",
         "mlx_model_path": "mlx-community/bark-small", # For the main MLX model
         "default_voice_id": "v2/de_speaker_3",        # This voice will be fetched from "suno/bark-small" by the patch
         "available_voices": [
@@ -874,6 +894,11 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_melotts",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
+        # Unknown from evidence of absence, not from not looking. CrispASR
+        # checked the HF card, the GitHub README and docs/training.md on
+        # 2026-08-03: the training guide explains how to train your own model
+        # and discloses nothing about the origin of the shipped EN-US / EN-BR /
+        # EN-Default / EN_INDIA / ES / FR / ZH / JP / KR speakers.
         "speaker_identity": "unknown",
         "crispasr_backend": "melotts",
         "crispasr_model_path": "auto",
@@ -900,7 +925,16 @@ GERMAN_TTS_MODELS = {
         "crisptts_model_id": "crispasr_bananamind_tts",
         "handler_function_key": "crispasr",
         "voice_cloning": False,
-        "speaker_identity": "unknown",
+        # Resolved 2026-08-03 from CrispASR's researched table
+        # (examples/cli/crispasr_speaker_identity_models.h), which reads
+        # Banaxi-Tech/BananaMind-TTS-V2.1-Preview's own card: the en-us voice is
+        # LJSpeech (Linda Johnson) and the de-de voice is the ThorstenVoice
+        # Dataset 2022.10, credited "Voice: Thorsten Müller" — the same two
+        # donors already reaching CrispTTS through fastpitch_german_nemo and the
+        # Piper catalogue. The card is explicit that these are fixed recorded
+        # voices: "Fixed voices only; this is not voice cloning", "No speaker
+        # embeddings or reference audio conditioning".
+        "speaker_identity": "real_person",
         "crispasr_backend": "bananamind-tts",
         "crispasr_model_path": "auto",
         "default_voice_id": None,

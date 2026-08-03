@@ -76,6 +76,21 @@ _DETECT_MIN_SCALE = 0.75
 _DETECT_T_MIN = 3.0
 _DETECT_Z_MIN = 1.0
 
+#: Third condition, added in v0.9.12: the real pattern must also out-score the
+#: single strongest decoy, not merely the decoy median. This is what finally
+#: removed the stationary-tone false positive that survived Phase 28.
+#:
+#:     rule                                   FP      TP
+#:     t>=3.0 and z>=1.0                      1.89%   99.37%
+#:     + t_true > 0.70 * max(|t_decoy|)       0.00%   99.37%
+#:
+#: Free, in the sense that no true positive pays for it. The tone scores 0.59
+#: on this ratio (t_true 11.44 against a decoy maximum of 19.44 — every absent
+#: pattern beats the real one, which is the tell), while the weakest genuine
+#: mark in the corpus scores 0.84. Any threshold in (0.59, 0.84) separates them;
+#: 0.70 is the midpoint, so neither margin is thin.
+_DETECT_MAX_DECOY_RATIO = 0.70
+
 #: Confidence is a logistic in the binding constraint's margin, arranged so
 #: that the decision point (a ratio of 1.0) is exactly _VERIFY_THRESHOLD and
 #: the familiar landmarks survive: unmarked audio reads ~0.19 (it read ~0.44
@@ -438,9 +453,17 @@ def _spread_spectrum_detect_band(pcm: np.ndarray, lo_bin: int, hi_bin: int) -> f
     mad = float(np.median(np.abs(t_decoy - centre)))
     scale = max(1.4826 * mad, _DETECT_MIN_SCALE)
     z = (t_true - centre) / scale
+    # Third condition: beat the strongest decoy, not just the typical one. On a
+    # stationary tone the real pattern scores high *and* so does every decoy,
+    # and comparing against the median does not catch that; comparing against
+    # the maximum does.
+    strongest_decoy = float(np.max(np.abs(t_decoy)))
+    ratio = t_true / max(strongest_decoy, 1e-9)
     # The binding constraint decides. 1.0 on this scale is the decision point;
     # confidence crosses _VERIFY_THRESHOLD there.
-    return _t_to_confidence(min(t_true / _DETECT_T_MIN, z / _DETECT_Z_MIN))
+    return _t_to_confidence(min(t_true / _DETECT_T_MIN,
+                                z / _DETECT_Z_MIN,
+                                ratio / _DETECT_MAX_DECOY_RATIO))
 
 
 # ---------------------------------------------------------------------------

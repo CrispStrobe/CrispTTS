@@ -678,7 +678,7 @@ of unmarked audio and marked audio under attack:
 
 | | old (sign test) | new |
 |---|---|---|
-| False positives at 0.65 | **8.6%** | **2.5%** |
+| False positives at 0.65 | **8.6%** | **1.3%** |
 | True positives at 0.65 | 97.0% | **98.3%** |
 
 So the old detector was both flagging genuine recordings as AI-generated *and*
@@ -691,13 +691,15 @@ Confidence landmarks moved with the statistic — unmarked audio now reads ~0.17
 median (it read ~0.44), a healthy mark ~0.99 (it read ~0.84). The threshold is
 still 0.65.
 
-**Known limitation.** A perfectly stationary synthetic tone reads as marked
-(0.88). Every frame is identical, so a chance correlation with the comb repeats
-without end and imitates consistency. Clearing it entirely would also reject
-5.7% of genuinely marked audio, and since marking fails closed that means
-deleting that share of real output — the wrong trade. Recorded audio always
-varies frame to frame: `german.wav` and all 27 bundled disclosure clips read
-well below threshold when unmarked.
+**Fixed in v0.9.12: the stationary-tone false positive.** A perfectly
+stationary synthetic tone used to read as marked (0.88), because every frame is
+identical so a chance correlation with the comb repeats without end and
+imitates consistency. The fix is a third condition — the real pattern must
+out-score the *strongest* decoy, not merely the decoy median. On such a tone
+every absent pattern also scores extremely (t 11.44 against a decoy maximum of
+19.44), and the real pattern losing to a decoy is the tell. It cost nothing:
+true positives stayed at 99.4% on the tuning corpus while false positives went
+to zero there, and 2.5% → 1.3% on the broader one.
 
 **Signal-to-noise ratio: 20–25 dB mean, 14–17 dB worst case** — not the
 "~38 dB" / "~39.5 dB" quoted in earlier revisions of this file. Those figures
@@ -1091,9 +1093,24 @@ layers map onto that structure directly:
 | Robust to common transformations | Survives resample and 64 kbps MP3 (table above) | built-in layer is Crisp-readable only; neural backend is an extra |
 | Detection tooling available to third parties | `--detect-watermark FILE`, and the C2PA manifest reads in any C2PA tool | watermark detection needs Crisp tooling |
 
-The honest summary: the *architecture* is what the Code asks for, and the two
-residual gaps are both about third parties being able to read the mark — the
-untrusted certificate, and a spread-spectrum watermark no one else implements.
+The honest summary: the *architecture* is what the Code asks for, and the
+residual gap is about third parties being able to read the mark — a
+spread-spectrum watermark no one else implements. (The untrusted certificate
+was listed here as the second gap until v0.9.11, when measuring it showed the
+manifest validates and carries its AI assertion regardless; see *Certificate
+trust* above.)
+
+**Deliberately not signing.** Adherence would commit this project to a fixed
+description of how it marks content, and the marking here is still moving —
+the detector was replaced twice in one week, the preferred neural backend
+changed, and the certificate question turned out to have been misread for five
+releases. Signing up to a public commitment while the implementation is
+changing underneath it produces a claim that goes stale, which is the failure
+mode this repository has spent most of its recent history correcting.
+
+The Code stays a design target rather than a signature: the table above is the
+useful part, and it is cheaper to keep honest. Revisit when the marking layers
+stop changing.
 
 #### Whether these obligations bind this project at all
 

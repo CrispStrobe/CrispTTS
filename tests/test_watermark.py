@@ -2215,18 +2215,29 @@ class TestWatermarkBandMatchesCrispASR(unittest.TestCase):
         realistic = (base * envelope + 0.01 * rng.standard_normal(len(base))).astype(np.float32)
         self.assertLess(spread_spectrum_detect(realistic), _VERIFY_THRESHOLD)
 
-    def test_stationary_tone_is_a_known_false_positive(self):
-        """Pin the limitation above so it cannot regress silently.
+    def test_stationary_tone_no_longer_false_positives(self):
+        """The limitation recorded in v0.9.8 was fixed in v0.9.12.
 
-        If a future change makes the bare tone read as unmarked, that is an
-        improvement — and this test should then be deleted, not adjusted.
+        This test previously asserted the opposite — that a bare stationary
+        tone *did* read as marked — and was written to fail if anyone fixed it.
+        It did fail, which is why it now reads this way.
+
+        The fix was a third condition: the real pattern must out-score the
+        strongest decoy, not merely the decoy median. On a stationary tone every
+        absent pattern scores extremely too (t_true 11.44 against a decoy
+        maximum of 19.44), so the real one losing to a decoy is the tell.
         """
         from watermark import _VERIFY_THRESHOLD, spread_spectrum_detect
         conf = spread_spectrum_detect(self._speech_like())
-        self.assertGreater(
-            conf, _VERIFY_THRESHOLD,
-            "a perfectly stationary tone no longer false-positives — good; "
-            "delete this test and the caveat in _spread_spectrum_detect_band")
+        self.assertLess(conf, _VERIFY_THRESHOLD,
+                        f"a stationary tone read as marked again (conf={conf:.3f})")
+
+    def test_the_tone_is_still_detectable_once_actually_marked(self):
+        """Rejecting the unmarked tone must not make the marked one invisible."""
+        from watermark import _VERIFY_THRESHOLD, spread_spectrum_detect, spread_spectrum_embed
+        conf = spread_spectrum_detect(spread_spectrum_embed(self._speech_like()))
+        self.assertGreater(conf, _VERIFY_THRESHOLD,
+                           f"a genuinely marked tone must still verify (conf={conf:.3f})")
 
     def test_alpha_none_selects_band_default(self):
         from watermark import spread_spectrum_embed

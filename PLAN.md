@@ -2509,3 +2509,97 @@ actually buy: attribution for a publisher or newsroom whose provenance chain
 has to survive being contested.
 
 ### Status: COMPLETE — 467 pass, 7 skipped, ruff clean
+
+## Phase 32: speaker identities from the siblings, and the refinement (v0.9.12)
+
+Three items: record the Code of Practice decision, resolve what the sibling
+projects have learned about speaker identity, and land the detector refinement
+Phase 28.3 left untested.
+
+### 32.1 Code of Practice — deliberately not signing
+
+Recorded as a decision rather than an open question. Adherence commits the
+project to a fixed public description of how it marks content, and the marking
+here is still moving: the detector was replaced twice in a week, the preferred
+neural backend changed, and the certificate question turned out to have been
+misread for five releases. A public commitment made while the implementation
+changes underneath produces exactly the stale claim this plan has spent its
+recent history correcting. The Code stays a design target; the mapping table in
+the README is the useful part. Revisit when the layers stop moving.
+
+### 32.2 CrispASR had finished the research, and it cuts both ways
+
+`examples/cli/crispasr_speaker_identity_models.h` carries researched verdicts
+with the evidence beside each, completed 2026-08-03. Against CrispTTS's seven
+`unknown` models:
+
+**Resolved.** `crispasr_bananamind_tts` → `real_person`. Banaxi-Tech's own card
+gives en-us as LJSpeech (Linda Johnson) and de-de as the ThorstenVoice Dataset
+2022.10, "Voice: Thorsten Müller" — the same two donors already reaching
+CrispTTS via `fastpitch_german_nemo` and the Piper catalogue, by a third route.
+The card is explicit: "Fixed voices only; this is not voice cloning".
+
+**Corroborated, still unknown.** `crispasr_melotts` (CrispASR read the HF card,
+GitHub README and docs/training.md — the training guide explains how to train
+your own model and discloses nothing about the shipped speakers) and the four
+Canopy Labs Orpheus entries (100k+ h of "permissive" audio disclosed, nothing
+about tara/leah/jess/leo/dan/mia/zac/zoe). Both now carry the recorded check so
+they are not re-litigated.
+
+**Corrected in the other direction.** `mlx_audio_bark_de` was `synthetic` —
+downgraded to `unknown`. The claim had nothing behind it. Third-party write-ups
+call Bark's presets "fully synthetic"; that phrasing is in none of Suno's own
+documents. Verified here independently against the suno-ai/bark GitHub README
+and the suno/bark model card, neither of which says where the `v2/*_speaker_*`
+presets came from; CrispASR reached the same verdict after also reading the
+repo's model-card.md and the linked prompt library.
+
+This is the error both projects warn about, found in CrispTTS's own table:
+`synthetic` silently removes the Art. 50(4) disclosure, so asserting it without
+provider evidence is the costly direction. A web search *summary* asserted the
+"fully synthetic" wording confidently; the primary sources did not carry it.
+
+**Checked and unchanged.** `edge` stays `unknown`, re-verified against the live
+Microsoft transparency note: "Voice talent — Individuals whose voices are
+recorded and used to create synthetic voice models" appears under the terms
+listed as relevant to *custom* neural voice; the prebuilt section describes the
+models technically and never says whose voice they are. All kokoro entries stay
+`synthetic` and now have provider evidence — CrispTTS ships only hexgrad's own
+packs (af_*, bf_*, jf_*), documented upstream as designed rather than any one
+person, and `crispasr_kokoro_de` uses `df_victoria`, whose base card states
+"trained entirely on synthetic (TTS-generated) audio". CrispASR's finding that
+the German HUI packs `df_eva` / `dm_bernd` are real people does not apply
+because CrispTTS does not ship them.
+
+One divergence left standing on purpose: CrispASR calls speecht5
+"structurally unanswerable per model — the voice is a 512-d x-vector the
+OPERATOR supplies", while CrispTTS marks `speecht5_german_transformers`
+`real_person`. Both are right for their own product. CrispTTS ships a default
+CMU ARCTIC x-vector set, which is seven identifiable recorded people, so
+`real_person` is the correct default *here*; CrispASR takes an arbitrary
+x-vector and cannot know.
+
+### 32.3 The refinement: beat the strongest decoy, not the median
+
+Phase 28.3 left `t_true > max(|t_decoy|)` untested. Measured over the same
+tuning corpus (53 unmarked, 159 marked):
+
+| rule | FP | TP |
+|---|---|---|
+| t>=3.0 and z>=1.0 (shipped since 28) | 1.89% | 99.37% |
+| **+ t_true > 0.70 * max(\|t_decoy\|)** | **0.00%** | **99.37%** |
+
+Free — no true positive pays for it. The stationary tone scores 0.59 on this
+ratio: `t_true` 11.44 against a decoy maximum of 19.44, so *every absent
+pattern beats the real one*, which is precisely the tell that a median
+comparison misses. The weakest genuine mark scores 0.84, so any threshold in
+(0.59, 0.84) separates them; 0.70 is the midpoint. On the broader 79/237 corpus
+false positives fall 2.5% → 1.3%, true positives unchanged at 98.3%.
+
+The v0.9.8 test that pinned the tone as a *known* false positive was written to
+fail if anyone fixed it, with instructions to delete rather than adjust it. It
+failed. It now asserts the opposite, joined by one confirming that a genuinely
+marked tone still verifies — rejecting the unmarked tone must not make the
+marked one invisible.
+
+### Status: COMPLETE — 468 pass, 7 skipped, ruff clean
